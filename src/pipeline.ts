@@ -2,16 +2,19 @@
  * Pipeline: shared link processing logic (scrape → analyze → export).
  */
 
-import { insertLink, updateLink, getLink, getLinkByUrl } from './db.js';
-import { scrapeUrl } from './scraper.js';
-import { analyzeArticle } from './agent.js';
-import { exportLinkMarkdown } from './export.js';
+import { insertLink, updateLink, getLink } from "./db.js";
+import { scrapeUrl } from "./scraper.js";
+import { analyzeArticle } from "./agent.js";
+import { exportLinkMarkdown } from "./export.js";
+import { logger } from "./logger.js";
+
+const log = logger.child({ module: "pipeline" });
 
 export interface ProcessResult {
   linkId: number;
   title: string;
   url: string;
-  status: 'analyzed' | 'error';
+  status: "analyzed" | "error";
   error?: string;
 }
 
@@ -19,16 +22,17 @@ export type ProgressCallback = (stage: string) => void | Promise<void>;
 
 /**
  * Process a URL through the full pipeline: scrape → analyze → export.
- * Returns the result with linkId and status.
  */
-export async function processUrl(url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
-  // Step 1: Insert into DB
+export async function processUrl(
+  url: string,
+  onProgress?: ProgressCallback,
+): Promise<ProcessResult> {
   const linkId = insertLink(url);
-  console.log(`[pipeline] Processing URL: ${url} (id=${linkId})`);
+  log.info({ url, linkId }, "Processing URL");
 
   try {
-    // Step 2: Scrape
-    await onProgress?.('scraping');
+    // Scrape
+    await onProgress?.("scraping");
     const scrapeResult = await scrapeUrl(url);
 
     updateLink(linkId, {
@@ -38,13 +42,16 @@ export async function processUrl(url: string, onProgress?: ProgressCallback): Pr
       og_site_name: scrapeResult.og.siteName,
       og_type: scrapeResult.og.type,
       markdown: scrapeResult.markdown,
-      status: 'scraped',
+      status: "scraped",
     });
 
-    console.log(`[pipeline] Scraped: ${scrapeResult.og.title || url} (${scrapeResult.markdown.length} chars)`);
+    log.info(
+      { title: scrapeResult.og.title || url, chars: scrapeResult.markdown.length },
+      "Scraped",
+    );
 
-    // Step 3: Analyze
-    await onProgress?.('analyzing');
+    // Analyze
+    await onProgress?.("analyzing");
     const analysis = await analyzeArticle({
       url,
       title: scrapeResult.og.title,
@@ -59,18 +66,19 @@ export async function processUrl(url: string, onProgress?: ProgressCallback): Pr
       tags: JSON.stringify(analysis.tags),
       related_notes: JSON.stringify(analysis.relatedNotes),
       related_links: JSON.stringify(analysis.relatedLinks),
-      status: 'analyzed',
+      status: "analyzed",
     });
 
-    console.log(`[pipeline] Analyzed: ${scrapeResult.og.title || url}`);
+    log.info({ title: scrapeResult.og.title || url }, "Analyzed");
 
-    // Step 4: Export markdown for qmd
+    // Export markdown
     const fullLink = getLink(linkId);
     if (fullLink) {
       try {
-        exportLinkMarkdown(fullLink);
+        const exportPath = exportLinkMarkdown(fullLink);
+        log.info({ path: exportPath }, "Exported markdown");
       } catch (exportErr) {
-        console.error(`[pipeline] Export failed:`, exportErr);
+        log.error({ err: exportErr }, "Export failed");
       }
     }
 
@@ -78,21 +86,21 @@ export async function processUrl(url: string, onProgress?: ProgressCallback): Pr
       linkId,
       title: scrapeResult.og.title || url,
       url,
-      status: 'analyzed',
+      status: "analyzed",
     };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[pipeline] Error processing ${url}:`, errMsg);
+    log.error({ url, linkId, err: errMsg }, "Processing failed");
 
     try {
-      updateLink(linkId, { status: 'error', error_message: errMsg });
+      updateLink(linkId, { status: "error", error_message: errMsg });
     } catch {}
 
     return {
       linkId,
       title: url,
       url,
-      status: 'error',
+      status: "error",
       error: errMsg,
     };
   }

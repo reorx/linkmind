@@ -5,6 +5,9 @@
 import fs from 'fs';
 import path from 'path';
 import type { LinkRecord } from './db.js';
+import { logger } from './logger.js';
+
+const log = logger.child({ module: 'export' });
 
 const EXPORT_DIR =
   process.env.QMD_LINKS_PATH || path.join(process.env.HOME || '/tmp', 'LocalDocuments/linkmind/links');
@@ -133,7 +136,7 @@ export function exportLinkMarkdown(link: LinkRecord): string {
   const content = renderMarkdown(link);
 
   fs.writeFileSync(filepath, content, 'utf-8');
-  console.log(`[export] Written: ${filepath}`);
+  log.info({ path: filepath }, "Written");
 
   return filepath;
 }
@@ -148,7 +151,7 @@ export function exportAllLinks(links: LinkRecord[]): string[] {
       paths.push(exportLinkMarkdown(link));
     }
   }
-  console.log(`[export] Exported ${paths.length} links to ${EXPORT_DIR}`);
+  log.info({ count: paths.length, dir: EXPORT_DIR }, "Exported all links");
   return paths;
 }
 

@@ -5,6 +5,9 @@
 import express from "express";
 import { getLink, getRecentLinks } from "./db.js";
 import { processUrl } from "./pipeline.js";
+import { logger } from "./logger.js";
+
+const log = logger.child({ module: "web" });
 
 export function startWebServer(port: number): void {
   const app = express();
@@ -145,7 +148,7 @@ export function startWebServer(port: number): void {
   });
 
   app.listen(port, () => {
-    console.log(`[web] Server listening on http://localhost:${port}`);
+    log.info({ port }, `Server listening on http://localhost:${port}`);
   });
 }
 

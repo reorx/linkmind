@@ -4,6 +4,9 @@
 
 import { execSync } from 'child_process';
 import { searchLinks, getLink } from './db.js';
+import { logger } from './logger.js';
+
+const log = logger.child({ module: 'search' });
 
 const NOTES_COLLECTION = process.env.QMD_NOTES_COLLECTION || 'notes';
 const LINKS_COLLECTION = process.env.QMD_LINKS_COLLECTION || 'links';
@@ -45,7 +48,7 @@ export function searchNotes(query: string, limit: number = 5): SearchResult[] {
       score: item.score,
     }));
   } catch (err) {
-    console.log(`[search] qmd vsearch notes failed: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(`[search] qmd vsearch notes failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 }
@@ -86,7 +89,7 @@ export function searchHistoricalLinks(query: string, limit: number = 5): SearchR
       }
     }
   } catch (err) {
-    console.log(
+    log.warn(
       `[search] qmd vsearch links failed, falling back to SQLite: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
