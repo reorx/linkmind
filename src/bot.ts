@@ -38,7 +38,9 @@ export function startBot(token: string, webBaseUrl: string): Bot {
 }
 
 async function handleUrl(ctx: any, url: string, webBaseUrl: string): Promise<void> {
-  const statusMsg = await ctx.reply(`🔗 收到链接，正在处理...\n${url}`);
+  const statusMsg = await ctx.reply(`🔗 收到链接，正在处理...`, {
+    link_preview_options: { is_disabled: true },
+  });
 
   const result = await processUrl(url, async (stage) => {
     if (stage === 'scraping') {
@@ -118,10 +120,11 @@ function formatResult(data: {
 
 async function editMessage(ctx: any, statusMsg: any, text: string, parseHtml: boolean = false): Promise<void> {
   try {
-    const opts: Record<string, any> = {};
+    const opts: Record<string, any> = {
+      link_preview_options: { is_disabled: true },
+    };
     if (parseHtml) {
       opts.parse_mode = 'HTML';
-      opts.link_preview_options = { is_disabled: true };
     }
     await ctx.api.editMessageText(statusMsg.chat.id, statusMsg.message_id, text, opts);
   } catch (err) {
