@@ -2,8 +2,8 @@
  * Pipeline: shared link processing logic (scrape → analyze → export).
  */
 
-import { insertLink, updateLink, getLink } from './db.js';
-import { scrapeUrl } from './scraper.js';
+import { insertLink, updateLink, getLink, type LinkRecord } from './db.js';
+import { scrapeUrl, type ScrapeResult } from './scraper.js';
 import { analyzeArticle } from './agent.js';
 import { exportLinkMarkdown } from './export.js';
 import { logger } from './logger.js';
@@ -26,45 +26,89 @@ export type ProgressCallback = (stage: string) => void | Promise<void>;
 export async function processUrl(url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
   const linkId = insertLink(url);
   log.info({ url, linkId }, '[start] Processing URL');
+  return runPipeline(linkId, url, onProgress);
+}
 
+/**
+ * Retry a failed link: resume from the appropriate stage based on existing data.
+ */
+export async function retryLink(linkId: number): Promise<ProcessResult> {
+  const link = getLink(linkId);
+  if (!link) {
+    return { linkId, title: '', url: '', status: 'error', error: 'Link not found' };
+  }
+
+  log.info({ url: link.url, linkId, prevStatus: link.status }, '[retry] Retrying link');
+
+  // Reset status
+  updateLink(linkId, { status: 'pending', error_message: undefined });
+
+  return runPipeline(linkId, link.url, undefined, link);
+}
+
+/**
+ * Core pipeline logic. If `existingLink` is provided and already has scraped data,
+ * skip the scrape stage.
+ */
+async function runPipeline(
+  linkId: number,
+  url: string,
+  onProgress?: ProgressCallback,
+  existingLink?: LinkRecord,
+): Promise<ProcessResult> {
   // ── Stage 1: Scrape ──
-  let scrapeResult;
-  try {
-    await onProgress?.('scraping');
-    scrapeResult = await scrapeUrl(url);
+  // Skip if we already have scraped content
+  let title: string | undefined;
+  let markdown: string | undefined;
+  let ogDescription: string | undefined;
+  let siteName: string | undefined;
 
-    updateLink(linkId, {
-      og_title: scrapeResult.og.title,
-      og_description: scrapeResult.og.description,
-      og_image: scrapeResult.og.image,
-      og_site_name: scrapeResult.og.siteName,
-      og_type: scrapeResult.og.type,
-      markdown: scrapeResult.markdown,
-      status: 'scraped',
-    });
-
-    log.info({ title: scrapeResult.og.title || url, chars: scrapeResult.markdown.length }, '[scrape] OK');
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[scrape] Failed');
-
+  if (existingLink?.markdown && existingLink.markdown.length > 0) {
+    log.info({ linkId }, '[scrape] Skipped (already have content)');
+    title = existingLink.og_title;
+    markdown = existingLink.markdown;
+    ogDescription = existingLink.og_description;
+    siteName = existingLink.og_site_name;
+  } else {
     try {
-      updateLink(linkId, { status: 'error', error_message: `[scrape] ${errMsg}` });
-    } catch {}
+      await onProgress?.('scraping');
+      const scrapeResult = await scrapeUrl(url);
 
-    return { linkId, title: url, url, status: 'error', error: `[scrape] ${errMsg}` };
+      updateLink(linkId, {
+        og_title: scrapeResult.og.title,
+        og_description: scrapeResult.og.description,
+        og_image: scrapeResult.og.image,
+        og_site_name: scrapeResult.og.siteName,
+        og_type: scrapeResult.og.type,
+        markdown: scrapeResult.markdown,
+        status: 'scraped',
+      });
+
+      title = scrapeResult.og.title;
+      markdown = scrapeResult.markdown;
+      ogDescription = scrapeResult.og.description;
+      siteName = scrapeResult.og.siteName;
+
+      log.info({ title: title || url, chars: markdown.length }, '[scrape] OK');
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[scrape] Failed');
+      try {
+        updateLink(linkId, { status: 'error', error_message: `[scrape] ${errMsg}` });
+      } catch {}
+      return { linkId, title: url, url, status: 'error', error: `[scrape] ${errMsg}` };
+    }
   }
 
   // ── Stage 2: Analyze (LLM) ──
-  let analysis;
   try {
     await onProgress?.('analyzing');
-    analysis = await analyzeArticle({
+    const analysis = await analyzeArticle({
       url,
-      title: scrapeResult.og.title,
-      ogDescription: scrapeResult.og.description,
-      siteName: scrapeResult.og.siteName,
-      markdown: scrapeResult.markdown,
+      title,
+      ogDescription,
+      siteName,
+      markdown: markdown!,
     });
 
     updateLink(linkId, {
@@ -76,22 +120,14 @@ export async function processUrl(url: string, onProgress?: ProgressCallback): Pr
       status: 'analyzed',
     });
 
-    log.info({ title: scrapeResult.og.title || url, tags: analysis.tags.length }, '[analyze] OK');
+    log.info({ title: title || url, tags: analysis.tags.length }, '[analyze] OK');
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[analyze] Failed');
-
     try {
       updateLink(linkId, { status: 'error', error_message: `[analyze] ${errMsg}` });
     } catch {}
-
-    return {
-      linkId,
-      title: scrapeResult.og.title || url,
-      url,
-      status: 'error',
-      error: `[analyze] ${errMsg}`,
-    };
+    return { linkId, title: title || url, url, status: 'error', error: `[analyze] ${errMsg}` };
   }
 
   // ── Stage 3: Export ──
@@ -106,12 +142,7 @@ export async function processUrl(url: string, onProgress?: ProgressCallback): Pr
     }
   }
 
-  log.info({ linkId, title: scrapeResult.og.title || url }, '[done] Processing complete');
+  log.info({ linkId, title: title || url }, '[done] Processing complete');
 
-  return {
-    linkId,
-    title: scrapeResult.og.title || url,
-    url,
-    status: 'analyzed',
-  };
+  return { linkId, title: title || url, url, status: 'analyzed' };
 }

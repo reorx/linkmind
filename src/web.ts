@@ -6,8 +6,8 @@ import { execSync } from 'child_process';
 import path from 'path';
 import ejs from 'ejs';
 import express from 'express';
-import { getLink, getRecentLinks, getPaginatedLinks } from './db.js';
-import { processUrl } from './pipeline.js';
+import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks } from './db.js';
+import { processUrl, retryLink } from './pipeline.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
@@ -141,6 +141,48 @@ export function startWebServer(port: number): void {
       related_notes: safeParseJson(link.related_notes),
       related_links: safeParseJson(link.related_links),
     });
+  });
+
+  // POST /api/retry — retry all failed links
+  app.post('/api/retry', async (req, res) => {
+    const failed = getFailedLinks();
+    if (failed.length === 0) {
+      res.json({ message: 'No failed links to retry', retried: 0 });
+      return;
+    }
+
+    log.info({ count: failed.length }, 'Retrying failed links');
+
+    // Run retries in background, return immediately
+    const ids = failed.map((l) => l.id!);
+    res.json({ message: `Retrying ${ids.length} failed link(s)`, ids });
+
+    for (const id of ids) {
+      try {
+        await retryLink(id);
+      } catch (err) {
+        log.error({ linkId: id, err: err instanceof Error ? err.message : String(err) }, 'Retry failed');
+      }
+    }
+  });
+
+  // POST /api/retry/:id — retry a single failed link
+  app.post('/api/retry/:id', async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid ID' });
+      return;
+    }
+
+    const link = getLink(id);
+    if (!link) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+
+    log.info({ linkId: id, url: link.url }, 'Retrying single link');
+    const result = await retryLink(id);
+    res.json(result);
   });
 
   // GET / — homepage with timeline

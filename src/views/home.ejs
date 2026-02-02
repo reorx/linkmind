@@ -100,6 +100,29 @@
     padding: 60px 0;
     font-size: 1rem;
   }
+  .link-card.is-error {
+    border-color: #442222;
+  }
+  .status-badge {
+    display: inline-block;
+    font-size: 0.75rem;
+    padding: 1px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .status-badge.error {
+    background: #442222;
+    color: #e88;
+  }
+  .status-badge.pending {
+    background: #333;
+    color: var(--dim);
+  }
+  .status-badge.scraped {
+    background: #334;
+    color: #8ae;
+  }
 </style>
 
 <% if (links.length === 0) { %>
@@ -112,8 +135,17 @@
       <% currentDay = item._dayLabel; %>
       <div class="day-label"><%= currentDay %></div>
     <% } %>
-    <div class="link-card">
-      <h3><a href="/link/<%= item.id %>"><%= item.og_title || item.url %></a></h3>
+    <div class="link-card<%= item.status === 'error' ? ' is-error' : '' %>">
+      <h3>
+        <a href="/link/<%= item.id %>"><%= item.og_title || item.url %></a>
+        <% if (item.status === 'error') { %>
+        <span class="status-badge error">失败</span>
+        <% } else if (item.status === 'pending') { %>
+        <span class="status-badge pending">等待中</span>
+        <% } else if (item.status === 'scraped') { %>
+        <span class="status-badge scraped">待分析</span>
+        <% } %>
+      </h3>
       <div class="card-meta">
         <a href="<%= item.url %>" target="_blank"><%= item.url.length > 80 ? item.url.slice(0, 80) + '...' : item.url %></a>
         <% if (item.og_site_name) { %> · <%= item.og_site_name %><% } %>
@@ -123,6 +155,8 @@
       <details>
         <summary><%= item.summary %></summary>
       </details>
+      <% } else if (item.error_message) { %>
+      <div style="color: #e88; font-size: 0.85rem; margin-top: 6px;"><%= item.error_message %></div>
       <% } %>
     </div>
   <% } %>

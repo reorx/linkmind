@@ -100,18 +100,19 @@ export function getPaginatedLinks(
   perPage: number = 50,
 ): { links: LinkRecord[]; total: number; page: number; totalPages: number } {
   const db = getDb();
-  const total = (
-    db.prepare("SELECT COUNT(*) as count FROM links WHERE status = 'analyzed'").get() as {
-      count: number;
-    }
-  ).count;
+  const total = (db.prepare("SELECT COUNT(*) as count FROM links").get() as { count: number }).count;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const safePage = Math.max(1, Math.min(page, totalPages));
   const offset = (safePage - 1) * perPage;
   const links = db
-    .prepare("SELECT * FROM links WHERE status = 'analyzed' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?")
+    .prepare("SELECT * FROM links ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?")
     .all(perPage, offset) as LinkRecord[];
   return { links, total, page: safePage, totalPages };
+}
+
+export function getFailedLinks(): LinkRecord[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM links WHERE status = 'error' ORDER BY id DESC").all() as LinkRecord[];
 }
 
 export function searchLinks(query: string, limit: number = 10): LinkRecord[] {
