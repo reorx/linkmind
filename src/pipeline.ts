@@ -2,9 +2,9 @@
  * Pipeline: shared link processing logic (scrape → analyze → export).
  */
 
-import { insertLink, updateLink, getLink, type LinkRecord } from './db.js';
+import { insertLink, updateLink, getLink, getAllAnalyzedLinks, type LinkRecord } from './db.js';
 import { scrapeUrl, type ScrapeResult } from './scraper.js';
-import { analyzeArticle } from './agent.js';
+import { analyzeArticle, findRelatedAndInsight } from './agent.js';
 import { exportLinkMarkdown, qmdIndexQueue } from './export.js';
 import { logger } from './logger.js';
 
@@ -148,4 +148,80 @@ async function runPipeline(
   log.info({ linkId, title: title || url }, '[done] Processing complete');
 
   return { linkId, title: title || url, url, status: 'analyzed' };
+}
+
+export interface RefreshResult {
+  linkId: number;
+  title: string;
+  relatedNotes: number;
+  relatedLinks: number;
+  error?: string;
+}
+
+/**
+ * Refresh related content (notes + links + insight) for a single link or all analyzed links.
+ * Does NOT re-scrape or re-summarize — only re-searches and re-generates insight.
+ */
+export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> {
+  const links = linkId ? [getLink(linkId)].filter(Boolean) as LinkRecord[] : getAllAnalyzedLinks();
+
+  if (links.length === 0) {
+    log.warn({ linkId }, '[refresh] No links found');
+    return [];
+  }
+
+  log.info({ count: links.length, linkId: linkId ?? 'all' }, '[refresh] Starting');
+  const results: RefreshResult[] = [];
+
+  for (const link of links) {
+    const id = link.id!;
+    const title = link.og_title || link.url;
+
+    try {
+      if (!link.summary || !link.markdown) {
+        log.warn({ linkId: id, title }, '[refresh] Skipped (missing summary or markdown)');
+        results.push({ linkId: id, title, relatedNotes: 0, relatedLinks: 0, error: 'missing summary/markdown' });
+        continue;
+      }
+
+      log.info({ linkId: id, title }, '[refresh] Finding related content...');
+      const related = await findRelatedAndInsight(
+        { url: link.url, title: link.og_title, markdown: link.markdown },
+        link.summary,
+      );
+
+      updateLink(id, {
+        related_notes: JSON.stringify(related.relatedNotes),
+        related_links: JSON.stringify(related.relatedLinks),
+        insight: related.insight,
+      });
+
+      // Re-export markdown with updated related info
+      const updatedLink = getLink(id);
+      if (updatedLink) {
+        exportLinkMarkdown(updatedLink);
+      }
+
+      log.info(
+        { linkId: id, title, notes: related.relatedNotes.length, links: related.relatedLinks.length },
+        '[refresh] Done',
+      );
+      results.push({
+        linkId: id,
+        title,
+        relatedNotes: related.relatedNotes.length,
+        relatedLinks: related.relatedLinks.length,
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log.error({ linkId: id, title, err: errMsg }, '[refresh] Failed');
+      results.push({ linkId: id, title, relatedNotes: 0, relatedLinks: 0, error: errMsg });
+    }
+  }
+
+  // Trigger one qmd index update at the end
+  qmdIndexQueue.requestUpdate().catch(() => {});
+
+  log.info({ total: results.length, errors: results.filter((r) => r.error).length }, '[refresh] Complete');
+  return results;
 }

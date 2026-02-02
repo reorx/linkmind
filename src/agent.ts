@@ -26,8 +26,34 @@ export async function analyzeArticle(input: {
   // Step 1: Generate summary and extract keywords
   const summaryResult = await generateSummary(input);
 
-  // Step 2: Search for related content using keywords
-  const searchQueries = extractSearchQueries(summaryResult.summary, input.title);
+  // Step 2+3: Find related content and generate insight
+  const related = await findRelatedAndInsight(input, summaryResult.summary);
+
+  return {
+    summary: summaryResult.summary,
+    insight: related.insight,
+    tags: summaryResult.tags,
+    relatedNotes: related.relatedNotes,
+    relatedLinks: related.relatedLinks,
+  };
+}
+
+export interface RelatedResult {
+  insight: string;
+  relatedNotes: SearchResult[];
+  relatedLinks: SearchResult[];
+}
+
+/**
+ * Search for related content and generate insight. Reusable for both
+ * initial analysis and refreshing related info on existing links.
+ */
+export async function findRelatedAndInsight(
+  input: { url: string; title?: string; markdown: string },
+  summary: string,
+): Promise<RelatedResult> {
+  // Search for related content using keywords
+  const searchQueries = extractSearchQueries(summary, input.title);
   let allNotes: SearchResult[] = [];
   let allLinks: SearchResult[] = [];
 
@@ -44,13 +70,11 @@ export async function analyzeArticle(input: {
   // Filter out the article itself from related links
   allLinks = allLinks.filter((l) => l.url !== input.url);
 
-  // Step 3: Generate insight with context of related content
-  const insight = await generateInsight(input, summaryResult.summary, allNotes, allLinks);
+  // Generate insight with context of related content
+  const insight = await generateInsight(input, summary, allNotes, allLinks);
 
   return {
-    summary: summaryResult.summary,
     insight,
-    tags: summaryResult.tags,
     relatedNotes: allNotes.slice(0, 5),
     relatedLinks: allLinks.slice(0, 5),
   };

@@ -110,6 +110,11 @@ export function getPaginatedLinks(
   return { links, total, page: safePage, totalPages };
 }
 
+export function getAllAnalyzedLinks(): LinkRecord[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM links WHERE status = 'analyzed' ORDER BY id ASC").all() as LinkRecord[];
+}
+
 export function getFailedLinks(): LinkRecord[] {
   const db = getDb();
   return db.prepare("SELECT * FROM links WHERE status = 'error' ORDER BY id DESC").all() as LinkRecord[];
