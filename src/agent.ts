@@ -2,24 +2,8 @@
  * Agent: analyze scraped content, generate summary + insight + find related content.
  */
 
-import OpenAI from "openai";
-import { searchAll, type SearchResult } from "./search.js";
-
-let _client: OpenAI | null = null;
-
-function getClient(): OpenAI {
-  if (!_client) {
-    _client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: process.env.OPENAI_BASE_URL,
-    });
-  }
-  return _client;
-}
-
-function getModel(): string {
-  return process.env.OPENAI_DEFAULT_MODEL ?? "qwen-plus";
-}
+import { getLLM } from './llm.js';
+import { searchAll, type SearchResult } from './search.js';
 
 export interface AnalysisResult {
   summary: string;
@@ -81,12 +65,10 @@ async function generateSummary(input: {
   // Truncate markdown to avoid token limits
   const content = input.markdown.slice(0, 12000);
 
-  const response = await getClient().chat.completions.create({
-    model: getModel(),
-    max_tokens: 2048,
-    messages: [
+  const text = await getLLM().chat(
+    [
       {
-        role: "system",
+        role: 'system',
         content: `你是一个信息分析助手。用户会给你一篇文章的内容，请你：
 1. 用中文写一个简洁的摘要（3-5句话），抓住核心要点。无论原文是什么语言，摘要必须使用中文。
 2. 提取 3-5 个关键标签（用于后续搜索关联内容）
@@ -97,23 +79,22 @@ async function generateSummary(input: {
 注意：summary 字段必须是中文，不要使用英文。`,
       },
       {
-        role: "user",
-        content: `标题: ${input.title || "无"}
+        role: 'user',
+        content: `标题: ${input.title || '无'}
 来源: ${input.url}
-描述: ${input.ogDescription || "无"}
+描述: ${input.ogDescription || '无'}
 
 正文:
 ${content}`,
       },
     ],
-    response_format: { type: "json_object" },
-  });
+    { maxTokens: 2048, jsonMode: true },
+  );
 
-  const text = response.choices[0].message.content || "{}";
   try {
     const parsed = JSON.parse(text);
     return {
-      summary: parsed.summary || "无法生成摘要",
+      summary: parsed.summary || '无法生成摘要',
       tags: Array.isArray(parsed.tags) ? parsed.tags : [],
     };
   } catch {
@@ -129,24 +110,18 @@ async function generateInsight(
 ): Promise<string> {
   const notesContext =
     relatedNotes.length > 0
-      ? relatedNotes
-          .map((n) => `- [${n.title}] ${n.snippet.slice(0, 150)}`)
-          .join("\n")
-      : "（无相关笔记）";
+      ? relatedNotes.map((n) => `- [${n.title}] ${n.snippet.slice(0, 150)}`).join('\n')
+      : '（无相关笔记）';
 
   const linksContext =
     relatedLinks.length > 0
-      ? relatedLinks
-          .map((l) => `- [${l.title}](${l.url}) ${l.snippet.slice(0, 100)}`)
-          .join("\n")
-      : "（无相关历史链接）";
+      ? relatedLinks.map((l) => `- [${l.title}](${l.url}) ${l.snippet.slice(0, 100)}`).join('\n')
+      : '（无相关历史链接）';
 
-  const response = await getClient().chat.completions.create({
-    model: getModel(),
-    max_tokens: 1024,
-    messages: [
+  const text = await getLLM().chat(
+    [
       {
-        role: "system",
+        role: 'system',
         content: `你是用户的个人信息分析师。用户是一个 web 开发者，关注 AI 工具、开发者工具和开源项目。
 
 你的任务是从**用户的角度**思考这篇文章的价值：
@@ -158,7 +133,7 @@ async function generateInsight(
 语气要像朋友之间的分享，简洁有力，不要模板化的套话。2-4 句话即可。`,
       },
       {
-        role: "user",
+        role: 'user',
         content: `文章: ${input.title || input.url}
 摘要: ${summary}
 
@@ -171,9 +146,10 @@ ${linksContext}
 请给出你的 insight：`,
       },
     ],
-  });
+    { maxTokens: 1024 },
+  );
 
-  return response.choices[0].message.content || "无法生成 insight";
+  return text || '无法生成 insight';
 }
 
 function extractSearchQueries(summary: string, title?: string): string[] {
