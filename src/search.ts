@@ -117,7 +117,7 @@ export async function searchHistoricalLinks(query: string, limit: number = 5): P
     source: 'links',
     title: link.og_title || link.url,
     snippet: link.summary || link.og_description || '',
-    url: link.id ? `/links/${link.id}` : link.url,
+    url: link.id ? `/link/${link.id}` : link.url,
     linkId: link.id,
   }));
 }
@@ -141,7 +141,7 @@ export async function searchAll(
 function getLinkUrl(id: number): string | undefined {
   try {
     const link = getLink(id);
-    return link ? `/links/${id}` : undefined;
+    return link ? `/link/${id}` : undefined;
   } catch {
     return undefined;
   }
