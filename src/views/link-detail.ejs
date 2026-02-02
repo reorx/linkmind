@@ -11,6 +11,12 @@
     if (!clean) return baseUrl;
     return baseUrl + '#:~:text=' + encodeURIComponent(clean);
   }
+
+  // Extract filename (without .md) from a qmd path like "qmd://notes/folder/my-note.md"
+  function noteFilename(path) {
+    if (!path) return 'Untitled';
+    return path.split('/').pop().replace(/\.md$/i, '') || 'Untitled';
+  }
 %>
 <style>
   .detail-layout {
@@ -161,13 +167,18 @@
       <div class="section-title">相关笔记</div>
       <% for (const n of relatedNotes) { %>
       <div class="related-item">
+        <%
+          const noteName = noteFilename(n.path);
+          // heading: prefer dedicated field, fall back to title if it differs from filename
+          const heading = n.heading || (n.title && n.title !== noteName ? n.title : '');
+        %>
         <% if (n.noteUrl) { %>
-        📝 <a href="<%= textFragmentUrl(n.noteUrl, n.snippet) %>"><%= n.title || n.path || '' %></a>
+        📝 <a href="<%= textFragmentUrl(n.noteUrl, n.snippet) %>"><%= noteName %></a>
         <% } else { %>
-        📝 <%= n.title || n.path || '' %>
+        📝 <%= noteName %>
         <% } %>
-        <% if (n.heading) { %>
-        <span class="related-heading">§ <%= n.heading %></span>
+        <% if (heading) { %>
+        <span class="related-heading">§ <%= heading %></span>
         <% } %>
         <% if (n.snippet) { %>
         <br><span class="related-snippet"><%= n.snippet.slice(0, 150) %></span>
