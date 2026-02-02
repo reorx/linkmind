@@ -20,7 +20,7 @@
     cursor: pointer;
   }
   .link-card:hover {
-    border-color: #3a3a3a;
+    border-color: var(--hover-border);
   }
   .link-card h3 {
     font-size: 1rem;
@@ -101,7 +101,7 @@
     font-size: 1rem;
   }
   .link-card.is-error {
-    border-color: #442222;
+    border-color: var(--error-bg);
   }
   .status-badge {
     display: inline-block;
@@ -112,16 +112,16 @@
     vertical-align: middle;
   }
   .status-badge.error {
-    background: #442222;
-    color: #e88;
+    background: var(--error-bg);
+    color: var(--error-text);
   }
   .status-badge.pending {
-    background: #333;
-    color: var(--dim);
+    background: var(--badge-pending-bg);
+    color: var(--badge-pending-text);
   }
   .status-badge.scraped {
-    background: #334;
-    color: #8ae;
+    background: var(--badge-scraped-bg);
+    color: var(--badge-scraped-text);
   }
 </style>
 
@@ -156,7 +156,7 @@
         <summary><%= item.summary %></summary>
       </details>
       <% } else if (item.error_message) { %>
-      <div style="color: #e88; font-size: 0.85rem; margin-top: 6px;"><%= item.error_message %></div>
+      <div style="color: var(--error-text); font-size: 0.85rem; margin-top: 6px;"><%= item.error_message %></div>
       <% } %>
     </div>
   <% } %>
