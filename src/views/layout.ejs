@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title><%= typeof pageTitle !== 'undefined' ? pageTitle : 'LinkMind' %></title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --border: #2a2a2a;
+    --text: #e0e0e0;
+    --dim: #888;
+    --accent: #4ea8de;
+    --green: #4ecca3;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .site-header {
+    border-bottom: 1px solid var(--border);
+    padding: 16px 20px;
+  }
+  .site-header a {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .page-body {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 20px;
+  }
+</style>
+<%- typeof extraStyles !== 'undefined' ? extraStyles : '' %>
+</head>
+<body>
+<header class="site-header">
+  <a href="/">🧠 LinkMind</a>
+</header>
+<div class="page-body">
+  <%- body %>
+</div>
+</body>
+</html>

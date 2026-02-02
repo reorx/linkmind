@@ -95,6 +95,25 @@ export function getRecentLinks(limit: number = 20): LinkRecord[] {
   return db.prepare("SELECT * FROM links ORDER BY id DESC LIMIT ?").all(limit) as LinkRecord[];
 }
 
+export function getPaginatedLinks(
+  page: number = 1,
+  perPage: number = 50,
+): { links: LinkRecord[]; total: number; page: number; totalPages: number } {
+  const db = getDb();
+  const total = (
+    db.prepare("SELECT COUNT(*) as count FROM links WHERE status = 'analyzed'").get() as {
+      count: number;
+    }
+  ).count;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const safePage = Math.max(1, Math.min(page, totalPages));
+  const offset = (safePage - 1) * perPage;
+  const links = db
+    .prepare("SELECT * FROM links WHERE status = 'analyzed' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?")
+    .all(perPage, offset) as LinkRecord[];
+  return { links, total, page: safePage, totalPages };
+}
+
 export function searchLinks(query: string, limit: number = 10): LinkRecord[] {
   const db = getDb();
   const pattern = `%${query}%`;

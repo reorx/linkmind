@@ -1,0 +1,150 @@
+<style>
+  .timeline { position: relative; }
+  .day-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 16px 0 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .day-label:first-child { padding-top: 0; }
+  .link-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    cursor: pointer;
+  }
+  .link-card:hover {
+    border-color: #3a3a3a;
+  }
+  .link-card h3 {
+    font-size: 1rem;
+    margin-bottom: 4px;
+    line-height: 1.4;
+  }
+  .link-card h3 a {
+    color: var(--text);
+    text-decoration: none;
+  }
+  .link-card h3 a:hover {
+    color: var(--accent);
+  }
+  .link-card .card-meta {
+    font-size: 0.8rem;
+    color: var(--dim);
+    margin-bottom: 8px;
+    word-break: break-all;
+  }
+  .link-card .card-meta a {
+    color: var(--dim);
+  }
+  .link-card .card-meta a:hover {
+    color: var(--accent);
+  }
+  .link-card details {
+    font-size: 0.9rem;
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .link-card details summary {
+    cursor: pointer;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    list-style: none;
+  }
+  .link-card details summary::-webkit-details-marker { display: none; }
+  .link-card details[open] summary {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
+  .pagination {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    padding: 24px 0;
+    flex-wrap: wrap;
+  }
+  .pagination a, .pagination span {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+  .pagination a {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .pagination a:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .pagination .current {
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .empty-state {
+    text-align: center;
+    color: var(--dim);
+    padding: 60px 0;
+    font-size: 1rem;
+  }
+</style>
+
+<% if (links.length === 0) { %>
+<div class="empty-state">还没有收藏任何链接</div>
+<% } else { %>
+<div class="timeline">
+  <% let currentDay = ''; %>
+  <% for (const item of links) { %>
+    <% if (item._dayLabel !== currentDay) { %>
+      <% currentDay = item._dayLabel; %>
+      <div class="day-label"><%= currentDay %></div>
+    <% } %>
+    <div class="link-card">
+      <h3><a href="/link/<%= item.id %>"><%= item.og_title || item.url %></a></h3>
+      <div class="card-meta">
+        <a href="<%= item.url %>" target="_blank"><%= item.url.length > 80 ? item.url.slice(0, 80) + '...' : item.url %></a>
+        <% if (item.og_site_name) { %> · <%= item.og_site_name %><% } %>
+        <% if (item.created_at) { %> · <%= item.created_at.slice(11, 16) %><% } %>
+      </div>
+      <% if (item.summary) { %>
+      <details>
+        <summary><%= item.summary %></summary>
+      </details>
+      <% } %>
+    </div>
+  <% } %>
+</div>
+
+<% if (totalPages > 1) { %>
+<div class="pagination">
+  <% if (page > 1) { %>
+  <a href="/?page=<%= page - 1 %>">← 上一页</a>
+  <% } %>
+  <% for (let i = 1; i <= totalPages; i++) { %>
+    <% if (i === page) { %>
+    <span class="current"><%= i %></span>
+    <% } else if (Math.abs(i - page) <= 2 || i === 1 || i === totalPages) { %>
+    <a href="/?page=<%= i %>"><%= i %></a>
+    <% } else if (Math.abs(i - page) === 3) { %>
+    <span style="color:var(--dim)">…</span>
+    <% } %>
+  <% } %>
+  <% if (page < totalPages) { %>
+  <a href="/?page=<%= page + 1 %>">下一页 →</a>
+  <% } %>
+</div>
+<% } %>
+<% } %>

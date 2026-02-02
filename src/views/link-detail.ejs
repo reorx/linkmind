@@ -1,0 +1,172 @@
+<style>
+  .detail-layout {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+  }
+  .detail-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .detail-sidebar {
+    width: 280px;
+    flex-shrink: 0;
+  }
+  .detail-main h1 {
+    font-size: 1.5rem;
+    margin-bottom: 8px;
+    line-height: 1.4;
+  }
+  .meta {
+    color: var(--dim);
+    font-size: 0.85rem;
+    margin-bottom: 24px;
+    word-break: break-all;
+  }
+  .meta a { color: var(--accent); }
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--dim);
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .insight {
+    border-left: 3px solid var(--green);
+    padding-left: 16px;
+  }
+  .content {
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  /* Sidebar styles */
+  .og-image {
+    width: 100%;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .tag {
+    background: var(--border);
+    color: var(--dim);
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+  }
+  .related-item {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+  }
+  .related-item:last-child { border-bottom: none; }
+  .related-item a { color: var(--accent); }
+  .related-snippet {
+    color: var(--dim);
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 768px) {
+    .detail-layout {
+      flex-direction: column;
+    }
+    .detail-sidebar {
+      width: 100%;
+    }
+  }
+</style>
+
+<div class="detail-layout">
+  <div class="detail-main">
+    <h1><%= link.og_title || 'Untitled' %></h1>
+    <div class="meta">
+      <a href="<%= link.url %>" target="_blank"><%= link.url %></a>
+      <% if (link.og_site_name) { %>· <%= link.og_site_name %><% } %>
+      · <%= link.created_at || '' %>
+    </div>
+
+    <% if (link.summary) { %>
+    <div class="section">
+      <div class="section-title">摘要</div>
+      <div><%= link.summary %></div>
+    </div>
+    <% } %>
+
+    <% if (link.insight) { %>
+    <div class="section">
+      <div class="section-title">Insight</div>
+      <div class="insight"><%= link.insight %></div>
+    </div>
+    <% } %>
+
+    <% if (link.markdown) { %>
+    <div class="section">
+      <div class="section-title">原文内容</div>
+      <div class="content"><%= link.markdown %></div>
+    </div>
+    <% } %>
+  </div>
+
+  <div class="detail-sidebar">
+    <% if (link.og_image) { %>
+    <img class="og-image" src="<%= link.og_image %>" alt="">
+    <% } %>
+
+    <% if (tags.length > 0) { %>
+    <div class="section">
+      <div class="section-title">标签</div>
+      <div class="tags">
+        <% for (const t of tags) { %>
+        <span class="tag"><%= t %></span>
+        <% } %>
+      </div>
+    </div>
+    <% } %>
+
+    <% if (relatedNotes.length > 0) { %>
+    <div class="section">
+      <div class="section-title">相关笔记</div>
+      <% for (const n of relatedNotes) { %>
+      <div class="related-item">
+        <% if (n.obsidianUrl) { %>
+        📝 <a href="<%= n.obsidianUrl %>"><%= n.title || n.path || '' %></a>
+        <% } else { %>
+        📝 <%= n.title || n.path || '' %>
+        <% } %>
+        <% if (n.snippet) { %>
+        <br><span class="related-snippet"><%= n.snippet.slice(0, 150) %></span>
+        <% } %>
+      </div>
+      <% } %>
+    </div>
+    <% } %>
+
+    <% if (relatedLinks.length > 0) { %>
+    <div class="section">
+      <div class="section-title">相关链接</div>
+      <% for (const l of relatedLinks) { %>
+      <div class="related-item">
+        🔗 <a href="<%= l.url || '' %>" target="_blank"><%= l.title || l.url || '' %></a>
+        <% if (l.snippet) { %>
+        <br><span class="related-snippet"><%= l.snippet.slice(0, 150) %></span>
+        <% } %>
+      </div>
+      <% } %>
+    </div>
+    <% } %>
+  </div>
+</div>
