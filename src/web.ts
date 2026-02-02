@@ -2,6 +2,7 @@
  * Web server: serves permanent link pages for analyzed articles.
  */
 
+import fs from 'fs';
 import path from 'path';
 import ejs from 'ejs';
 import express from 'express';
@@ -11,10 +12,67 @@ import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
 
-const OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || 'Obsidian-Base';
-const QMD_NOTES_COLLECTION = process.env.QMD_NOTES_COLLECTION || 'notes';
-
 const VIEWS_DIR = path.resolve(import.meta.dirname, 'views');
+
+/* ── qmd → Obsidian path mapping ── */
+
+/**
+ * Normalize a filename the same way qmd does:
+ * lowercase, replace spaces/dots/special chars with hyphens, collapse multiples.
+ */
+function qmdNormalize(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[\s.]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+/**
+ * Build a lookup map: qmd-normalized relative path → real relative path.
+ * Scans the vault directory recursively (once at startup).
+ */
+function buildVaultLookup(vaultPath: string): Map<string, string> {
+  const lookup = new Map<string, string>();
+  if (!vaultPath || !fs.existsSync(vaultPath)) return lookup;
+
+  function walk(dir: string, rel: string) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      const realRel = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        walk(path.join(dir, e.name), realRel);
+      } else if (e.name.endsWith('.md')) {
+        // Build normalized key: each path segment gets normalized independently
+        // For the filename, strip .md before normalizing, then add it back
+        const parts = realRel.split('/');
+        const normalizedParts = parts.map((part, i) => {
+          if (i === parts.length - 1 && part.endsWith('.md')) {
+            return qmdNormalize(part.slice(0, -3)) + '.md';
+          }
+          return qmdNormalize(part);
+        });
+        const key = normalizedParts.join('/');
+        lookup.set(key, realRel);
+      }
+    }
+  }
+
+  walk(vaultPath, '');
+  log.info({ entries: lookup.size }, 'Obsidian vault lookup built');
+  return lookup;
+}
+
+// Initialized lazily in startWebServer (after dotenv has loaded)
+let OBSIDIAN_VAULT = 'Obsidian-Base';
+let QMD_NOTES_COLLECTION = 'notes';
+let vaultLookup = new Map<string, string>();
 
 /* ── helpers ── */
 
@@ -32,13 +90,29 @@ function safeParseJson(s?: string): any[] {
   }
 }
 
+/**
+ * Convert a qmd path (e.g. qmd://notes/80-zettelkasten-notes/foo-bar.md)
+ * to an obsidian:// URL using the vault filesystem lookup.
+ */
 function buildObsidianUrl(filePath?: string): string | undefined {
   if (!filePath) return undefined;
   const prefix = `qmd://${QMD_NOTES_COLLECTION}/`;
-  let notePath = filePath;
-  if (notePath.startsWith(prefix)) {
-    notePath = notePath.slice(prefix.length);
+  let qmdRel = filePath;
+  if (qmdRel.startsWith(prefix)) {
+    qmdRel = qmdRel.slice(prefix.length);
   }
+
+  // Try to find real path from lookup
+  const realRel = vaultLookup.get(qmdRel);
+  let notePath: string;
+  if (realRel) {
+    notePath = realRel;
+  } else {
+    // Fallback: use qmd path as-is (better than nothing)
+    notePath = qmdRel;
+  }
+
+  // Remove .md extension for Obsidian URL
   if (notePath.endsWith('.md')) {
     notePath = notePath.slice(0, -3);
   }
@@ -77,6 +151,11 @@ async function renderPage(template: string, data: Record<string, any>): Promise<
 /* ── server ── */
 
 export function startWebServer(port: number): void {
+  // Read env vars here (after dotenv has loaded in index.ts)
+  OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || 'Obsidian-Base';
+  QMD_NOTES_COLLECTION = process.env.QMD_NOTES_COLLECTION || 'notes';
+  vaultLookup = buildVaultLookup(process.env.OBSIDIAN_VAULT_PATH || '');
+
   const app = express();
 
   app.use(express.json());
