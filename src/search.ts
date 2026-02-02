@@ -18,6 +18,7 @@ export interface SearchResult {
   source: string;
   title: string;
   snippet: string;
+  heading?: string;
   path?: string;
   url?: string;
   linkId?: number;
@@ -46,13 +47,19 @@ export async function searchNotes(query: string, limit: number = 5): Promise<Sea
     const elapsed = Date.now() - startTime;
     log.info({ elapsed: `${elapsed}ms`, results: noteResults.length, query }, '← qmd vsearch: notes done');
 
-    return noteResults.map((item: any) => ({
-      source: 'notes',
-      title: item.title || item.path || 'Untitled',
-      snippet: item.snippet || item.content?.slice(0, 200) || '',
-      path: item.path || item.file,
-      score: item.score,
-    }));
+    return noteResults.map((item: any) => {
+      const filePath = (item.path || item.file || '').replace(`qmd://${NOTES_COLLECTION}/`, '');
+      // Extract filename without extension as title
+      const filename = filePath.split('/').pop()?.replace(/\.md$/i, '') || 'Untitled';
+      return {
+        source: 'notes',
+        title: filename,
+        heading: item.title || undefined,
+        snippet: item.snippet || item.content?.slice(0, 200) || '',
+        path: item.path || item.file,
+        score: item.score,
+      };
+    });
   } catch (err) {
     log.warn({ query, err: err instanceof Error ? err.message : String(err) }, '← qmd vsearch: notes failed');
     return [];

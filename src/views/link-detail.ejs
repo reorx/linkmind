@@ -89,6 +89,11 @@
   }
   .related-item:last-child { border-bottom: none; }
   .related-item a { color: var(--accent); }
+  .related-heading {
+    color: var(--dim);
+    font-size: 0.8rem;
+    margin-left: 4px;
+  }
   .related-snippet {
     color: var(--dim);
     font-size: 0.8rem;
@@ -160,6 +165,9 @@
         📝 <a href="<%= textFragmentUrl(n.noteUrl, n.snippet) %>"><%= n.title || n.path || '' %></a>
         <% } else { %>
         📝 <%= n.title || n.path || '' %>
+        <% } %>
+        <% if (n.heading) { %>
+        <span class="related-heading">§ <%= n.heading %></span>
         <% } %>
         <% if (n.snippet) { %>
         <br><span class="related-snippet"><%= n.snippet.slice(0, 150) %></span>
