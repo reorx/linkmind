@@ -1,15 +1,45 @@
 <%
+  // Encode a text fragment value: only encode spaces and dashes (dash is special in text fragment syntax)
+  function encodeTextFragment(text) {
+    return text.replace(/-/g, '%2D').replace(/ /g, '%20');
+  }
+
   // Extract a clean text fragment for scroll-to-text-fragment (#:~:text=...)
+  // Supports multi-line snippets via textStart,textEnd syntax
   function textFragmentUrl(baseUrl, snippet) {
     if (!baseUrl || !snippet) return baseUrl || '';
     // Strip qmd diff-style headers like "@@ -74,4 @@ (73 before, 3 after)\n\n"
     let clean = snippet.replace(/^@@[^@]*@@[^\n]*\n*/g, '').trim();
-    // Take first 80 chars to keep URL reasonable, break at word boundary
-    if (clean.length > 80) {
-      clean = clean.slice(0, 80).replace(/\s+\S*$/, '');
-    }
+    // Remove trailing ellipsis (…, ..., etc.)
+    clean = clean.replace(/[.…]{2,}$|…$/g, '').trim();
     if (!clean) return baseUrl;
-    return baseUrl + '#:~:text=' + encodeURIComponent(clean);
+
+    const lines = clean.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length === 0) return baseUrl;
+
+    if (lines.length === 1) {
+      // Single line: use textStart only, cap at 80 chars on word boundary
+      let text = lines[0];
+      if (text.length > 80) {
+        text = text.slice(0, 80).replace(/\s+\S*$/, '');
+      }
+      if (!text) return baseUrl;
+      return baseUrl + '#:~:text=' + encodeTextFragment(text);
+    }
+
+    // Multi-line: use textStart,textEnd to span across line breaks
+    let textStart = lines[0];
+    let textEnd = lines[lines.length - 1];
+    // Cap textStart at 80 chars (from start, break at word boundary)
+    if (textStart.length > 80) {
+      textStart = textStart.slice(0, 80).replace(/\s+\S*$/, '');
+    }
+    // Cap textEnd at 80 chars (from end, break at word boundary)
+    if (textEnd.length > 80) {
+      textEnd = textEnd.slice(-80).replace(/^\S*\s+/, '');
+    }
+    if (!textStart || !textEnd) return baseUrl;
+    return baseUrl + '#:~:text=' + encodeTextFragment(textStart) + ',' + encodeTextFragment(textEnd);
   }
 
   // Extract filename (without .md) from a qmd path like "qmd://notes/folder/my-note.md"
