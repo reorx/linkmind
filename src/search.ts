@@ -88,20 +88,21 @@ export async function searchHistoricalLinks(query: string, limit: number = 5): P
       log.info({ elapsed: `${elapsed}ms`, results: linkResults.length, query }, '← qmd vsearch: links done');
 
       if (linkResults.length > 0) {
-        return linkResults.map((item: any) => {
-          // Extract link ID from filename (format: {id}-{slug}.md)
+        const results: SearchResult[] = [];
+        for (const item of linkResults) {
           const filename = item.file?.replace(`qmd://${LINKS_COLLECTION}/`, '') || '';
           const idMatch = filename.match(/^(\d+)-/);
           const linkId = idMatch ? parseInt(idMatch[1], 10) : undefined;
-          return {
+          results.push({
             source: 'links',
             title: item.title || filename || 'Untitled',
             snippet: item.snippet || '',
-            url: linkId ? getLinkUrl(linkId) : undefined,
+            url: linkId ? await getLinkUrl(linkId) : undefined,
             linkId,
             score: item.score,
-          };
-        });
+          });
+        }
+        return results;
       }
     }
   } catch (err) {
@@ -111,8 +112,8 @@ export async function searchHistoricalLinks(query: string, limit: number = 5): P
     );
   }
 
-  // Fallback: SQLite LIKE search
-  const links = searchLinks(query, limit);
+  // Fallback: database LIKE search
+  const links = await searchLinks(query, limit);
   return links.map((link) => ({
     source: 'links',
     title: link.og_title || link.url,
@@ -138,9 +139,9 @@ export async function searchAll(
 /**
  * Look up the URL for a link by its database ID.
  */
-function getLinkUrl(id: number): string | undefined {
+async function getLinkUrl(id: number): Promise<string | undefined> {
   try {
-    const link = getLink(id);
+    const link = await getLink(id);
     return link ? `/link/${id}` : undefined;
   } catch {
     return undefined;

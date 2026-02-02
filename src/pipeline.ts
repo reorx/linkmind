@@ -36,15 +36,15 @@ export type ProgressCallback = (stage: string) => void | Promise<void>;
  * Returns { ...result, duplicate: true } when re-processing an existing link.
  */
 export async function processUrl(url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
-  const existing = getLinkByUrl(url);
+  const existing = await getLinkByUrl(url);
   if (existing && existing.id) {
     log.info({ url, linkId: existing.id }, '[start] URL already exists, re-processing');
-    updateLink(existing.id, { status: 'pending', error_message: undefined });
+    await updateLink(existing.id, { status: 'pending', error_message: undefined });
     const result = await runPipeline(existing.id, url, onProgress);
     return { ...result, duplicate: true };
   }
 
-  const linkId = insertLink(url);
+  const linkId = await insertLink(url);
   log.info({ url, linkId }, '[start] Processing URL');
   return runPipeline(linkId, url, onProgress);
 }
@@ -53,7 +53,7 @@ export async function processUrl(url: string, onProgress?: ProgressCallback): Pr
  * Retry a failed link: resume from the appropriate stage based on existing data.
  */
 export async function retryLink(linkId: number): Promise<ProcessResult> {
-  const link = getLink(linkId);
+  const link = await getLink(linkId);
   if (!link) {
     return { linkId, title: '', url: '', status: 'error', error: 'Link not found' };
   }
@@ -61,7 +61,7 @@ export async function retryLink(linkId: number): Promise<ProcessResult> {
   log.info({ url: link.url, linkId, prevStatus: link.status }, '[retry] Retrying link');
 
   // Reset status
-  updateLink(linkId, { status: 'pending', error_message: undefined });
+  await updateLink(linkId, { status: 'pending', error_message: undefined });
 
   return runPipeline(linkId, link.url, undefined, link);
 }
@@ -80,8 +80,8 @@ export interface DeleteResult {
  * 3. Delete from database
  * 4. Trigger qmd re-index
  */
-export function deleteLinkFull(linkId: number): DeleteResult {
-  const link = getLink(linkId);
+export async function deleteLinkFull(linkId: number): Promise<DeleteResult> {
+  const link = await getLink(linkId);
   if (!link) {
     throw new Error(`Link ${linkId} not found`);
   }
@@ -89,7 +89,7 @@ export function deleteLinkFull(linkId: number): DeleteResult {
   log.info({ linkId, url: link.url }, '[delete] Starting');
 
   // 1. Remove from other links' related_links
-  const relatedLinksUpdated = removeFromRelatedLinks(linkId);
+  const relatedLinksUpdated = await removeFromRelatedLinks(linkId);
   log.info({ linkId, relatedLinksUpdated }, '[delete] Cleaned up related_links references');
 
   // 2. Delete exported markdown
@@ -99,7 +99,7 @@ export function deleteLinkFull(linkId: number): DeleteResult {
   }
 
   // 3. Delete from database
-  deleteLink(linkId);
+  await deleteLink(linkId);
   log.info({ linkId }, '[delete] Deleted from database');
 
   // 4. Trigger qmd re-index
@@ -136,7 +136,7 @@ async function runPipeline(
       await onProgress?.('scraping');
       const scrapeResult = await scrapeUrl(url);
 
-      updateLink(linkId, {
+      await updateLink(linkId, {
         og_title: scrapeResult.og.title,
         og_description: scrapeResult.og.description,
         og_image: scrapeResult.og.image,
@@ -156,7 +156,7 @@ async function runPipeline(
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[scrape] Failed');
       try {
-        updateLink(linkId, { status: 'error', error_message: `[scrape] ${errMsg}` });
+        await updateLink(linkId, { status: 'error', error_message: `[scrape] ${errMsg}` });
       } catch {}
       return { linkId, title: url, url, status: 'error', error: `[scrape] ${errMsg}` };
     }
@@ -174,7 +174,7 @@ async function runPipeline(
       linkId,
     });
 
-    updateLink(linkId, {
+    await updateLink(linkId, {
       summary: analysis.summary,
       insight: analysis.insight,
       tags: JSON.stringify(analysis.tags),
@@ -188,13 +188,13 @@ async function runPipeline(
     const errMsg = err instanceof Error ? err.message : String(err);
     log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[analyze] Failed');
     try {
-      updateLink(linkId, { status: 'error', error_message: `[analyze] ${errMsg}` });
+      await updateLink(linkId, { status: 'error', error_message: `[analyze] ${errMsg}` });
     } catch {}
     return { linkId, title: title || url, url, status: 'error', error: `[analyze] ${errMsg}` };
   }
 
   // ── Stage 3: Export + QMD Index ──
-  const fullLink = getLink(linkId);
+  const fullLink = await getLink(linkId);
   if (fullLink) {
     try {
       const exportPath = exportLinkMarkdown(fullLink);
@@ -226,7 +226,9 @@ export interface RefreshResult {
  * Does NOT re-scrape or re-summarize — only re-searches and re-generates insight.
  */
 export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> {
-  const links = linkId ? ([getLink(linkId)].filter(Boolean) as LinkRecord[]) : getAllAnalyzedLinks();
+  const links = linkId
+    ? ([await getLink(linkId)].filter(Boolean) as LinkRecord[])
+    : await getAllAnalyzedLinks();
 
   if (links.length === 0) {
     log.warn({ linkId }, '[refresh] No links found');
@@ -253,14 +255,14 @@ export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> 
         link.summary,
       );
 
-      updateLink(id, {
+      await updateLink(id, {
         related_notes: JSON.stringify(related.relatedNotes),
         related_links: JSON.stringify(related.relatedLinks),
         insight: related.insight,
       });
 
       // Re-export markdown with updated related info
-      const updatedLink = getLink(id);
+      const updatedLink = await getLink(id);
       if (updatedLink) {
         exportLinkMarkdown(updatedLink);
       }

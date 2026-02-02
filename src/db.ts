@@ -1,11 +1,7 @@
-import fs from 'fs';
-import path from 'path';
-import Database from 'better-sqlite3';
+import { Generated, Kysely, PostgresDialect, sql } from 'kysely';
+import pg from 'pg';
 
-const DB_DIR = path.resolve('data');
-const DB_PATH = path.join(DB_DIR, 'linkmind.db');
-
-let db: Database.Database | null = null;
+/* ── Types ── */
 
 export interface LinkRecord {
   id?: number;
@@ -18,142 +14,231 @@ export interface LinkRecord {
   markdown?: string;
   summary?: string;
   insight?: string;
-  related_notes?: string; // JSON array
-  related_links?: string; // JSON array
-  tags?: string; // JSON array
+  related_notes?: string; // JSON string (for compat with existing code)
+  related_links?: string; // JSON string
+  tags?: string; // JSON string
   status: 'pending' | 'scraped' | 'analyzed' | 'error';
   error_message?: string;
   created_at?: string;
   updated_at?: string;
 }
 
-export function getDb(): Database.Database {
+interface LinksTable {
+  id: Generated<number>;
+  url: string;
+  og_title: string | null;
+  og_description: string | null;
+  og_image: string | null;
+  og_site_name: string | null;
+  og_type: string | null;
+  markdown: string | null;
+  summary: string | null;
+  insight: string | null;
+  related_notes: string | null;
+  related_links: string | null;
+  tags: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+interface Database {
+  links: LinksTable;
+}
+
+/* ── Database instance ── */
+
+let db: Kysely<Database> | null = null;
+
+export function getDb(): Kysely<Database> {
   if (db) return db;
 
-  fs.mkdirSync(DB_DIR, { recursive: true });
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error('DATABASE_URL environment variable is required');
+  }
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS links (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      url TEXT NOT NULL,
-      og_title TEXT,
-      og_description TEXT,
-      og_image TEXT,
-      og_site_name TEXT,
-      og_type TEXT,
-      markdown TEXT,
-      summary TEXT,
-      insight TEXT,
-      related_notes TEXT DEFAULT '[]',
-      related_links TEXT DEFAULT '[]',
-      tags TEXT DEFAULT '[]',
-      status TEXT NOT NULL DEFAULT 'pending',
-      error_message TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
+  db = new Kysely<Database>({
+    dialect: new PostgresDialect({
+      pool: new pg.Pool({ connectionString }),
+    }),
+  });
 
   return db;
 }
 
-export function insertLink(url: string): number {
-  const db = getDb();
-  const stmt = db.prepare('INSERT INTO links (url) VALUES (?)');
-  const result = stmt.run(url);
-  return result.lastInsertRowid as number;
+/* ── Helpers ── */
+
+/** Convert a DB row to LinkRecord (dates to ISO strings, nulls to undefined) */
+function toRecord(row: any): LinkRecord {
+  return {
+    ...row,
+    related_notes: row.related_notes != null ? (typeof row.related_notes === 'string' ? row.related_notes : JSON.stringify(row.related_notes)) : undefined,
+    related_links: row.related_links != null ? (typeof row.related_links === 'string' ? row.related_links : JSON.stringify(row.related_links)) : undefined,
+    tags: row.tags != null ? (typeof row.tags === 'string' ? row.tags : JSON.stringify(row.tags)) : undefined,
+    created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    updated_at: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+    og_title: row.og_title ?? undefined,
+    og_description: row.og_description ?? undefined,
+    og_image: row.og_image ?? undefined,
+    og_site_name: row.og_site_name ?? undefined,
+    og_type: row.og_type ?? undefined,
+    markdown: row.markdown ?? undefined,
+    summary: row.summary ?? undefined,
+    insight: row.insight ?? undefined,
+    error_message: row.error_message ?? undefined,
+  };
 }
 
-export function updateLink(id: number, data: Partial<LinkRecord>): void {
-  const db = getDb();
-  const fields = Object.keys(data)
-    .map((k) => `${k} = ?`)
-    .join(', ');
-  const values = Object.values(data);
-  db.prepare(`UPDATE links SET ${fields}, updated_at = datetime('now') WHERE id = ?`).run(...values, id);
+/* ── CRUD ── */
+
+export async function insertLink(url: string): Promise<number> {
+  const result = await getDb()
+    .insertInto('links')
+    .values({ url, status: 'pending' })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  return result.id;
 }
 
-export function getLink(id: number): LinkRecord | undefined {
-  const db = getDb();
-  return db.prepare('SELECT * FROM links WHERE id = ?').get(id) as LinkRecord | undefined;
+export async function updateLink(id: number, data: Partial<LinkRecord>): Promise<void> {
+  const { id: _id, created_at: _ca, ...rest } = data as any;
+  await getDb()
+    .updateTable('links')
+    .set({ ...rest, updated_at: sql`NOW()` })
+    .where('id', '=', id)
+    .execute();
 }
 
-export function getLinkByUrl(url: string): LinkRecord | undefined {
-  const db = getDb();
-  return db.prepare('SELECT * FROM links WHERE url = ? ORDER BY id DESC LIMIT 1').get(url) as LinkRecord | undefined;
+export async function getLink(id: number): Promise<LinkRecord | undefined> {
+  const row = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row ? toRecord(row) : undefined;
 }
 
-export function getRecentLinks(limit: number = 20): LinkRecord[] {
-  const db = getDb();
-  return db.prepare('SELECT * FROM links ORDER BY id DESC LIMIT ?').all(limit) as LinkRecord[];
+export async function getLinkByUrl(url: string): Promise<LinkRecord | undefined> {
+  const row = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .where('url', '=', url)
+    .orderBy('id', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return row ? toRecord(row) : undefined;
 }
 
-export function getPaginatedLinks(
+export async function getRecentLinks(limit: number = 20): Promise<LinkRecord[]> {
+  const rows = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .orderBy('id', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map(toRecord);
+}
+
+export async function getPaginatedLinks(
   page: number = 1,
   perPage: number = 50,
-): { links: LinkRecord[]; total: number; page: number; totalPages: number } {
-  const db = getDb();
-  const total = (db.prepare('SELECT COUNT(*) as count FROM links').get() as { count: number }).count;
+): Promise<{ links: LinkRecord[]; total: number; page: number; totalPages: number }> {
+  const { count } = await getDb()
+    .selectFrom('links')
+    .select(sql<number>`count(*)::int`.as('count'))
+    .executeTakeFirstOrThrow();
+
+  const total = count;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const safePage = Math.max(1, Math.min(page, totalPages));
   const offset = (safePage - 1) * perPage;
-  const links = db
-    .prepare('SELECT * FROM links ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
-    .all(perPage, offset) as LinkRecord[];
-  return { links, total, page: safePage, totalPages };
+
+  const rows = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
+    .limit(perPage)
+    .offset(offset)
+    .execute();
+
+  return { links: rows.map(toRecord), total, page: safePage, totalPages };
 }
 
-export function getAllAnalyzedLinks(): LinkRecord[] {
-  const db = getDb();
-  return db.prepare("SELECT * FROM links WHERE status = 'analyzed' ORDER BY id ASC").all() as LinkRecord[];
+export async function getAllAnalyzedLinks(): Promise<LinkRecord[]> {
+  const rows = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .where('status', '=', 'analyzed')
+    .orderBy('id', 'asc')
+    .execute();
+  return rows.map(toRecord);
 }
 
-export function getFailedLinks(): LinkRecord[] {
-  const db = getDb();
-  return db.prepare("SELECT * FROM links WHERE status = 'error' ORDER BY id DESC").all() as LinkRecord[];
+export async function getFailedLinks(): Promise<LinkRecord[]> {
+  const rows = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .where('status', '=', 'error')
+    .orderBy('id', 'desc')
+    .execute();
+  return rows.map(toRecord);
 }
 
-export function deleteLink(id: number): void {
-  const db = getDb();
-  db.prepare('DELETE FROM links WHERE id = ?').run(id);
+export async function deleteLink(id: number): Promise<void> {
+  await getDb()
+    .deleteFrom('links')
+    .where('id', '=', id)
+    .execute();
 }
 
 /**
  * Remove a deleted linkId from all other links' related_links JSON arrays.
  */
-export function removeFromRelatedLinks(deletedLinkId: number): number {
-  const db = getDb();
-  // Find all analyzed links that might reference this linkId
-  const links = db
-    .prepare("SELECT id, related_links FROM links WHERE status = 'analyzed' AND related_links IS NOT NULL")
-    .all() as Pick<LinkRecord, 'id' | 'related_links'>[];
+export async function removeFromRelatedLinks(deletedLinkId: number): Promise<number> {
+  const links = await getDb()
+    .selectFrom('links')
+    .select(['id', 'related_links'])
+    .where('status', '=', 'analyzed')
+    .where('related_links', 'is not', null)
+    .execute();
 
   let updated = 0;
   for (const link of links) {
-    const related: any[] = JSON.parse(link.related_links || '[]');
+    const related: any[] = JSON.parse(
+      typeof link.related_links === 'string' ? link.related_links : JSON.stringify(link.related_links || []),
+    );
     const filtered = related.filter((r: any) => r.linkId !== deletedLinkId);
     if (filtered.length !== related.length) {
-      db.prepare("UPDATE links SET related_links = ?, updated_at = datetime('now') WHERE id = ?").run(
-        JSON.stringify(filtered),
-        link.id,
-      );
+      await getDb()
+        .updateTable('links')
+        .set({ related_links: JSON.stringify(filtered), updated_at: sql`NOW()` })
+        .where('id', '=', link.id)
+        .execute();
       updated++;
     }
   }
   return updated;
 }
 
-export function searchLinks(query: string, limit: number = 10): LinkRecord[] {
-  const db = getDb();
+export async function searchLinks(query: string, limit: number = 10): Promise<LinkRecord[]> {
   const pattern = `%${query}%`;
-  return db
-    .prepare(
-      `SELECT * FROM links
-       WHERE status = 'analyzed'
-       AND (og_title LIKE ? OR og_description LIKE ? OR summary LIKE ? OR markdown LIKE ?)
-       ORDER BY id DESC LIMIT ?`,
+  const rows = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .where('status', '=', 'analyzed')
+    .where((eb) =>
+      eb.or([
+        eb('og_title', 'ilike', pattern),
+        eb('og_description', 'ilike', pattern),
+        eb('summary', 'ilike', pattern),
+        eb('markdown', 'ilike', pattern),
+      ]),
     )
-    .all(pattern, pattern, pattern, pattern, limit) as LinkRecord[];
+    .orderBy('id', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map(toRecord);
 }

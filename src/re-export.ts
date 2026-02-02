@@ -9,8 +9,8 @@ import 'dotenv/config';
 import { getAllAnalyzedLinks } from './db.js';
 import { exportLinkMarkdown } from './export.js';
 
-function main() {
-  const links = getAllAnalyzedLinks();
+async function main() {
+  const links = await getAllAnalyzedLinks();
   console.log(`Re-exporting ${links.length} analyzed links...\n`);
 
   let ok = 0;

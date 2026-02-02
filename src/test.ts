@@ -20,7 +20,7 @@ async function main() {
   console.log(`\n🔗 Testing pipeline with: ${testUrl}\n`);
 
   // Step 1: Insert
-  const linkId = insertLink(testUrl);
+  const linkId = await insertLink(testUrl);
   console.log(`[db] Created link id=${linkId}`);
 
   // Step 2: Scrape
@@ -32,7 +32,7 @@ async function main() {
   console.log(`  Site: ${scrapeResult.og.siteName}`);
   console.log(`  Markdown: ${scrapeResult.markdown.length} chars`);
 
-  updateLink(linkId, {
+  await updateLink(linkId, {
     og_title: scrapeResult.og.title,
     og_description: scrapeResult.og.description,
     og_image: scrapeResult.og.image,
@@ -54,7 +54,7 @@ async function main() {
   });
   console.log(`[agent] Done in ${((Date.now() - t1) / 1000).toFixed(1)}s`);
 
-  updateLink(linkId, {
+  await updateLink(linkId, {
     summary: analysis.summary,
     insight: analysis.insight,
     tags: JSON.stringify(analysis.tags),
@@ -88,14 +88,14 @@ async function main() {
   console.log(`\n🔍 Permanent link: http://localhost:3456/link/${linkId}`);
 
   // Export markdown for qmd
-  const fullLink = getLink(linkId);
+  const fullLink = await getLink(linkId);
   if (fullLink) {
     const exportPath = exportLinkMarkdown(fullLink);
     console.log(`\n[export] Written: ${exportPath}`);
   }
 
   // Verify DB
-  const saved = getLink(linkId);
+  const saved = await getLink(linkId);
   console.log(`\n[db] Status: ${saved?.status}`);
 }
 

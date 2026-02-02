@@ -41,7 +41,7 @@ export function startBot(token: string, webBaseUrl: string): Bot {
 }
 
 async function handleUrl(ctx: any, url: string, webBaseUrl: string): Promise<void> {
-  const isDuplicate = !!getLinkByUrl(url);
+  const isDuplicate = !!(await getLinkByUrl(url));
   const statusText = isDuplicate ? `🔄 该链接已存在，正在重新抓取、更新和分析...` : `🔗 收到链接，正在处理...`;
 
   const statusMsg = await ctx.reply(statusText, {
@@ -61,7 +61,7 @@ async function handleUrl(ctx: any, url: string, webBaseUrl: string): Promise<voi
     return;
   }
 
-  const link = getLink(result.linkId);
+  const link = await getLink(result.linkId);
   if (!link) return;
 
   const tags: string[] = safeParseJson(link.tags);

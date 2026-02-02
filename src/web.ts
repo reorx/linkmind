@@ -95,7 +95,7 @@ export function startWebServer(port: number): void {
 
     try {
       const result = await processUrl(url);
-      const link = getLink(result.linkId);
+      const link = await getLink(result.linkId);
       res.json({
         id: result.linkId,
         url: result.url,
@@ -112,9 +112,9 @@ export function startWebServer(port: number): void {
   });
 
   // GET /api/links — list recent links
-  app.get('/api/links', (req, res) => {
+  app.get('/api/links', async (req, res) => {
     const limit = parseInt(req.query.limit as string, 10) || 20;
-    const links = getRecentLinks(limit);
+    const links = await getRecentLinks(limit);
     res.json(
       links.map((l) => ({
         id: l.id,
@@ -128,13 +128,13 @@ export function startWebServer(port: number): void {
   });
 
   // GET /api/links/:id — get a single link detail
-  app.get('/api/links/:id', (req, res) => {
+  app.get('/api/links/:id', async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
       res.status(400).json({ error: 'Invalid ID' });
       return;
     }
-    const link = getLink(id);
+    const link = await getLink(id);
     if (!link) {
       res.status(404).json({ error: 'Not found' });
       return;
@@ -148,19 +148,19 @@ export function startWebServer(port: number): void {
   });
 
   // DELETE /api/links/:id — delete a link and clean up references
-  app.delete('/api/links/:id', (req, res) => {
+  app.delete('/api/links/:id', async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
       res.status(400).json({ error: 'Invalid ID' });
       return;
     }
-    const link = getLink(id);
+    const link = await getLink(id);
     if (!link) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
 
-    const result = deleteLinkFull(id);
+    const result = await deleteLinkFull(id);
     log.info({ linkId: id, url: result.url, relatedLinksUpdated: result.relatedLinksUpdated }, 'Link deleted via API');
     res.json({
       message: 'Link deleted',
@@ -170,7 +170,7 @@ export function startWebServer(port: number): void {
 
   // POST /api/retry — retry all failed links
   app.post('/api/retry', async (req, res) => {
-    const failed = getFailedLinks();
+    const failed = await getFailedLinks();
     if (failed.length === 0) {
       res.json({ message: 'No failed links to retry', retried: 0 });
       return;
@@ -199,7 +199,7 @@ export function startWebServer(port: number): void {
       return;
     }
 
-    const link = getLink(id);
+    const link = await getLink(id);
     if (!link) {
       res.status(404).json({ error: 'Not found' });
       return;
@@ -214,7 +214,7 @@ export function startWebServer(port: number): void {
   app.get('/', async (req, res) => {
     try {
       const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-      const { links, total, page: safePage, totalPages } = getPaginatedLinks(page, 50);
+      const { links, total, page: safePage, totalPages } = await getPaginatedLinks(page, 50);
 
       const linksWithDay = links.map((l) => ({
         ...l,
@@ -243,7 +243,7 @@ export function startWebServer(port: number): void {
       return;
     }
 
-    const link = getLink(id);
+    const link = await getLink(id);
     if (!link) {
       res.status(404).send('Not found');
       return;
