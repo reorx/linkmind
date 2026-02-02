@@ -36,13 +36,11 @@ function buildFilename(link: LinkRecord): string {
 }
 
 /**
- * Render a link record as a Markdown document.
+ * Render a link record as a Markdown document for QMD indexing.
+ * Only includes metadata + summary + full original content.
+ * Excludes related content (notes/links/insight) to avoid polluting search results.
  */
 function renderMarkdown(link: LinkRecord): string {
-  const tags: string[] = safeParse(link.tags, []);
-  const relatedNotes: any[] = safeParse(link.related_notes, []);
-  const relatedLinks: any[] = safeParse(link.related_links, []);
-
   const lines: string[] = [];
 
   // YAML front matter
@@ -51,7 +49,6 @@ function renderMarkdown(link: LinkRecord): string {
   lines.push(`url: "${link.url}"`);
   if (link.og_title) lines.push(`title: "${escapeFm(link.og_title)}"`);
   if (link.og_site_name) lines.push(`site: "${escapeFm(link.og_site_name)}"`);
-  if (tags.length > 0) lines.push(`tags: [${tags.map((t) => `"${escapeFm(t)}"`).join(', ')}]`);
   if (link.created_at) lines.push(`created: "${link.created_at}"`);
   lines.push('---');
   lines.push('');
@@ -68,12 +65,6 @@ function renderMarkdown(link: LinkRecord): string {
     lines.push('');
   }
 
-  // Tags
-  if (tags.length > 0) {
-    lines.push(`**标签:** ${tags.join(', ')}`);
-    lines.push('');
-  }
-
   // Summary
   if (link.summary) {
     lines.push('## 摘要');
@@ -82,44 +73,11 @@ function renderMarkdown(link: LinkRecord): string {
     lines.push('');
   }
 
-  // Insight
-  if (link.insight) {
-    lines.push('## Insight');
-    lines.push('');
-    lines.push(link.insight);
-    lines.push('');
-  }
-
-  // Related Notes
-  if (relatedNotes.length > 0) {
-    lines.push('## 相关笔记');
-    lines.push('');
-    for (const n of relatedNotes) {
-      const title = n.title || n.path || 'Untitled';
-      const snippet = n.snippet ? ` — ${n.snippet.slice(0, 120)}` : '';
-      lines.push(`- ${title}${snippet}`);
-    }
-    lines.push('');
-  }
-
-  // Related Links
-  if (relatedLinks.length > 0) {
-    lines.push('## 相关链接');
-    lines.push('');
-    for (const l of relatedLinks) {
-      const title = l.title || l.url || 'Untitled';
-      const url = l.url ? ` (${l.url})` : '';
-      lines.push(`- ${title}${url}`);
-    }
-    lines.push('');
-  }
-
-  // Article excerpt (first 3000 chars of markdown for richer search)
+  // Full original content
   if (link.markdown) {
-    lines.push('## 原文摘录');
+    lines.push('## 原文');
     lines.push('');
-    lines.push(link.markdown.slice(0, 3000));
-    if (link.markdown.length > 3000) lines.push('\n...(truncated)');
+    lines.push(link.markdown);
     lines.push('');
   }
 

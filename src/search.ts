@@ -114,12 +114,14 @@ export async function searchHistoricalLinks(query: string, limit: number = 5): P
 
 /**
  * Combined search: notes + historical links.
+ * Runs sequentially to avoid concurrent qmd processes fighting over SQLite locks.
  */
 export async function searchAll(
   query: string,
   limit: number = 5,
 ): Promise<{ notes: SearchResult[]; links: SearchResult[] }> {
-  const [notes, links] = await Promise.all([searchNotes(query, limit), searchHistoricalLinks(query, limit)]);
+  const notes = await searchNotes(query, limit);
+  const links = await searchHistoricalLinks(query, limit);
   return { notes, links };
 }
 
