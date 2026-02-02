@@ -35,8 +35,8 @@ export type ProgressCallback = (stage: string) => void | Promise<void>;
  * If the URL already exists, re-processes the existing link instead of creating a new one.
  * Returns { ...result, duplicate: true } when re-processing an existing link.
  */
-export async function processUrl(url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
-  const existing = await getLinkByUrl(url);
+export async function processUrl(userId: number, url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
+  const existing = await getLinkByUrl(userId, url);
   if (existing && existing.id) {
     log.info({ url, linkId: existing.id }, '[start] URL already exists, re-processing');
     await updateLink(existing.id, { status: 'pending', error_message: undefined });
@@ -44,7 +44,7 @@ export async function processUrl(url: string, onProgress?: ProgressCallback): Pr
     return { ...result, duplicate: true };
   }
 
-  const linkId = await insertLink(url);
+  const linkId = await insertLink(userId, url);
   log.info({ url, linkId }, '[start] Processing URL');
   return runPipeline(linkId, url, onProgress);
 }

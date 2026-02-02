@@ -1,0 +1,49 @@
+<style>
+  .login-container {
+    max-width: 400px;
+    margin: 120px auto;
+    text-align: center;
+  }
+  .login-container h1 {
+    font-size: 2rem;
+    margin-bottom: 16px;
+  }
+  .login-container p {
+    color: var(--dim);
+    font-size: 1rem;
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+  .login-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px;
+  }
+  .login-box .emoji {
+    font-size: 3rem;
+    margin-bottom: 16px;
+  }
+  .login-instruction {
+    color: var(--dim);
+    font-size: 0.9rem;
+    margin-top: 16px;
+  }
+  .login-instruction code {
+    background: var(--border);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.95rem;
+  }
+</style>
+
+<div class="login-container">
+  <div class="login-box">
+    <div class="emoji">🧠</div>
+    <h1>LinkMind</h1>
+    <p>请通过 Telegram Bot 登录</p>
+    <div class="login-instruction">
+      在 Bot 中发送 <code>/login</code> 获取登录链接
+    </div>
+  </div>
+</div>

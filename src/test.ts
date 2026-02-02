@@ -19,8 +19,8 @@ if (!testUrl) {
 async function main() {
   console.log(`\n🔗 Testing pipeline with: ${testUrl}\n`);
 
-  // Step 1: Insert
-  const linkId = await insertLink(testUrl);
+  // Step 1: Insert (use user_id=1 for testing)
+  const linkId = await insertLink(1, testUrl);
   console.log(`[db] Created link id=${linkId}`);
 
   // Step 2: Scrape

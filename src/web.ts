@@ -1,5 +1,6 @@
 /**
  * Web server: serves permanent link pages for analyzed articles.
+ * Auth via JWT cookie (issued by Telegram bot /login command).
  */
 
 import { exec } from 'child_process';
@@ -8,14 +9,24 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 import path from 'path';
 import ejs from 'ejs';
-import express from 'express';
-import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks } from './db.js';
+import express, { type Request, type Response, type NextFunction } from 'express';
+import cookieParser from 'cookie-parser';
+import jwt from 'jsonwebtoken';
+import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks, getUserById } from './db.js';
 import { processUrl, retryLink, deleteLinkFull } from './pipeline.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
 
 const VIEWS_DIR = path.resolve(import.meta.dirname, 'views');
+const COOKIE_NAME = 'lm_session';
+const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is required');
+  return secret;
+}
 
 /* ── helpers ── */
 
@@ -78,15 +89,119 @@ async function renderPage(template: string, data: Record<string, any>): Promise<
   return ejs.renderFile(layoutPath, { ...data, body });
 }
 
+/* ── Auth middleware ── */
+
+interface AuthRequest extends Request {
+  userId?: number;
+  user?: { id: number; display_name?: string; username?: string };
+}
+
+/**
+ * Auth middleware: verify session cookie and attach userId to request.
+ * Returns 401 JSON for API routes, redirects to login page for HTML routes.
+ */
+function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
+  const token = req.cookies?.[COOKIE_NAME];
+  if (!token) {
+    return sendUnauth(req, res);
+  }
+
+  try {
+    const payload = jwt.verify(token, getJwtSecret()) as { userId: number };
+    req.userId = payload.userId;
+    // Load user info asynchronously
+    getUserById(payload.userId).then((user) => {
+      if (!user) {
+        return sendUnauth(req, res);
+      }
+      req.user = { id: user.id!, display_name: user.display_name, username: user.username };
+      next();
+    });
+  } catch {
+    return sendUnauth(req, res);
+  }
+}
+
+function sendUnauth(req: Request, res: Response): void {
+  if (req.path.startsWith('/api/')) {
+    res.status(401).json({ error: 'Unauthorized. Use /login in the Telegram bot to get a login link.' });
+  } else {
+    res.redirect('/login');
+  }
+}
+
 /* ── server ── */
 
 export function startWebServer(port: number): void {
   const app = express();
 
   app.use(express.json());
+  app.use(cookieParser());
+
+  // ── Public routes ──
+
+  // GET /auth/callback — handle login from Telegram bot
+  app.get('/auth/callback', async (req, res) => {
+    const loginToken = req.query.token as string;
+    if (!loginToken) {
+      res.status(400).send('Missing token');
+      return;
+    }
+
+    try {
+      const payload = jwt.verify(loginToken, getJwtSecret()) as { userId: number; telegramId: number };
+
+      // Issue a longer-lived session cookie
+      const sessionToken = jwt.sign({ userId: payload.userId }, getJwtSecret(), { expiresIn: '7d' });
+
+      res.cookie(COOKIE_NAME, sessionToken, {
+        httpOnly: true,
+        maxAge: COOKIE_MAX_AGE,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+      });
+
+      log.info({ userId: payload.userId, telegramId: payload.telegramId }, 'User logged in via callback');
+      res.redirect('/');
+    } catch (err) {
+      log.warn({ err: err instanceof Error ? err.message : String(err) }, 'Invalid login token');
+      res.status(401).send('登录链接已过期或无效，请在 Telegram Bot 中重新发送 /login');
+    }
+  });
+
+  // GET /login — login prompt page
+  app.get('/login', async (req, res) => {
+    // If already logged in, redirect to home
+    const token = req.cookies?.[COOKIE_NAME];
+    if (token) {
+      try {
+        jwt.verify(token, getJwtSecret());
+        res.redirect('/');
+        return;
+      } catch {
+        // Invalid token, show login page
+      }
+    }
+
+    try {
+      const html = await renderPage('login', { pageTitle: '登录 — LinkMind' });
+      res.type('html').send(html);
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : String(err) }, 'Login page render failed');
+      res.status(500).send('Internal error');
+    }
+  });
+
+  // GET /logout
+  app.get('/logout', (req, res) => {
+    res.clearCookie(COOKIE_NAME);
+    res.redirect('/login');
+  });
+
+  // ── Protected API routes ──
 
   // POST /api/links — add a new link and process it
-  app.post('/api/links', async (req, res) => {
+  app.post('/api/links', requireAuth, async (req: AuthRequest, res) => {
     const { url } = req.body;
     if (!url || typeof url !== 'string') {
       res.status(400).json({ error: "Missing or invalid 'url' field" });
@@ -94,7 +209,7 @@ export function startWebServer(port: number): void {
     }
 
     try {
-      const result = await processUrl(url);
+      const result = await processUrl(req.userId!, url);
       const link = await getLink(result.linkId);
       res.json({
         id: result.linkId,
@@ -112,9 +227,9 @@ export function startWebServer(port: number): void {
   });
 
   // GET /api/links — list recent links
-  app.get('/api/links', async (req, res) => {
+  app.get('/api/links', requireAuth, async (req: AuthRequest, res) => {
     const limit = parseInt(req.query.limit as string, 10) || 20;
-    const links = await getRecentLinks(limit);
+    const links = await getRecentLinks(req.userId!, limit);
     res.json(
       links.map((l) => ({
         id: l.id,
@@ -128,14 +243,14 @@ export function startWebServer(port: number): void {
   });
 
   // GET /api/links/:id — get a single link detail
-  app.get('/api/links/:id', async (req, res) => {
-    const id = parseInt(req.params.id, 10);
+  app.get('/api/links/:id', requireAuth, async (req: AuthRequest, res) => {
+    const id = parseInt(req.params.id as string, 10);
     if (isNaN(id)) {
       res.status(400).json({ error: 'Invalid ID' });
       return;
     }
     const link = await getLink(id);
-    if (!link) {
+    if (!link || link.user_id !== req.userId) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
@@ -148,14 +263,14 @@ export function startWebServer(port: number): void {
   });
 
   // DELETE /api/links/:id — delete a link and clean up references
-  app.delete('/api/links/:id', async (req, res) => {
-    const id = parseInt(req.params.id, 10);
+  app.delete('/api/links/:id', requireAuth, async (req: AuthRequest, res) => {
+    const id = parseInt(req.params.id as string, 10);
     if (isNaN(id)) {
       res.status(400).json({ error: 'Invalid ID' });
       return;
     }
     const link = await getLink(id);
-    if (!link) {
+    if (!link || link.user_id !== req.userId) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
@@ -169,8 +284,8 @@ export function startWebServer(port: number): void {
   });
 
   // POST /api/retry — retry all failed links
-  app.post('/api/retry', async (req, res) => {
-    const failed = await getFailedLinks();
+  app.post('/api/retry', requireAuth, async (req: AuthRequest, res) => {
+    const failed = await getFailedLinks(req.userId!);
     if (failed.length === 0) {
       res.json({ message: 'No failed links to retry', retried: 0 });
       return;
@@ -178,7 +293,6 @@ export function startWebServer(port: number): void {
 
     log.info({ count: failed.length }, 'Retrying failed links');
 
-    // Run retries in background, return immediately
     const ids = failed.map((l) => l.id!);
     res.json({ message: `Retrying ${ids.length} failed link(s)`, ids });
 
@@ -192,15 +306,15 @@ export function startWebServer(port: number): void {
   });
 
   // POST /api/retry/:id — retry a single failed link
-  app.post('/api/retry/:id', async (req, res) => {
-    const id = parseInt(req.params.id, 10);
+  app.post('/api/retry/:id', requireAuth, async (req: AuthRequest, res) => {
+    const id = parseInt(req.params.id as string, 10);
     if (isNaN(id)) {
       res.status(400).json({ error: 'Invalid ID' });
       return;
     }
 
     const link = await getLink(id);
-    if (!link) {
+    if (!link || link.user_id !== req.userId) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
@@ -210,11 +324,13 @@ export function startWebServer(port: number): void {
     res.json(result);
   });
 
+  // ── Protected page routes ──
+
   // GET / — homepage with timeline
-  app.get('/', async (req, res) => {
+  app.get('/', requireAuth, async (req: AuthRequest, res) => {
     try {
       const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-      const { links, total, page: safePage, totalPages } = await getPaginatedLinks(page, 50);
+      const { links, total, page: safePage, totalPages } = await getPaginatedLinks(req.userId!, page, 50);
 
       const linksWithDay = links.map((l) => ({
         ...l,
@@ -227,6 +343,7 @@ export function startWebServer(port: number): void {
         page: safePage,
         total,
         totalPages,
+        user: req.user,
       });
       res.type('html').send(html);
     } catch (err) {
@@ -236,15 +353,15 @@ export function startWebServer(port: number): void {
   });
 
   // GET /link/:id — link detail page
-  app.get('/link/:id', async (req, res) => {
-    const id = parseInt(req.params.id, 10);
+  app.get('/link/:id', requireAuth, async (req: AuthRequest, res) => {
+    const id = parseInt(req.params.id as string, 10);
     if (isNaN(id)) {
       res.status(400).send('Invalid ID');
       return;
     }
 
     const link = await getLink(id);
-    if (!link) {
+    if (!link || link.user_id !== req.userId) {
       res.status(404).send('Not found');
       return;
     }
@@ -267,6 +384,7 @@ export function startWebServer(port: number): void {
         tags,
         relatedNotes,
         relatedLinks,
+        user: req.user,
       });
       res.type('html').send(html);
     } catch (err) {
@@ -276,7 +394,7 @@ export function startWebServer(port: number): void {
   });
 
   // GET /note — view a note fetched via qmd
-  app.get('/note', async (req, res) => {
+  app.get('/note', requireAuth, async (req: AuthRequest, res) => {
     const qmdPath = req.query.path as string;
     if (!qmdPath || !qmdPath.startsWith('qmd://')) {
       res.status(400).send('Invalid path');
@@ -289,7 +407,6 @@ export function startWebServer(port: number): void {
       return;
     }
 
-    // Extract a title from the path (last segment without .md)
     const segments = qmdPath.split('/');
     const fileName = segments[segments.length - 1] || 'Note';
     const title = fileName.replace(/\.md$/, '').replace(/-/g, ' ');
@@ -300,6 +417,7 @@ export function startWebServer(port: number): void {
         title,
         qmdPath,
         content,
+        user: req.user,
       });
       res.type('html').send(html);
     } catch (err) {

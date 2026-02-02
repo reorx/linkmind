@@ -3,8 +3,17 @@ import pg from 'pg';
 
 /* ── Types ── */
 
+export interface UserRecord {
+  id?: number;
+  telegram_id: number;
+  username?: string;
+  display_name?: string;
+  created_at?: string;
+}
+
 export interface LinkRecord {
   id?: number;
+  user_id: number;
   url: string;
   og_title?: string;
   og_description?: string;
@@ -23,8 +32,19 @@ export interface LinkRecord {
   updated_at?: string;
 }
 
+/* ── Kysely table types ── */
+
+interface UsersTable {
+  id: Generated<number>;
+  telegram_id: number;
+  username: string | null;
+  display_name: string | null;
+  created_at: Generated<Date>;
+}
+
 interface LinksTable {
   id: Generated<number>;
+  user_id: number;
   url: string;
   og_title: string | null;
   og_description: string | null;
@@ -44,6 +64,7 @@ interface LinksTable {
 }
 
 interface Database {
+  users: UsersTable;
   links: LinksTable;
 }
 
@@ -71,12 +92,23 @@ export function getDb(): Kysely<Database> {
 /* ── Helpers ── */
 
 /** Convert a DB row to LinkRecord (dates to ISO strings, nulls to undefined) */
-function toRecord(row: any): LinkRecord {
+function toLinkRecord(row: any): LinkRecord {
   return {
     ...row,
-    related_notes: row.related_notes != null ? (typeof row.related_notes === 'string' ? row.related_notes : JSON.stringify(row.related_notes)) : undefined,
-    related_links: row.related_links != null ? (typeof row.related_links === 'string' ? row.related_links : JSON.stringify(row.related_links)) : undefined,
-    tags: row.tags != null ? (typeof row.tags === 'string' ? row.tags : JSON.stringify(row.tags)) : undefined,
+    related_notes:
+      row.related_notes != null
+        ? typeof row.related_notes === 'string'
+          ? row.related_notes
+          : JSON.stringify(row.related_notes)
+        : undefined,
+    related_links:
+      row.related_links != null
+        ? typeof row.related_links === 'string'
+          ? row.related_links
+          : JSON.stringify(row.related_links)
+        : undefined,
+    tags:
+      row.tags != null ? (typeof row.tags === 'string' ? row.tags : JSON.stringify(row.tags)) : undefined,
     created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     updated_at: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
     og_title: row.og_title ?? undefined,
@@ -91,19 +123,83 @@ function toRecord(row: any): LinkRecord {
   };
 }
 
-/* ── CRUD ── */
+function toUserRecord(row: any): UserRecord {
+  return {
+    ...row,
+    created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    username: row.username ?? undefined,
+    display_name: row.display_name ?? undefined,
+  };
+}
 
-export async function insertLink(url: string): Promise<number> {
+/* ── Users CRUD ── */
+
+export async function findOrCreateUser(telegramId: number, username?: string, displayName?: string): Promise<UserRecord> {
+  const existing = await getDb()
+    .selectFrom('users')
+    .selectAll()
+    .where('telegram_id', '=', telegramId)
+    .executeTakeFirst();
+
+  if (existing) {
+    // Update username/display_name if changed
+    if ((username && username !== existing.username) || (displayName && displayName !== existing.display_name)) {
+      await getDb()
+        .updateTable('users')
+        .set({
+          ...(username ? { username } : {}),
+          ...(displayName ? { display_name: displayName } : {}),
+        })
+        .where('id', '=', existing.id)
+        .execute();
+    }
+    return toUserRecord(existing);
+  }
+
+  const result = await getDb()
+    .insertInto('users')
+    .values({
+      telegram_id: telegramId,
+      username: username || null,
+      display_name: displayName || null,
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow();
+
+  return toUserRecord(result);
+}
+
+export async function getUserById(id: number): Promise<UserRecord | undefined> {
+  const row = await getDb()
+    .selectFrom('users')
+    .selectAll()
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row ? toUserRecord(row) : undefined;
+}
+
+export async function getUserByTelegramId(telegramId: number): Promise<UserRecord | undefined> {
+  const row = await getDb()
+    .selectFrom('users')
+    .selectAll()
+    .where('telegram_id', '=', telegramId)
+    .executeTakeFirst();
+  return row ? toUserRecord(row) : undefined;
+}
+
+/* ── Links CRUD ── */
+
+export async function insertLink(userId: number, url: string): Promise<number> {
   const result = await getDb()
     .insertInto('links')
-    .values({ url, status: 'pending' })
+    .values({ user_id: userId, url, status: 'pending' })
     .returning('id')
     .executeTakeFirstOrThrow();
   return result.id;
 }
 
 export async function updateLink(id: number, data: Partial<LinkRecord>): Promise<void> {
-  const { id: _id, created_at: _ca, ...rest } = data as any;
+  const { id: _id, user_id: _uid, created_at: _ca, ...rest } = data as any;
   await getDb()
     .updateTable('links')
     .set({ ...rest, updated_at: sql`NOW()` })
@@ -112,42 +208,42 @@ export async function updateLink(id: number, data: Partial<LinkRecord>): Promise
 }
 
 export async function getLink(id: number): Promise<LinkRecord | undefined> {
-  const row = await getDb()
-    .selectFrom('links')
-    .selectAll()
-    .where('id', '=', id)
-    .executeTakeFirst();
-  return row ? toRecord(row) : undefined;
+  const row = await getDb().selectFrom('links').selectAll().where('id', '=', id).executeTakeFirst();
+  return row ? toLinkRecord(row) : undefined;
 }
 
-export async function getLinkByUrl(url: string): Promise<LinkRecord | undefined> {
+export async function getLinkByUrl(userId: number, url: string): Promise<LinkRecord | undefined> {
   const row = await getDb()
     .selectFrom('links')
     .selectAll()
+    .where('user_id', '=', userId)
     .where('url', '=', url)
     .orderBy('id', 'desc')
     .limit(1)
     .executeTakeFirst();
-  return row ? toRecord(row) : undefined;
+  return row ? toLinkRecord(row) : undefined;
 }
 
-export async function getRecentLinks(limit: number = 20): Promise<LinkRecord[]> {
+export async function getRecentLinks(userId: number, limit: number = 20): Promise<LinkRecord[]> {
   const rows = await getDb()
     .selectFrom('links')
     .selectAll()
+    .where('user_id', '=', userId)
     .orderBy('id', 'desc')
     .limit(limit)
     .execute();
-  return rows.map(toRecord);
+  return rows.map(toLinkRecord);
 }
 
 export async function getPaginatedLinks(
+  userId: number,
   page: number = 1,
   perPage: number = 50,
 ): Promise<{ links: LinkRecord[]; total: number; page: number; totalPages: number }> {
   const { count } = await getDb()
     .selectFrom('links')
     .select(sql<number>`count(*)::int`.as('count'))
+    .where('user_id', '=', userId)
     .executeTakeFirstOrThrow();
 
   const total = count;
@@ -158,40 +254,36 @@ export async function getPaginatedLinks(
   const rows = await getDb()
     .selectFrom('links')
     .selectAll()
+    .where('user_id', '=', userId)
     .orderBy('created_at', 'desc')
     .orderBy('id', 'desc')
     .limit(perPage)
     .offset(offset)
     .execute();
 
-  return { links: rows.map(toRecord), total, page: safePage, totalPages };
+  return { links: rows.map(toLinkRecord), total, page: safePage, totalPages };
 }
 
-export async function getAllAnalyzedLinks(): Promise<LinkRecord[]> {
-  const rows = await getDb()
-    .selectFrom('links')
-    .selectAll()
-    .where('status', '=', 'analyzed')
-    .orderBy('id', 'asc')
-    .execute();
-  return rows.map(toRecord);
+export async function getAllAnalyzedLinks(userId?: number): Promise<LinkRecord[]> {
+  let query = getDb().selectFrom('links').selectAll().where('status', '=', 'analyzed');
+  if (userId != null) {
+    query = query.where('user_id', '=', userId);
+  }
+  const rows = await query.orderBy('id', 'asc').execute();
+  return rows.map(toLinkRecord);
 }
 
-export async function getFailedLinks(): Promise<LinkRecord[]> {
-  const rows = await getDb()
-    .selectFrom('links')
-    .selectAll()
-    .where('status', '=', 'error')
-    .orderBy('id', 'desc')
-    .execute();
-  return rows.map(toRecord);
+export async function getFailedLinks(userId?: number): Promise<LinkRecord[]> {
+  let query = getDb().selectFrom('links').selectAll().where('status', '=', 'error');
+  if (userId != null) {
+    query = query.where('user_id', '=', userId);
+  }
+  const rows = await query.orderBy('id', 'desc').execute();
+  return rows.map(toLinkRecord);
 }
 
 export async function deleteLink(id: number): Promise<void> {
-  await getDb()
-    .deleteFrom('links')
-    .where('id', '=', id)
-    .execute();
+  await getDb().deleteFrom('links').where('id', '=', id).execute();
 }
 
 /**
@@ -223,12 +315,16 @@ export async function removeFromRelatedLinks(deletedLinkId: number): Promise<num
   return updated;
 }
 
-export async function searchLinks(query: string, limit: number = 10): Promise<LinkRecord[]> {
+export async function searchLinks(query: string, limit: number = 10, userId?: number): Promise<LinkRecord[]> {
   const pattern = `%${query}%`;
-  const rows = await getDb()
+  let q = getDb()
     .selectFrom('links')
     .selectAll()
-    .where('status', '=', 'analyzed')
+    .where('status', '=', 'analyzed');
+  if (userId != null) {
+    q = q.where('user_id', '=', userId);
+  }
+  const rows = await q
     .where((eb) =>
       eb.or([
         eb('og_title', 'ilike', pattern),
@@ -240,5 +336,5 @@ export async function searchLinks(query: string, limit: number = 10): Promise<Li
     .orderBy('id', 'desc')
     .limit(limit)
     .execute();
-  return rows.map(toRecord);
+  return rows.map(toLinkRecord);
 }

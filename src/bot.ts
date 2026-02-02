@@ -1,9 +1,11 @@
 /**
  * Telegram Bot: receives links, triggers scraping + analysis pipeline.
+ * Handles user registration and /login for web auth.
  */
 
 import { Bot } from 'grammy';
-import { getLink, getLinkByUrl } from './db.js';
+import jwt from 'jsonwebtoken';
+import { getLink, findOrCreateUser } from './db.js';
 import { processUrl } from './pipeline.js';
 import { logger } from './logger.js';
 
@@ -11,9 +13,47 @@ const log = logger.child({ module: 'bot' });
 
 const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
 
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is required');
+  return secret;
+}
+
 export function startBot(token: string, webBaseUrl: string): Bot {
   const bot = new Bot(token);
 
+  // /start command
+  bot.command('start', async (ctx) => {
+    await ctx.reply(
+      '🧠 欢迎使用 LinkMind！\n\n发送任意链接，我会自动抓取、分析并保存。\n\n命令：\n/login — 获取网页登录链接',
+    );
+  });
+
+  // /login command — generate a temporary JWT link for web auth
+  bot.command('login', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const user = await findOrCreateUser(
+      from.id,
+      from.username,
+      [from.first_name, from.last_name].filter(Boolean).join(' '),
+    );
+
+    const loginToken = jwt.sign({ userId: user.id, telegramId: from.id }, getJwtSecret(), {
+      expiresIn: '5m',
+    });
+
+    const loginUrl = `${webBaseUrl}/auth/callback?token=${loginToken}`;
+
+    await ctx.reply('🔑 点击下方按钮登录 LinkMind 网页版：', {
+      reply_markup: {
+        inline_keyboard: [[{ text: '🌐 登录网页版', url: loginUrl }]],
+      },
+    });
+  });
+
+  // Handle messages with URLs
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     const urls = text.match(URL_REGEX);
@@ -22,9 +62,19 @@ export function startBot(token: string, webBaseUrl: string): Bot {
       return;
     }
 
+    const from = ctx.from;
+    if (!from) return;
+
+    // Register/update user
+    const user = await findOrCreateUser(
+      from.id,
+      from.username,
+      [from.first_name, from.last_name].filter(Boolean).join(' '),
+    );
+
     // Fire and forget: don't block the handler so grammY can process next message
     for (const url of urls) {
-      handleUrl(ctx, url, webBaseUrl).catch((err) => {
+      handleUrl(ctx, url, webBaseUrl, user.id!).catch((err) => {
         log.error({ url, err: err instanceof Error ? err.message : String(err) }, 'handleUrl uncaught error');
       });
     }
@@ -40,15 +90,15 @@ export function startBot(token: string, webBaseUrl: string): Bot {
   return bot;
 }
 
-async function handleUrl(ctx: any, url: string, webBaseUrl: string): Promise<void> {
-  const isDuplicate = !!(await getLinkByUrl(url));
+async function handleUrl(ctx: any, url: string, webBaseUrl: string, userId: number): Promise<void> {
+  const isDuplicate = !!(await import('./db.js').then((db) => db.getLinkByUrl(userId, url)));
   const statusText = isDuplicate ? `🔄 该链接已存在，正在重新抓取、更新和分析...` : `🔗 收到链接，正在处理...`;
 
   const statusMsg = await ctx.reply(statusText, {
     link_preview_options: { is_disabled: true },
   });
 
-  const result = await processUrl(url, async (stage) => {
+  const result = await processUrl(userId, url, async (stage) => {
     if (stage === 'scraping') {
       await editMessage(ctx, statusMsg, isDuplicate ? `🔄 正在重新抓取网页内容...` : `⏳ 正在抓取网页内容...`);
     } else if (stage === 'analyzing') {
