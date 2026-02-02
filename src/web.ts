@@ -10,7 +10,7 @@ import path from 'path';
 import ejs from 'ejs';
 import express from 'express';
 import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks } from './db.js';
-import { processUrl, retryLink } from './pipeline.js';
+import { processUrl, retryLink, deleteLinkFull } from './pipeline.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
@@ -102,6 +102,7 @@ export function startWebServer(port: number): void {
         title: result.title,
         status: result.status,
         error: result.error,
+        duplicate: result.duplicate || false,
         link: link ? `/link/${result.linkId}` : undefined,
       });
     } catch (err) {
@@ -143,6 +144,27 @@ export function startWebServer(port: number): void {
       tags: safeParseJson(link.tags),
       related_notes: safeParseJson(link.related_notes),
       related_links: safeParseJson(link.related_links),
+    });
+  });
+
+  // DELETE /api/links/:id — delete a link and clean up references
+  app.delete('/api/links/:id', (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid ID' });
+      return;
+    }
+    const link = getLink(id);
+    if (!link) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+
+    const result = deleteLinkFull(id);
+    log.info({ linkId: id, url: result.url, relatedLinksUpdated: result.relatedLinksUpdated }, 'Link deleted via API');
+    res.json({
+      message: 'Link deleted',
+      ...result,
     });
   });
 

@@ -102,6 +102,21 @@ export function exportLinkMarkdown(link: LinkRecord): string {
 }
 
 /**
+ * Delete the exported Markdown file for a link record.
+ * Returns true if a file was deleted, false if not found.
+ */
+export function deleteLinkExport(link: LinkRecord): boolean {
+  const filename = buildFilename(link);
+  const filepath = path.join(EXPORT_DIR, filename);
+  if (fs.existsSync(filepath)) {
+    fs.unlinkSync(filepath);
+    log.info({ path: filepath }, 'Deleted export');
+    return true;
+  }
+  return false;
+}
+
+/**
  * Export all analyzed links. Useful for initial backfill.
  */
 export function exportAllLinks(links: LinkRecord[]): string[] {

@@ -3,7 +3,7 @@
  */
 
 import { Bot } from 'grammy';
-import { getLink } from './db.js';
+import { getLink, getLinkByUrl } from './db.js';
 import { processUrl } from './pipeline.js';
 import { logger } from './logger.js';
 
@@ -41,15 +41,18 @@ export function startBot(token: string, webBaseUrl: string): Bot {
 }
 
 async function handleUrl(ctx: any, url: string, webBaseUrl: string): Promise<void> {
-  const statusMsg = await ctx.reply(`🔗 收到链接，正在处理...`, {
+  const isDuplicate = !!getLinkByUrl(url);
+  const statusText = isDuplicate ? `🔄 该链接已存在，正在重新抓取、更新和分析...` : `🔗 收到链接，正在处理...`;
+
+  const statusMsg = await ctx.reply(statusText, {
     link_preview_options: { is_disabled: true },
   });
 
   const result = await processUrl(url, async (stage) => {
     if (stage === 'scraping') {
-      await editMessage(ctx, statusMsg, `⏳ 正在抓取网页内容...`);
+      await editMessage(ctx, statusMsg, isDuplicate ? `🔄 正在重新抓取网页内容...` : `⏳ 正在抓取网页内容...`);
     } else if (stage === 'analyzing') {
-      await editMessage(ctx, statusMsg, `🤖 正在分析内容...`);
+      await editMessage(ctx, statusMsg, isDuplicate ? `🔄 正在重新分析内容...` : `🤖 正在分析内容...`);
     }
   });
 

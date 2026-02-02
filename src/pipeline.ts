@@ -2,10 +2,19 @@
  * Pipeline: shared link processing logic (scrape → analyze → export).
  */
 
-import { insertLink, updateLink, getLink, getAllAnalyzedLinks, type LinkRecord } from './db.js';
+import {
+  insertLink,
+  updateLink,
+  getLink,
+  getLinkByUrl,
+  getAllAnalyzedLinks,
+  deleteLink,
+  removeFromRelatedLinks,
+  type LinkRecord,
+} from './db.js';
 import { scrapeUrl, type ScrapeResult } from './scraper.js';
 import { analyzeArticle, findRelatedAndInsight } from './agent.js';
-import { exportLinkMarkdown, qmdIndexQueue } from './export.js';
+import { exportLinkMarkdown, deleteLinkExport, qmdIndexQueue } from './export.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'pipeline' });
@@ -16,14 +25,25 @@ export interface ProcessResult {
   url: string;
   status: 'analyzed' | 'error';
   error?: string;
+  duplicate?: boolean;
 }
 
 export type ProgressCallback = (stage: string) => void | Promise<void>;
 
 /**
  * Process a URL through the full pipeline: scrape → analyze → export.
+ * If the URL already exists, re-processes the existing link instead of creating a new one.
+ * Returns { ...result, duplicate: true } when re-processing an existing link.
  */
 export async function processUrl(url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
+  const existing = getLinkByUrl(url);
+  if (existing && existing.id) {
+    log.info({ url, linkId: existing.id }, '[start] URL already exists, re-processing');
+    updateLink(existing.id, { status: 'pending', error_message: undefined });
+    const result = await runPipeline(existing.id, url, onProgress);
+    return { ...result, duplicate: true };
+  }
+
   const linkId = insertLink(url);
   log.info({ url, linkId }, '[start] Processing URL');
   return runPipeline(linkId, url, onProgress);
@@ -44,6 +64,48 @@ export async function retryLink(linkId: number): Promise<ProcessResult> {
   updateLink(linkId, { status: 'pending', error_message: undefined });
 
   return runPipeline(linkId, link.url, undefined, link);
+}
+
+export interface DeleteResult {
+  linkId: number;
+  url: string;
+  relatedLinksUpdated: number;
+  exportDeleted: boolean;
+}
+
+/**
+ * Delete a link and clean up all references:
+ * 1. Remove from other links' related_links
+ * 2. Delete exported markdown file
+ * 3. Delete from database
+ * 4. Trigger qmd re-index
+ */
+export function deleteLinkFull(linkId: number): DeleteResult {
+  const link = getLink(linkId);
+  if (!link) {
+    throw new Error(`Link ${linkId} not found`);
+  }
+
+  log.info({ linkId, url: link.url }, '[delete] Starting');
+
+  // 1. Remove from other links' related_links
+  const relatedLinksUpdated = removeFromRelatedLinks(linkId);
+  log.info({ linkId, relatedLinksUpdated }, '[delete] Cleaned up related_links references');
+
+  // 2. Delete exported markdown
+  let exportDeleted = false;
+  if (link.status === 'analyzed') {
+    exportDeleted = deleteLinkExport(link);
+  }
+
+  // 3. Delete from database
+  deleteLink(linkId);
+  log.info({ linkId }, '[delete] Deleted from database');
+
+  // 4. Trigger qmd re-index
+  qmdIndexQueue.requestUpdate().catch(() => {});
+
+  return { linkId, url: link.url, relatedLinksUpdated, exportDeleted };
 }
 
 /**
@@ -164,7 +226,7 @@ export interface RefreshResult {
  * Does NOT re-scrape or re-summarize — only re-searches and re-generates insight.
  */
 export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> {
-  const links = linkId ? [getLink(linkId)].filter(Boolean) as LinkRecord[] : getAllAnalyzedLinks();
+  const links = linkId ? ([getLink(linkId)].filter(Boolean) as LinkRecord[]) : getAllAnalyzedLinks();
 
   if (links.length === 0) {
     log.warn({ linkId }, '[refresh] No links found');
