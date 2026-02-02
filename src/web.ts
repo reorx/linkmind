@@ -233,7 +233,10 @@ export function startWebServer(port: number): void {
       ...n,
       noteUrl: n.path ? `/note?path=${encodeURIComponent(n.path)}` : undefined,
     }));
-    const relatedLinks = safeParseJson(link.related_links);
+    const relatedLinks = safeParseJson(link.related_links).map((l: any) => ({
+      ...l,
+      url: l.linkId ? `/link/${l.linkId}` : l.url,
+    }));
 
     try {
       const html = await renderPage('link-detail', {
