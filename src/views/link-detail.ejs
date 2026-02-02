@@ -142,8 +142,8 @@
       <div class="section-title">相关笔记</div>
       <% for (const n of relatedNotes) { %>
       <div class="related-item">
-        <% if (n.obsidianUrl) { %>
-        📝 <a href="<%= n.obsidianUrl %>"><%= n.title || n.path || '' %></a>
+        <% if (n.noteUrl) { %>
+        📝 <a href="<%= n.noteUrl %>" target="_blank"><%= n.title || n.path || '' %></a>
         <% } else { %>
         📝 <%= n.title || n.path || '' %>
         <% } %>

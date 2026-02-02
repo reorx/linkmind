@@ -2,6 +2,7 @@
  * Web server: serves permanent link pages for analyzed articles.
  */
 
+import { execSync } from 'child_process';
 import path from 'path';
 import ejs from 'ejs';
 import express from 'express';
@@ -10,9 +11,6 @@ import { processUrl } from './pipeline.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
-
-const OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || 'Obsidian-Base';
-const QMD_NOTES_COLLECTION = process.env.QMD_NOTES_COLLECTION || 'notes';
 
 const VIEWS_DIR = path.resolve(import.meta.dirname, 'views');
 
@@ -32,17 +30,20 @@ function safeParseJson(s?: string): any[] {
   }
 }
 
-function buildObsidianUrl(filePath?: string): string | undefined {
-  if (!filePath) return undefined;
-  const prefix = `qmd://${QMD_NOTES_COLLECTION}/`;
-  let notePath = filePath;
-  if (notePath.startsWith(prefix)) {
-    notePath = notePath.slice(prefix.length);
+/**
+ * Fetch note content via `qmd get`.
+ */
+function qmdGet(qmdPath: string): string | undefined {
+  try {
+    return execSync(`qmd get "${qmdPath.replace(/"/g, '\\"')}"`, {
+      encoding: 'utf-8',
+      timeout: 10000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+  } catch (err) {
+    log.warn({ path: qmdPath, err: err instanceof Error ? err.message : String(err) }, 'qmd get failed');
+    return undefined;
   }
-  if (notePath.endsWith('.md')) {
-    notePath = notePath.slice(0, -3);
-  }
-  return `obsidian://open?vault=${encodeURIComponent(OBSIDIAN_VAULT)}&file=${encodeURIComponent(notePath)}`;
 }
 
 function getDayLabel(dateStr?: string): string {
@@ -185,7 +186,7 @@ export function startWebServer(port: number): void {
     const rawNotes = safeParseJson(link.related_notes);
     const relatedNotes = rawNotes.map((n: any) => ({
       ...n,
-      obsidianUrl: buildObsidianUrl(n.path || n.file),
+      noteUrl: n.path ? `/note?path=${encodeURIComponent(n.path)}` : undefined,
     }));
     const relatedLinks = safeParseJson(link.related_links);
 
@@ -200,6 +201,39 @@ export function startWebServer(port: number): void {
       res.type('html').send(html);
     } catch (err) {
       log.error({ err: err instanceof Error ? err.message : String(err) }, 'Detail render failed');
+      res.status(500).send('Internal error');
+    }
+  });
+
+  // GET /note — view a note fetched via qmd
+  app.get('/note', async (req, res) => {
+    const qmdPath = req.query.path as string;
+    if (!qmdPath || !qmdPath.startsWith('qmd://')) {
+      res.status(400).send('Invalid path');
+      return;
+    }
+
+    const content = qmdGet(qmdPath);
+    if (content === undefined) {
+      res.status(404).send('Note not found');
+      return;
+    }
+
+    // Extract a title from the path (last segment without .md)
+    const segments = qmdPath.split('/');
+    const fileName = segments[segments.length - 1] || 'Note';
+    const title = fileName.replace(/\.md$/, '').replace(/-/g, ' ');
+
+    try {
+      const html = await renderPage('note', {
+        pageTitle: `${title} — LinkMind`,
+        title,
+        qmdPath,
+        content,
+      });
+      res.type('html').send(html);
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : String(err) }, 'Note render failed');
       res.status(500).send('Internal error');
     }
   });

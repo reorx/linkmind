@@ -1,0 +1,31 @@
+<style>
+  .note-header {
+    margin-bottom: 24px;
+  }
+  .note-header h1 {
+    font-size: 1.4rem;
+    margin-bottom: 6px;
+    line-height: 1.4;
+  }
+  .note-path {
+    font-size: 0.8rem;
+    color: var(--dim);
+    word-break: break-all;
+  }
+  .note-content {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    font-size: 0.95rem;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>
+
+<div class="note-header">
+  <h1><%= title %></h1>
+  <div class="note-path"><%= qmdPath %></div>
+</div>
+<div class="note-content"><%= content %></div>
