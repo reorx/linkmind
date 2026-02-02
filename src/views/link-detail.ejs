@@ -92,6 +92,8 @@
     padding: 6px 0;
     border-bottom: 1px solid var(--border);
     font-size: 0.9rem;
+    overflow-wrap: break-word;
+    word-break: break-all;
   }
   .related-item:last-child { border-bottom: none; }
   .related-item a { color: var(--accent); }
@@ -178,7 +180,7 @@
         📝 <%= noteName %>
         <% } %>
         <% if (heading) { %>
-        <span class="related-heading">§ <%= heading %></span>
+        <br><span class="related-heading">§ <%= heading %></span>
         <% } %>
         <% if (n.snippet) { %>
         <br><span class="related-snippet"><%= n.snippet.slice(0, 150) %></span>
