@@ -32,7 +32,7 @@ export async function analyzeArticle(input: {
   let allLinks: SearchResult[] = [];
 
   for (const query of searchQueries) {
-    const { notes, links } = searchAll(query, 3);
+    const { notes, links } = await searchAll(query, 3);
     allNotes.push(...notes);
     allLinks.push(...links);
   }

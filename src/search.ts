@@ -2,9 +2,12 @@
  * Search: qmd vsearch for notes and historical links.
  */
 
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { searchLinks, getLink } from './db.js';
 import { logger } from './logger.js';
+
+const execAsync = promisify(exec);
 
 const log = logger.child({ module: 'search' });
 
@@ -24,18 +27,17 @@ export interface SearchResult {
  * Search notes using qmd vsearch.
  * Falls back gracefully if qmd is not installed or no collections configured.
  */
-export function searchNotes(query: string, limit: number = 5): SearchResult[] {
+export async function searchNotes(query: string, limit: number = 5): Promise<SearchResult[]> {
   try {
     const startTime = Date.now();
     log.debug({ query, collection: 'notes' }, '→ qmd vsearch: notes');
 
-    const result = execSync(`qmd vsearch "${escapeShell(query)}" --json -n ${limit * 3}`, {
+    const { stdout } = await execAsync(`qmd vsearch "${escapeShell(query)}" --json -n ${limit * 3}`, {
       encoding: 'utf-8',
       timeout: 30000,
-      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const parsed = JSON.parse(result);
+    const parsed = JSON.parse(stdout);
     if (!Array.isArray(parsed)) return [];
 
     // Filter to notes collection only
@@ -63,18 +65,17 @@ export function searchNotes(query: string, limit: number = 5): SearchResult[] {
  * Search previously saved links via qmd vsearch.
  * Falls back to SQLite LIKE search if qmd is unavailable.
  */
-export function searchHistoricalLinks(query: string, limit: number = 5): SearchResult[] {
+export async function searchHistoricalLinks(query: string, limit: number = 5): Promise<SearchResult[]> {
   try {
     const startTime = Date.now();
     log.debug({ query, collection: 'links' }, '→ qmd vsearch: links');
 
-    const result = execSync(`qmd vsearch "${escapeShell(query)}" -n ${limit * 3} --json`, {
+    const { stdout } = await execAsync(`qmd vsearch "${escapeShell(query)}" -n ${limit * 3} --json`, {
       encoding: 'utf-8',
       timeout: 30000,
-      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const parsed = JSON.parse(result);
+    const parsed = JSON.parse(stdout);
     if (Array.isArray(parsed)) {
       // Filter to links collection only
       const linkResults = parsed
@@ -120,9 +121,11 @@ export function searchHistoricalLinks(query: string, limit: number = 5): SearchR
 /**
  * Combined search: notes + historical links.
  */
-export function searchAll(query: string, limit: number = 5): { notes: SearchResult[]; links: SearchResult[] } {
-  const notes = searchNotes(query, limit);
-  const links = searchHistoricalLinks(query, limit);
+export async function searchAll(
+  query: string,
+  limit: number = 5,
+): Promise<{ notes: SearchResult[]; links: SearchResult[] }> {
+  const [notes, links] = await Promise.all([searchNotes(query, limit), searchHistoricalLinks(query, limit)]);
   return { notes, links };
 }
 

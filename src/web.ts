@@ -2,7 +2,10 @@
  * Web server: serves permanent link pages for analyzed articles.
  */
 
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import path from 'path';
 import ejs from 'ejs';
 import express from 'express';
@@ -33,13 +36,13 @@ function safeParseJson(s?: string): any[] {
 /**
  * Fetch note content via `qmd get`.
  */
-function qmdGet(qmdPath: string): string | undefined {
+async function qmdGet(qmdPath: string): Promise<string | undefined> {
   try {
-    return execSync(`qmd get "${qmdPath.replace(/"/g, '\\"')}"`, {
+    const { stdout } = await execAsync(`qmd get "${qmdPath.replace(/"/g, '\\"')}"`, {
       encoding: 'utf-8',
       timeout: 10000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
+    });
+    return stdout.trim();
   } catch (err) {
     log.warn({ path: qmdPath, err: err instanceof Error ? err.message : String(err) }, 'qmd get failed');
     return undefined;
