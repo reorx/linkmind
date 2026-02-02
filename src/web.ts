@@ -258,7 +258,7 @@ export function startWebServer(port: number): void {
       return;
     }
 
-    const content = qmdGet(qmdPath);
+    const content = await qmdGet(qmdPath);
     if (content === undefined) {
       res.status(404).send('Note not found');
       return;
