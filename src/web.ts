@@ -13,7 +13,8 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks, getUserById } from './db.js';
-import { processUrl, retryLink, deleteLinkFull } from './pipeline.js';
+import { retryLink, deleteLinkFull } from './pipeline.js';
+import { spawnProcessLink } from './worker.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
@@ -209,16 +210,12 @@ export function startWebServer(port: number): void {
     }
 
     try {
-      const result = await processUrl(req.userId!, url);
-      const link = await getLink(result.linkId);
+      const { taskId } = await spawnProcessLink(req.userId!, url);
       res.json({
-        id: result.linkId,
-        url: result.url,
-        title: result.title,
-        status: result.status,
-        error: result.error,
-        duplicate: result.duplicate || false,
-        link: link ? `/link/${result.linkId}` : undefined,
+        taskId,
+        url,
+        status: 'queued',
+        message: 'Link queued for processing',
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -5,6 +5,7 @@ import { initLogger, logger } from "./logger.js";
 import { getLLM } from "./llm.js";
 import { startBot } from "./bot.js";
 import { startWebServer } from "./web.js";
+import { startWorker } from "./worker.js";
 
 // Initialize logger after dotenv has loaded
 initLogger();
@@ -29,5 +30,10 @@ startWebServer(webPort);
 
 // Start Telegram bot
 startBot(token, webBaseUrl);
+
+// Start Absurd durable execution worker
+startWorker().catch((err) => {
+  logger.error({ err: err instanceof Error ? err.message : String(err) }, "Worker start failed");
+});
 
 logger.info("🧠 LinkMind ready!");

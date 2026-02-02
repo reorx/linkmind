@@ -6,7 +6,7 @@
 import { Bot } from 'grammy';
 import jwt from 'jsonwebtoken';
 import { getLink, getLinkByUrl, findOrCreateUser, getInviteByCode, useInvite } from './db.js';
-import { processUrl } from './pipeline.js';
+import { spawnProcessLink } from './worker.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'bot' });
@@ -156,47 +156,69 @@ export function startBot(token: string, webBaseUrl: string): Bot {
 }
 
 async function handleUrl(ctx: any, url: string, webBaseUrl: string, userId: number): Promise<void> {
-  const isDuplicate = !!(await getLinkByUrl(userId, url));
-  const statusText = isDuplicate ? `🔄 该链接已存在，正在重新抓取、更新和分析...` : `🔗 收到链接，正在处理...`;
+  const existing = await getLinkByUrl(userId, url);
+  const isDuplicate = !!existing;
 
-  const statusMsg = await ctx.reply(statusText, {
-    link_preview_options: { is_disabled: true },
-  });
+  // Spawn the durable task — it will be picked up by the worker
+  const { taskId } = await spawnProcessLink(userId, url, existing?.id);
 
-  const result = await processUrl(userId, url, async (stage) => {
-    if (stage === 'scraping') {
-      await editMessage(ctx, statusMsg, isDuplicate ? `🔄 正在重新抓取网页内容...` : `⏳ 正在抓取网页内容...`);
-    } else if (stage === 'analyzing') {
-      await editMessage(ctx, statusMsg, isDuplicate ? `🔄 正在重新分析内容...` : `🤖 正在分析内容...`);
+  const statusMsg = await ctx.reply(
+    isDuplicate
+      ? `🔄 该链接已存在，已加入处理队列...`
+      : `🔗 收到链接，已加入处理队列...`,
+    { link_preview_options: { is_disabled: true } },
+  );
+
+  // Poll for completion (check every 3s, up to 5 minutes)
+  const maxWait = 300_000;
+  const interval = 3_000;
+  const start = Date.now();
+  let notifiedScraping = false;
+  let notifiedAnalyzing = false;
+
+  while (Date.now() - start < maxWait) {
+    await new Promise((r) => setTimeout(r, interval));
+
+    // Check link status in DB
+    const linkId = existing?.id || (await getLinkByUrl(userId, url))?.id;
+    if (!linkId) continue;
+
+    const link = await getLink(linkId);
+    if (!link) continue;
+
+    if (link.status === 'scraped' && !notifiedScraping) {
+      notifiedScraping = true;
+      await editMessage(ctx, statusMsg, '🤖 正在分析内容...');
     }
-  });
 
-  if (result.status === 'error') {
-    await editMessage(ctx, statusMsg, `❌ 处理失败: ${(result.error || '').slice(0, 200)}`);
-    return;
+    if (link.status === 'analyzed') {
+      const tags: string[] = safeParseJson(link.tags);
+      const relatedNotes: any[] = safeParseJson(link.related_notes);
+      const relatedLinks: any[] = safeParseJson(link.related_links);
+      const permanentLink = `${webBaseUrl}/link/${linkId}`;
+
+      const resultText = formatResult({
+        title: link.og_title || url,
+        url,
+        summary: link.summary || '',
+        insight: link.insight || '',
+        tags,
+        relatedNotes,
+        relatedLinks,
+        permanentLink,
+      });
+
+      await editMessage(ctx, statusMsg, resultText, true);
+      return;
+    }
+
+    if (link.status === 'error') {
+      await editMessage(ctx, statusMsg, `❌ 处理失败: ${(link.error_message || '').slice(0, 200)}`);
+      return;
+    }
   }
 
-  const link = await getLink(result.linkId);
-  if (!link) return;
-
-  const tags: string[] = safeParseJson(link.tags);
-  const relatedNotes: any[] = safeParseJson(link.related_notes);
-  const relatedLinks: any[] = safeParseJson(link.related_links);
-  const permanentLink = `${webBaseUrl}/link/${result.linkId}`;
-
-  const resultText = formatResult({
-    title: result.title,
-    url: result.url,
-    summary: link.summary || '',
-    insight: link.insight || '',
-    tags,
-    relatedNotes,
-    relatedLinks,
-    permanentLink,
-  });
-
-  log.debug({ html: resultText }, 'Sending Telegram message');
-  await editMessage(ctx, statusMsg, resultText, true);
+  await editMessage(ctx, statusMsg, '⏰ 处理超时，请稍后在网页端查看结果。');
 }
 
 function formatResult(data: {

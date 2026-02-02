@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      absurd-sdk:
+        specifier: ^0.0.7
+        version: 0.0.7(pg@8.18.0)
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
@@ -340,6 +343,12 @@ packages:
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
     engines: {node: '>=6.5'}
+
+  absurd-sdk@0.0.7:
+    resolution: {integrity: sha512-8e+LUdtzLHFMMF5vaVCKfp0aZ21t3aazgVkYUFzhb9kL+/bQkD8Vw68tgEAUz53pT2xfIrScTA9QZXYfC1KDtA==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      pg: ^8.0.0
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -1408,6 +1417,10 @@ snapshots:
   abort-controller@3.0.0:
     dependencies:
       event-target-shim: 5.0.1
+
+  absurd-sdk@0.0.7(pg@8.18.0):
+    dependencies:
+      pg: 8.18.0
 
   accepts@2.0.0:
     dependencies:

@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "absurd-sdk": "^0.0.7",
     "cookie-parser": "^1.4.7",
     "defuddle": "^0.6.6",
     "dotenv": "^17.0.0",
