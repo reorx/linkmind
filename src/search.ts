@@ -26,6 +26,9 @@ export interface SearchResult {
  */
 export function searchNotes(query: string, limit: number = 5): SearchResult[] {
   try {
+    const startTime = Date.now();
+    log.debug({ query, collection: 'notes' }, '→ qmd vsearch: notes');
+
     const result = execSync(`qmd vsearch "${escapeShell(query)}" --json -n ${limit * 3}`, {
       encoding: 'utf-8',
       timeout: 30000,
@@ -40,6 +43,9 @@ export function searchNotes(query: string, limit: number = 5): SearchResult[] {
       .filter((item: any) => item.file?.startsWith(`qmd://${NOTES_COLLECTION}/`))
       .slice(0, limit);
 
+    const elapsed = Date.now() - startTime;
+    log.info({ elapsed: `${elapsed}ms`, results: noteResults.length, query }, '← qmd vsearch: notes done');
+
     return noteResults.map((item: any) => ({
       source: 'notes',
       title: item.title || item.path || 'Untitled',
@@ -48,7 +54,7 @@ export function searchNotes(query: string, limit: number = 5): SearchResult[] {
       score: item.score,
     }));
   } catch (err) {
-    log.warn(`[search] qmd vsearch notes failed: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn({ query, err: err instanceof Error ? err.message : String(err) }, '← qmd vsearch: notes failed');
     return [];
   }
 }
@@ -59,6 +65,9 @@ export function searchNotes(query: string, limit: number = 5): SearchResult[] {
  */
 export function searchHistoricalLinks(query: string, limit: number = 5): SearchResult[] {
   try {
+    const startTime = Date.now();
+    log.debug({ query, collection: 'links' }, '→ qmd vsearch: links');
+
     const result = execSync(`qmd vsearch "${escapeShell(query)}" -n ${limit * 3} --json`, {
       encoding: 'utf-8',
       timeout: 30000,
@@ -71,6 +80,9 @@ export function searchHistoricalLinks(query: string, limit: number = 5): SearchR
       const linkResults = parsed
         .filter((item: any) => item.file?.startsWith(`qmd://${LINKS_COLLECTION}/`))
         .slice(0, limit);
+
+      const elapsed = Date.now() - startTime;
+      log.info({ elapsed: `${elapsed}ms`, results: linkResults.length, query }, '← qmd vsearch: links done');
 
       if (linkResults.length > 0) {
         return linkResults.map((item: any) => {
@@ -90,7 +102,8 @@ export function searchHistoricalLinks(query: string, limit: number = 5): SearchR
     }
   } catch (err) {
     log.warn(
-      `[search] qmd vsearch links failed, falling back to SQLite: ${err instanceof Error ? err.message : String(err)}`,
+      { query, err: err instanceof Error ? err.message : String(err) },
+      '← qmd vsearch: links failed, falling back to SQLite',
     );
   }
 
