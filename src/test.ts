@@ -8,6 +8,7 @@ dotenv.config({ override: true });
 import { insertLink, updateLink, getLink } from "./db.js";
 import { scrapeUrl } from "./scraper.js";
 import { analyzeArticle } from "./agent.js";
+import { exportLinkMarkdown } from "./export.js";
 
 const testUrl = process.argv[2];
 if (!testUrl) {
@@ -85,6 +86,13 @@ async function main() {
   }
 
   console.log(`\n🔍 Permanent link: http://localhost:3456/link/${linkId}`);
+
+  // Export markdown for qmd
+  const fullLink = getLink(linkId);
+  if (fullLink) {
+    const exportPath = exportLinkMarkdown(fullLink);
+    console.log(`\n[export] Written: ${exportPath}`);
+  }
 
   // Verify DB
   const saved = getLink(linkId);
