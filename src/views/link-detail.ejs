@@ -1,3 +1,17 @@
+<%
+  // Extract a clean text fragment for scroll-to-text-fragment (#:~:text=...)
+  function textFragmentUrl(baseUrl, snippet) {
+    if (!baseUrl || !snippet) return baseUrl || '';
+    // Strip qmd diff-style headers like "@@ -74,4 @@ (73 before, 3 after)\n\n"
+    let clean = snippet.replace(/^@@[^@]*@@[^\n]*\n*/g, '').trim();
+    // Take first 80 chars to keep URL reasonable, break at word boundary
+    if (clean.length > 80) {
+      clean = clean.slice(0, 80).replace(/\s+\S*$/, '');
+    }
+    if (!clean) return baseUrl;
+    return baseUrl + '#:~:text=' + encodeURIComponent(clean);
+  }
+%>
 <style>
   .detail-layout {
     display: flex;
@@ -143,7 +157,7 @@
       <% for (const n of relatedNotes) { %>
       <div class="related-item">
         <% if (n.noteUrl) { %>
-        📝 <a href="<%= n.noteUrl %>" target="_blank"><%= n.title || n.path || '' %></a>
+        📝 <a href="<%= textFragmentUrl(n.noteUrl, n.snippet) %>"><%= n.title || n.path || '' %></a>
         <% } else { %>
         📝 <%= n.title || n.path || '' %>
         <% } %>
@@ -160,7 +174,7 @@
       <div class="section-title">相关链接</div>
       <% for (const l of relatedLinks) { %>
       <div class="related-item">
-        🔗 <a href="<%= l.url || '' %>"><%= l.title || l.url || '' %></a>
+        🔗 <a href="<%= textFragmentUrl(l.url, l.snippet) %>"><%= l.title || l.url || '' %></a>
         <% if (l.snippet) { %>
         <br><span class="related-snippet"><%= l.snippet.slice(0, 150) %></span>
         <% } %>
