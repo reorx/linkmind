@@ -53,20 +53,11 @@ export async function findRelatedAndInsight(
   input: { url: string; title?: string; markdown: string; linkId?: number },
   summary: string,
 ): Promise<RelatedResult> {
-  // Search for related content using keywords
-  const searchQueries = extractSearchQueries(summary, input.title);
-  let allNotes: SearchResult[] = [];
-  let allLinks: SearchResult[] = [];
-
-  for (const query of searchQueries) {
-    const { notes, links } = await searchAll(query, 3);
-    allNotes.push(...notes);
-    allLinks.push(...links);
-  }
-
-  // Deduplicate
-  allNotes = dedup(allNotes, (r) => r.path || r.title);
-  allLinks = dedup(allLinks, (r) => r.url || r.title);
+  // Search for related content: combine title + summary into one query
+  const query = [input.title, summary].filter(Boolean).join('\n');
+  const { notes, links } = await searchAll(query, 5);
+  let allNotes = notes;
+  let allLinks = links;
 
   // Filter out the article itself from related links (by ID)
   allLinks = allLinks.filter((l) => !input.linkId || l.linkId !== input.linkId);
@@ -175,17 +166,6 @@ ${linksContext}
   );
 
   return text || '无法生成 insight';
-}
-
-function extractSearchQueries(summary: string, title?: string): string[] {
-  const queries: string[] = [];
-  if (title) queries.push(title);
-
-  // Extract key phrases from summary (simple approach: take first 2 sentences)
-  const sentences = summary.split(/[。！？.!?]/).filter((s) => s.trim().length > 5);
-  if (sentences.length > 0) queries.push(sentences[0].trim());
-
-  return queries.slice(0, 3);
 }
 
 function dedup<T>(arr: T[], keyFn: (item: T) => string | undefined): T[] {
