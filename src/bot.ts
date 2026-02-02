@@ -6,6 +6,7 @@ import { Bot } from "grammy";
 import { insertLink, updateLink, getLink } from "./db.js";
 import { scrapeUrl } from "./scraper.js";
 import { analyzeArticle } from "./agent.js";
+import { exportLinkMarkdown } from "./export.js";
 
 const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
 
@@ -86,6 +87,16 @@ async function processUrl(
     });
 
     console.log(`[bot] Analyzed: ${scrapeResult.og.title || url}`);
+
+    // Step 3.5: Export to Markdown for QAMD indexing
+    const fullLink = getLink(linkId);
+    if (fullLink) {
+      try {
+        exportLinkMarkdown(fullLink);
+      } catch (exportErr) {
+        console.error(`[bot] Export failed:`, exportErr);
+      }
+    }
 
     // Step 4: Send result
     const permanentLink = `${webBaseUrl}/link/${linkId}`;
