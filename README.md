@@ -108,7 +108,21 @@ QMD_LINKS_PATH=~/LocalDocuments/linkmind/links  # 导出文件路径
 
 ### 4. 配置 QMD
 
-确保 QMD 已安装并配置好集合。链接导出的 Markdown 文件路径（`QMD_LINKS_PATH`）需要被 QMD 的 links 集合所管理。
+确保 [QMD](https://github.com/tobi/qmd) 已安装，然后添加集合并完成初始化：
+
+```bash
+# 添加笔记库集合（指向你的 Obsidian 或其他笔记目录）
+qmd collection add /path/to/your/notes --name notes
+
+# 添加链接库集合（与 .env 中 QMD_LINKS_PATH 一致）
+qmd collection add ~/LocalDocuments/linkmind/links --name links
+
+# 索引并生成向量嵌入
+qmd embed
+
+# 测试搜索功能（首次运行会触发 reranker 模型下载）
+qmd vsearch test
+```
 
 ### 5. 配置公开访问地址
 
