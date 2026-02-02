@@ -3,10 +3,8 @@
  */
 
 import { Bot } from "grammy";
-import { insertLink, updateLink, getLink } from "./db.js";
-import { scrapeUrl } from "./scraper.js";
-import { analyzeArticle } from "./agent.js";
-import { exportLinkMarkdown } from "./export.js";
+import { getLink } from "./db.js";
+import { processUrl } from "./pipeline.js";
 
 const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
 
@@ -18,12 +16,11 @@ export function startBot(token: string, webBaseUrl: string): Bot {
     const urls = text.match(URL_REGEX);
 
     if (!urls || urls.length === 0) {
-      // Not a link, ignore
       return;
     }
 
     for (const url of urls) {
-      await processUrl(ctx, url, webBaseUrl);
+      await handleUrl(ctx, url, webBaseUrl);
     }
   });
 
@@ -37,95 +34,42 @@ export function startBot(token: string, webBaseUrl: string): Bot {
   return bot;
 }
 
-async function processUrl(
-  ctx: any,
-  url: string,
-  webBaseUrl: string,
-): Promise<void> {
+async function handleUrl(ctx: any, url: string, webBaseUrl: string): Promise<void> {
   const statusMsg = await ctx.reply(`🔗 收到链接，正在处理...\n${url}`);
 
-  try {
-    // Step 1: Insert into DB
-    const linkId = insertLink(url);
-    console.log(`[bot] Processing URL: ${url} (id=${linkId})`);
-
-    // Step 2: Scrape
-    await editMessage(ctx, statusMsg, `⏳ 正在抓取网页内容...`);
-    const scrapeResult = await scrapeUrl(url);
-
-    updateLink(linkId, {
-      og_title: scrapeResult.og.title,
-      og_description: scrapeResult.og.description,
-      og_image: scrapeResult.og.image,
-      og_site_name: scrapeResult.og.siteName,
-      og_type: scrapeResult.og.type,
-      markdown: scrapeResult.markdown,
-      status: "scraped",
-    });
-
-    console.log(
-      `[bot] Scraped: ${scrapeResult.og.title || url} (${scrapeResult.markdown.length} chars)`,
-    );
-
-    // Step 3: Analyze with Agent
-    await editMessage(ctx, statusMsg, `🤖 正在分析内容...`);
-    const analysis = await analyzeArticle({
-      url,
-      title: scrapeResult.og.title,
-      ogDescription: scrapeResult.og.description,
-      siteName: scrapeResult.og.siteName,
-      markdown: scrapeResult.markdown,
-    });
-
-    updateLink(linkId, {
-      summary: analysis.summary,
-      insight: analysis.insight,
-      tags: JSON.stringify(analysis.tags),
-      related_notes: JSON.stringify(analysis.relatedNotes),
-      related_links: JSON.stringify(analysis.relatedLinks),
-      status: "analyzed",
-    });
-
-    console.log(`[bot] Analyzed: ${scrapeResult.og.title || url}`);
-
-    // Step 3.5: Export to Markdown for QAMD indexing
-    const fullLink = getLink(linkId);
-    if (fullLink) {
-      try {
-        exportLinkMarkdown(fullLink);
-      } catch (exportErr) {
-        console.error(`[bot] Export failed:`, exportErr);
-      }
+  const result = await processUrl(url, async (stage) => {
+    if (stage === "scraping") {
+      await editMessage(ctx, statusMsg, `⏳ 正在抓取网页内容...`);
+    } else if (stage === "analyzing") {
+      await editMessage(ctx, statusMsg, `🤖 正在分析内容...`);
     }
+  });
 
-    // Step 4: Send result
-    const permanentLink = `${webBaseUrl}/link/${linkId}`;
-    const resultText = formatResult({
-      title: scrapeResult.og.title || url,
-      url,
-      summary: analysis.summary,
-      insight: analysis.insight,
-      tags: analysis.tags,
-      relatedNotes: analysis.relatedNotes,
-      relatedLinks: analysis.relatedLinks,
-      permanentLink,
-    });
-
-    await editMessage(ctx, statusMsg, resultText, true);
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[bot] Error processing ${url}:`, errMsg);
-
-    // Try to update DB with error
-    try {
-      const link = (await import("./db.js")).getLinkByUrl(url);
-      if (link?.id) {
-        updateLink(link.id, { status: "error", error_message: errMsg });
-      }
-    } catch {}
-
-    await editMessage(ctx, statusMsg, `❌ 处理失败: ${errMsg.slice(0, 200)}`);
+  if (result.status === "error") {
+    await editMessage(ctx, statusMsg, `❌ 处理失败: ${(result.error || "").slice(0, 200)}`);
+    return;
   }
+
+  const link = getLink(result.linkId);
+  if (!link) return;
+
+  const tags: string[] = safeParseJson(link.tags);
+  const relatedNotes: any[] = safeParseJson(link.related_notes);
+  const relatedLinks: any[] = safeParseJson(link.related_links);
+  const permanentLink = `${webBaseUrl}/link/${result.linkId}`;
+
+  const resultText = formatResult({
+    title: result.title,
+    url: result.url,
+    summary: link.summary || "",
+    insight: link.insight || "",
+    tags,
+    relatedNotes,
+    relatedLinks,
+    permanentLink,
+  });
+
+  await editMessage(ctx, statusMsg, resultText, true);
 }
 
 function formatResult(data: {
@@ -191,4 +135,14 @@ function escHtml(s: string): string {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
+}
+
+function safeParseJson(s?: string): any[] {
+  if (!s) return [];
+  try {
+    const parsed = JSON.parse(s);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }

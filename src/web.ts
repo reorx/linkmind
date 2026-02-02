@@ -3,10 +3,74 @@
  */
 
 import express from "express";
-import { getLink } from "./db.js";
+import { getLink, getRecentLinks } from "./db.js";
+import { processUrl } from "./pipeline.js";
 
 export function startWebServer(port: number): void {
   const app = express();
+
+  app.use(express.json());
+
+  // POST /api/links — add a new link and process it
+  app.post("/api/links", async (req, res) => {
+    const { url } = req.body;
+    if (!url || typeof url !== "string") {
+      res.status(400).json({ error: "Missing or invalid 'url' field" });
+      return;
+    }
+
+    try {
+      const result = await processUrl(url);
+      const link = getLink(result.linkId);
+      res.json({
+        id: result.linkId,
+        url: result.url,
+        title: result.title,
+        status: result.status,
+        error: result.error,
+        link: link ? `/link/${result.linkId}` : undefined,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // GET /api/links — list recent links
+  app.get("/api/links", (req, res) => {
+    const limit = parseInt(req.query.limit as string, 10) || 20;
+    const links = getRecentLinks(limit);
+    res.json(
+      links.map((l) => ({
+        id: l.id,
+        url: l.url,
+        title: l.og_title,
+        status: l.status,
+        created_at: l.created_at,
+        link: `/link/${l.id}`,
+      })),
+    );
+  });
+
+  // GET /api/links/:id — get a single link detail
+  app.get("/api/links/:id", (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      res.status(400).json({ error: "Invalid ID" });
+      return;
+    }
+    const link = getLink(id);
+    if (!link) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json({
+      ...link,
+      tags: safeParseJson(link.tags),
+      related_notes: safeParseJson(link.related_notes),
+      related_links: safeParseJson(link.related_links),
+    });
+  });
 
   app.get("/link/:id", (req, res) => {
     const id = parseInt(req.params.id, 10);
