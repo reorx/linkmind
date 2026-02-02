@@ -21,6 +21,8 @@ export interface ChatOptions {
   maxTokens?: number;
   temperature?: number;
   jsonMode?: boolean;
+  /** Label for logging (e.g. "summary", "insight") */
+  label?: string;
 }
 
 export interface LLMProvider {
@@ -41,7 +43,8 @@ function createOpenAIProvider(): LLMProvider {
     name: `openai/${model}`,
     async chat(messages, options = {}) {
       const startTime = Date.now();
-      log.debug({ model, messages: messages.length }, '→ OpenAI: chat request');
+      const label = options.label || 'chat';
+      log.debug({ model, label, messages: messages.length }, `→ OpenAI: ${label}`);
 
       const response = await client.chat.completions.create({
         model,
@@ -53,7 +56,7 @@ function createOpenAIProvider(): LLMProvider {
 
       const text = response.choices[0]?.message?.content || '';
       const elapsed = Date.now() - startTime;
-      log.info({ model, elapsed: `${elapsed}ms`, responseLength: text.length }, '← OpenAI: chat completed');
+      log.info({ model, label, elapsed: `${elapsed}ms`, responseLength: text.length }, `← OpenAI: ${label} done`);
       return text;
     },
   };
@@ -72,7 +75,8 @@ function createGeminiProvider(): LLMProvider {
     name: `gemini/${model}`,
     async chat(messages, options = {}) {
       const startTime = Date.now();
-      log.debug({ model, messages: messages.length }, '→ Gemini: chat request');
+      const label = options.label || 'chat';
+      log.debug({ model, label, messages: messages.length }, `→ Gemini: ${label}`);
 
       // Convert ChatMessage[] to Gemini format
       // Gemini uses "contents" with "role" (user/model) and system instruction separately
@@ -114,20 +118,20 @@ function createGeminiProvider(): LLMProvider {
 
       if (!res.ok) {
         const err = await res.text();
-        log.error({ status: res.status, error: err }, '← Gemini: API error');
-        throw new Error(`Gemini API error (${res.status}): ${err}`);
+        log.error({ status: res.status, label, error: err }, `← Gemini: ${label} error`);
+        throw new Error(`Gemini ${label} error (${res.status}): ${err}`);
       }
 
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
       if (!text) {
-        log.error({ response: data }, '← Gemini: empty response');
-        throw new Error('Gemini returned empty response');
+        log.error({ label, response: data }, `← Gemini: ${label} empty response`);
+        throw new Error(`Gemini ${label}: empty response`);
       }
 
       const elapsed = Date.now() - startTime;
-      log.info({ model, elapsed: `${elapsed}ms`, responseLength: text.length }, '← Gemini: chat completed');
+      log.info({ model, label, elapsed: `${elapsed}ms`, responseLength: text.length }, `← Gemini: ${label} done`);
       return text;
     },
   };

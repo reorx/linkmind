@@ -88,7 +88,7 @@ async function generateSummary(input: {
 ${content}`,
       },
     ],
-    { maxTokens: 2048, jsonMode: true },
+    { maxTokens: 2048, jsonMode: true, label: 'summary' },
   );
 
   try {
@@ -146,7 +146,7 @@ ${linksContext}
 请给出你的 insight：`,
       },
     ],
-    { maxTokens: 1024 },
+    { maxTokens: 1024, label: 'insight' },
   );
 
   return text || '无法生成 insight';
