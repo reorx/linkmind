@@ -20,6 +20,7 @@ export interface SearchResult {
   snippet: string;
   path?: string;
   url?: string;
+  linkId?: number;
   score?: number;
 }
 
@@ -90,6 +91,7 @@ export async function searchHistoricalLinks(query: string, limit: number = 5): P
             title: item.title || filename || 'Untitled',
             snippet: item.snippet || '',
             url: linkId ? getLinkUrl(linkId) : undefined,
+            linkId,
             score: item.score,
           };
         });
@@ -108,7 +110,8 @@ export async function searchHistoricalLinks(query: string, limit: number = 5): P
     source: 'links',
     title: link.og_title || link.url,
     snippet: link.summary || link.og_description || '',
-    url: link.url,
+    url: link.id ? `/links/${link.id}` : link.url,
+    linkId: link.id,
   }));
 }
 
@@ -131,7 +134,7 @@ export async function searchAll(
 function getLinkUrl(id: number): string | undefined {
   try {
     const link = getLink(id);
-    return link?.url;
+    return link ? `/links/${id}` : undefined;
   } catch {
     return undefined;
   }

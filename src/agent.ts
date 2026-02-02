@@ -22,6 +22,7 @@ export async function analyzeArticle(input: {
   ogDescription?: string;
   siteName?: string;
   markdown: string;
+  linkId?: number;
 }): Promise<AnalysisResult> {
   // Step 1: Generate summary and extract keywords
   const summaryResult = await generateSummary(input);
@@ -49,7 +50,7 @@ export interface RelatedResult {
  * initial analysis and refreshing related info on existing links.
  */
 export async function findRelatedAndInsight(
-  input: { url: string; title?: string; markdown: string },
+  input: { url: string; title?: string; markdown: string; linkId?: number },
   summary: string,
 ): Promise<RelatedResult> {
   // Search for related content using keywords
@@ -67,8 +68,8 @@ export async function findRelatedAndInsight(
   allNotes = dedup(allNotes, (r) => r.path || r.title);
   allLinks = dedup(allLinks, (r) => r.url || r.title);
 
-  // Filter out the article itself from related links
-  allLinks = allLinks.filter((l) => l.url !== input.url);
+  // Filter out the article itself from related links (by ID)
+  allLinks = allLinks.filter((l) => !input.linkId || l.linkId !== input.linkId);
 
   // Generate insight with context of related content
   const insight = await generateInsight(input, summary, allNotes, allLinks);

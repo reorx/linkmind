@@ -160,7 +160,7 @@
       <div class="section-title">相关链接</div>
       <% for (const l of relatedLinks) { %>
       <div class="related-item">
-        🔗 <a href="<%= l.url || '' %>" target="_blank"><%= l.title || l.url || '' %></a>
+        🔗 <a href="<%= l.url || '' %>"><%= l.title || l.url || '' %></a>
         <% if (l.snippet) { %>
         <br><span class="related-snippet"><%= l.snippet.slice(0, 150) %></span>
         <% } %>

@@ -109,6 +109,7 @@ async function runPipeline(
       ogDescription,
       siteName,
       markdown: markdown!,
+      linkId,
     });
 
     updateLink(linkId, {
@@ -186,7 +187,7 @@ export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> 
 
       log.info({ linkId: id, title }, '[refresh] Finding related content...');
       const related = await findRelatedAndInsight(
-        { url: link.url, title: link.og_title, markdown: link.markdown },
+        { url: link.url, title: link.og_title, markdown: link.markdown, linkId: id },
         link.summary,
       );
 
