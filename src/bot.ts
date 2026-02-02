@@ -137,6 +137,14 @@ export function startBot(token: string, webBaseUrl: string): Bot {
     }
   });
 
+  // Set bot commands menu
+  bot.api.setMyCommands([
+    { command: 'login', description: '获取网页登录链接' },
+    { command: 'start', description: '开始使用 / 查看帮助' },
+  ]).catch((err) => {
+    log.warn({ err: err instanceof Error ? err.message : String(err) }, 'Failed to set bot commands');
+  });
+
   bot.catch((err) => {
     log.error({ err: err.message }, 'Bot error');
   });

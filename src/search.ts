@@ -30,6 +30,12 @@ export interface SearchResult {
  * Falls back gracefully if qmd is not installed or no collections configured.
  */
 export async function searchNotes(query: string, limit: number = 5): Promise<SearchResult[]> {
+  // TEMP DISABLED: QMD notes are not user-scoped yet.
+  // In multi-tenant mode, all users would see the same notes (from the admin's vault).
+  // Re-enable when per-user note collections are implemented.
+  return [];
+
+  // @ts-ignore — unreachable code below kept for when feature is re-enabled
   try {
     const startTime = Date.now();
     log.debug({ query, collection: 'notes' }, '→ qmd vsearch: notes');
@@ -60,7 +66,7 @@ export async function searchNotes(query: string, limit: number = 5): Promise<Sea
         score: item.score,
       };
     });
-  } catch (err) {
+  } catch (err: any) {
     log.warn({ query, err: err instanceof Error ? err.message : String(err) }, '← qmd vsearch: notes failed');
     return [];
   }
