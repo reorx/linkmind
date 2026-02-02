@@ -2,15 +2,17 @@
  * Export: generate Markdown documents from link records for QAMD indexing.
  */
 
+import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
 import type { LinkRecord } from './db.js';
 import { logger } from './logger.js';
 
+const execAsync = promisify(exec);
 const log = logger.child({ module: 'export' });
 
-const EXPORT_DIR =
-  process.env.QMD_LINKS_PATH || path.join(process.env.HOME || '/tmp', 'LocalDocuments/linkmind/links');
+const EXPORT_DIR = process.env.QMD_LINKS_PATH || path.join(process.env.HOME || '/tmp', 'LocalDocuments/linkmind/links');
 
 /**
  * Generate a slug from a title string.
@@ -136,7 +138,7 @@ export function exportLinkMarkdown(link: LinkRecord): string {
   const content = renderMarkdown(link);
 
   fs.writeFileSync(filepath, content, 'utf-8');
-  log.info({ path: filepath }, "Written");
+  log.info({ path: filepath }, 'Written');
 
   return filepath;
 }
@@ -151,7 +153,7 @@ export function exportAllLinks(links: LinkRecord[]): string[] {
       paths.push(exportLinkMarkdown(link));
     }
   }
-  log.info({ count: paths.length, dir: EXPORT_DIR }, "Exported all links");
+  log.info({ count: paths.length, dir: EXPORT_DIR }, 'Exported all links');
   return paths;
 }
 
@@ -167,3 +169,58 @@ function safeParse<T>(json: string | undefined, fallback: T): T {
 function escapeFm(s: string): string {
   return s.replace(/"/g, '\\"');
 }
+
+/**
+ * QMD Index Queue: serializes `qmd update` + `qmd embed` calls.
+ * Multiple concurrent requests are coalesced — if an update is already running,
+ * pending requests merge into a single follow-up run.
+ */
+class QmdIndexQueue {
+  private running = false;
+  private pendingCount = 0;
+
+  /**
+   * Request a QMD index update. If one is already running, the request is
+   * queued and coalesced. Fire-and-forget safe — never rejects.
+   */
+  async requestUpdate(): Promise<void> {
+    if (this.running) {
+      this.pendingCount++;
+      log.debug({ pendingCount: this.pendingCount }, '[qmd-queue] Queued (already running)');
+      return;
+    }
+    this.running = true;
+    try {
+      await this.runUpdate();
+      while (this.pendingCount > 0) {
+        this.pendingCount = 0;
+        log.info('[qmd-queue] Running again for coalesced requests');
+        await this.runUpdate();
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async runUpdate(): Promise<void> {
+    try {
+      log.info('[qmd-queue] Running qmd update...');
+      const { stdout: updateOut } = await execAsync('qmd update', {
+        encoding: 'utf-8',
+        timeout: 60_000,
+      });
+      log.info({ output: updateOut.trim() }, '[qmd-queue] qmd update done');
+
+      log.info('[qmd-queue] Running qmd embed...');
+      const { stdout: embedOut } = await execAsync('qmd embed', {
+        encoding: 'utf-8',
+        timeout: 120_000,
+      });
+      log.info({ output: embedOut.trim() }, '[qmd-queue] qmd embed done');
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : String(err) }, '[qmd-queue] Failed');
+    }
+  }
+}
+
+export const qmdIndexQueue = new QmdIndexQueue();

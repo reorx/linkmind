@@ -5,7 +5,7 @@
 import { insertLink, updateLink, getLink, type LinkRecord } from './db.js';
 import { scrapeUrl, type ScrapeResult } from './scraper.js';
 import { analyzeArticle } from './agent.js';
-import { exportLinkMarkdown } from './export.js';
+import { exportLinkMarkdown, qmdIndexQueue } from './export.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'pipeline' });
@@ -130,12 +130,15 @@ async function runPipeline(
     return { linkId, title: title || url, url, status: 'error', error: `[analyze] ${errMsg}` };
   }
 
-  // ── Stage 3: Export ──
+  // ── Stage 3: Export + QMD Index ──
   const fullLink = getLink(linkId);
   if (fullLink) {
     try {
       const exportPath = exportLinkMarkdown(fullLink);
       log.info({ path: exportPath }, '[export] OK');
+
+      // Fire-and-forget: queue QMD re-index (serialized, won't block pipeline)
+      qmdIndexQueue.requestUpdate().catch(() => {});
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error({ err: errMsg }, '[export] Failed (non-fatal)');

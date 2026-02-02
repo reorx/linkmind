@@ -32,10 +32,7 @@ export async function searchNotes(query: string, limit: number = 5): Promise<Sea
     const startTime = Date.now();
     log.debug({ query, collection: 'notes' }, '→ qmd vsearch: notes');
 
-    const { stdout } = await execAsync(`qmd vsearch "${escapeShell(query)}" --json -n ${limit * 3}`, {
-      encoding: 'utf-8',
-      timeout: 30000,
-    });
+    const stdout = await qmdVsearchWithRetry(`qmd vsearch "${escapeShell(query)}" --json -n ${limit * 3}`);
 
     const parsed = JSON.parse(stdout);
     if (!Array.isArray(parsed)) return [];
@@ -70,10 +67,7 @@ export async function searchHistoricalLinks(query: string, limit: number = 5): P
     const startTime = Date.now();
     log.debug({ query, collection: 'links' }, '→ qmd vsearch: links');
 
-    const { stdout } = await execAsync(`qmd vsearch "${escapeShell(query)}" -n ${limit * 3} --json`, {
-      encoding: 'utf-8',
-      timeout: 30000,
-    });
+    const stdout = await qmdVsearchWithRetry(`qmd vsearch "${escapeShell(query)}" -n ${limit * 3} --json`);
 
     const parsed = JSON.parse(stdout);
     if (Array.isArray(parsed)) {
@@ -143,4 +137,28 @@ function getLinkUrl(id: number): string | undefined {
 
 function escapeShell(s: string): string {
   return s.replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Run a qmd vsearch command with retry on SQLITE_BUSY errors.
+ * Retries up to `maxRetries` times with exponential backoff.
+ */
+async function qmdVsearchWithRetry(cmd: string, maxRetries: number = 3, baseDelayMs: number = 1000): Promise<string> {
+  let lastErr: Error | undefined;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const { stdout } = await execAsync(cmd, { encoding: 'utf-8', timeout: 30000 });
+      return stdout;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      const isBusy = lastErr.message.includes('SQLITE_BUSY');
+      if (!isBusy || attempt === maxRetries) break;
+      const delay = baseDelayMs * 2 ** attempt;
+      log.debug({ attempt: attempt + 1, delay }, '[qmd-retry] SQLITE_BUSY, retrying...');
+      await sleep(delay);
+    }
+  }
+  throw lastErr;
 }
