@@ -1,11 +1,11 @@
 /**
  * Telegram Bot: receives links, triggers scraping + analysis pipeline.
- * Handles user registration and /login for web auth.
+ * Handles user registration via invite codes and /login for web auth.
  */
 
 import { Bot } from 'grammy';
 import jwt from 'jsonwebtoken';
-import { getLink, findOrCreateUser } from './db.js';
+import { getLink, getLinkByUrl, findOrCreateUser, getInviteByCode, useInvite } from './db.js';
 import { processUrl } from './pipeline.js';
 import { logger } from './logger.js';
 
@@ -22,10 +22,59 @@ function getJwtSecret(): string {
 export function startBot(token: string, webBaseUrl: string): Bot {
   const bot = new Bot(token);
 
-  // /start command
+  // /start command — handle invite deep links and plain start
   bot.command('start', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const payload = ctx.match; // text after /start
+    const user = await findOrCreateUser(
+      from.id,
+      from.username,
+      [from.first_name, from.last_name].filter(Boolean).join(' '),
+    );
+
+    // Handle invite deep link: /start invite_<code>
+    if (payload && payload.startsWith('invite_')) {
+      if (user.status === 'active') {
+        await ctx.reply('你已经注册过了 ✅ 直接发链接给我就行！');
+        return;
+      }
+
+      const code = payload.slice('invite_'.length);
+      const invite = await getInviteByCode(code);
+
+      if (!invite || !invite.id) {
+        await ctx.reply('❌ 邀请码无效');
+        return;
+      }
+
+      if (invite.used_count >= invite.max_uses) {
+        await ctx.reply('❌ 该邀请码已用完');
+        return;
+      }
+
+      const ok = await useInvite(invite.id, user.id!);
+      if (!ok) {
+        await ctx.reply('❌ 邀请码使用失败，请重试');
+        return;
+      }
+
+      log.info({ userId: user.id, telegramId: from.id, inviteCode: code }, 'User registered via invite');
+      await ctx.reply(
+        '🎉 注册成功！欢迎使用 LinkMind！\n\n发送任意链接，我会自动抓取、分析并保存。\n\n命令：\n/login — 获取网页登录链接',
+      );
+      return;
+    }
+
+    // Plain /start
+    if (user.status !== 'active') {
+      await ctx.reply('🔒 LinkMind 目前为邀请制，请通过邀请链接注册。');
+      return;
+    }
+
     await ctx.reply(
-      '🧠 欢迎使用 LinkMind！\n\n发送任意链接，我会自动抓取、分析并保存。\n\n命令：\n/login — 获取网页登录链接',
+      '🧠 欢迎回来！\n\n发送任意链接，我会自动抓取、分析并保存。\n\n命令：\n/login — 获取网页登录链接',
     );
   });
 
@@ -39,6 +88,11 @@ export function startBot(token: string, webBaseUrl: string): Bot {
       from.username,
       [from.first_name, from.last_name].filter(Boolean).join(' '),
     );
+
+    if (user.status !== 'active') {
+      await ctx.reply('🔒 请先通过邀请链接注册后再使用。');
+      return;
+    }
 
     const loginToken = jwt.sign({ userId: user.id, telegramId: from.id }, getJwtSecret(), {
       expiresIn: '5m',
@@ -65,14 +119,17 @@ export function startBot(token: string, webBaseUrl: string): Bot {
     const from = ctx.from;
     if (!from) return;
 
-    // Register/update user
     const user = await findOrCreateUser(
       from.id,
       from.username,
       [from.first_name, from.last_name].filter(Boolean).join(' '),
     );
 
-    // Fire and forget: don't block the handler so grammY can process next message
+    if (user.status !== 'active') {
+      await ctx.reply('🔒 请先通过邀请链接注册后再使用 LinkMind。');
+      return;
+    }
+
     for (const url of urls) {
       handleUrl(ctx, url, webBaseUrl, user.id!).catch((err) => {
         log.error({ url, err: err instanceof Error ? err.message : String(err) }, 'handleUrl uncaught error');
@@ -91,7 +148,7 @@ export function startBot(token: string, webBaseUrl: string): Bot {
 }
 
 async function handleUrl(ctx: any, url: string, webBaseUrl: string, userId: number): Promise<void> {
-  const isDuplicate = !!(await import('./db.js').then((db) => db.getLinkByUrl(userId, url)));
+  const isDuplicate = !!(await getLinkByUrl(userId, url));
   const statusText = isDuplicate ? `🔄 该链接已存在，正在重新抓取、更新和分析...` : `🔗 收到链接，正在处理...`;
 
   const statusMsg = await ctx.reply(statusText, {
