@@ -22,8 +22,11 @@ export function startBot(token: string, webBaseUrl: string): Bot {
       return;
     }
 
+    // Fire and forget: don't block the handler so grammY can process next message
     for (const url of urls) {
-      await handleUrl(ctx, url, webBaseUrl);
+      handleUrl(ctx, url, webBaseUrl).catch((err) => {
+        log.error({ url, err: err instanceof Error ? err.message : String(err) }, 'handleUrl uncaught error');
+      });
     }
   });
 
