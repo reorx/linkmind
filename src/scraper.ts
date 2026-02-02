@@ -1,10 +1,14 @@
 /**
  * Web scraper: Playwright + defuddle for content extraction.
- * Inspired by vibe-reader-hn's extract command.
+ * Twitter/X URLs are handled via the `bird` CLI tool.
  */
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import playwright from "playwright";
 import { Defuddle } from "defuddle/node";
+
+const execFileAsync = promisify(execFile);
 
 export interface ScrapeResult {
   url: string;
@@ -23,9 +27,110 @@ export interface ScrapeResult {
 }
 
 /**
+ * Check if a URL is a Twitter/X tweet URL.
+ */
+function isTwitterUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (
+      (u.hostname === "twitter.com" ||
+        u.hostname === "www.twitter.com" ||
+        u.hostname === "x.com" ||
+        u.hostname === "www.x.com") &&
+      /\/status\/\d+/.test(u.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Scrape a Twitter/X tweet using the `bird` CLI.
+ */
+async function scrapeTwitter(url: string): Promise<ScrapeResult> {
+  // Read the tweet
+  const { stdout } = await execFileAsync("bird", ["read", "--json", "--cookie-source", "chrome", url], {
+    timeout: 30000,
+  });
+
+  const tweet = JSON.parse(stdout);
+
+  const author = tweet.author?.name
+    ? `${tweet.author.name} (@${tweet.author.username})`
+    : tweet.author?.username || "Unknown";
+
+  // Build markdown content
+  const parts: string[] = [];
+  parts.push(tweet.text || "");
+
+  // Include quoted tweet if present
+  if (tweet.quotedTweet) {
+    const qt = tweet.quotedTweet;
+    const qtAuthor = qt.author?.name
+      ? `${qt.author.name} (@${qt.author.username})`
+      : qt.author?.username || "Unknown";
+    parts.push("");
+    parts.push(`> **${qtAuthor}:**`);
+    for (const line of (qt.text || "").split("\n")) {
+      parts.push(`> ${line}`);
+    }
+  }
+
+  // Include media descriptions
+  if (tweet.media?.length) {
+    parts.push("");
+    for (const m of tweet.media) {
+      if (m.type === "photo") {
+        parts.push(`![](${m.url})`);
+      } else if (m.type === "video") {
+        parts.push(`🎥 Video: ${m.url || "(embedded)"}`);
+      }
+    }
+  }
+
+  // Stats line
+  parts.push("");
+  parts.push(
+    `---\n❤️ ${tweet.likeCount ?? 0} · 🔁 ${tweet.retweetCount ?? 0} · 💬 ${tweet.replyCount ?? 0}`,
+  );
+
+  const markdown = parts.join("\n");
+
+  // Parse date
+  const published = tweet.createdAt || undefined;
+
+  // Title: author + first line of text (truncated)
+  const firstLine = (tweet.text || "").split("\n")[0].slice(0, 80);
+  const title = `${tweet.author?.name || tweet.author?.username || "Tweet"}: ${firstLine}${firstLine.length >= 80 ? "…" : ""}`;
+
+  // OG image: use first media image or author avatar
+  const ogImage = tweet.media?.find((m: any) => m.type === "photo")?.url;
+
+  return {
+    url,
+    og: {
+      title,
+      description: (tweet.text || "").slice(0, 200),
+      image: ogImage,
+      siteName: "X (Twitter)",
+      type: "article",
+    },
+    title,
+    author,
+    published,
+    markdown,
+  };
+}
+
+/**
  * Scrape a URL: fetch with Playwright, extract OG metadata + article content as Markdown.
+ * Twitter/X URLs are handled via the `bird` CLI.
  */
 export async function scrapeUrl(url: string): Promise<ScrapeResult> {
+  // Route Twitter/X URLs to bird CLI
+  if (isTwitterUrl(url)) {
+    return scrapeTwitter(url);
+  }
   const browser = await playwright.chromium.launch({
     headless: true,
     args: ["--disable-blink-features=AutomationControlled"],
