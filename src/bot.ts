@@ -256,7 +256,7 @@ function formatResult(data: {
     }
   }
 
-  msg += `\n<a href="${escHtml(data.permanentLink)}">🔍 查看完整分析</a>`;
+  msg += `\n🔍 完整分析: ${escHtml(data.permanentLink)}`;
 
   return msg;
 }
