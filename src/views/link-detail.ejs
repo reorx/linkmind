@@ -136,6 +136,38 @@
     color: var(--dim);
     font-size: 0.8rem;
   }
+  /* Image gallery */
+  .image-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  .image-gallery figure {
+    margin: 0;
+    background: var(--bg);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .image-gallery img {
+    width: 100%;
+    height: auto;
+    display: block;
+    cursor: pointer;
+    transition: transform 0.2s;
+  }
+  .image-gallery img:hover {
+    transform: scale(1.02);
+  }
+  .image-gallery figcaption {
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    color: var(--dim);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    white-space: pre-wrap;
+    max-height: 120px;
+    overflow-y: auto;
+  }
 
   @media (max-width: 768px) {
     .detail-layout {
@@ -167,6 +199,24 @@
     <div class="section">
       <div class="section-title">Insight</div>
       <div class="insight"><%= link.insight %></div>
+    </div>
+    <% } %>
+
+    <% if (images && images.length > 0) { %>
+    <div class="section">
+      <div class="section-title">图片</div>
+      <div class="image-gallery">
+        <% for (const img of images) { %>
+        <figure>
+          <a href="/images/<%= link.id %>/<%= img.local_path %>" target="_blank">
+            <img src="/images/<%= link.id %>/<%= img.local_path %>" loading="lazy" alt="">
+          </a>
+          <% if (img.ocr_text) { %>
+          <figcaption><%= img.ocr_text %></figcaption>
+          <% } %>
+        </figure>
+        <% } %>
+      </div>
     </div>
     <% } %>
 

@@ -3,9 +3,11 @@
  * Handles user registration via invite codes and /login for web auth.
  */
 
-import { Bot } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 import jwt from 'jsonwebtoken';
-import { getLink, getLinkByUrl, findOrCreateUser, getInviteByCode, useInvite } from './db.js';
+import path from 'path';
+import { existsSync } from 'fs';
+import { getLink, getLinkByUrl, findOrCreateUser, getInviteByCode, useInvite, getUserByTelegramId } from './db.js';
 import { spawnProcessLink } from './worker.js';
 import { logger } from './logger.js';
 
@@ -107,6 +109,48 @@ export function startBot(token: string, webBaseUrl: string): Bot {
     });
   });
 
+  // /reprocess command — re-run full pipeline on a link
+  bot.command('reprocess', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const user = await getUserByTelegramId(from.id);
+    if (!user || user.status !== 'active') {
+      await ctx.reply('🔒 请先通过邀请链接注册后再使用。');
+      return;
+    }
+
+    const linkIdStr = ctx.match?.trim();
+    if (!linkIdStr || !/^\d+$/.test(linkIdStr)) {
+      await ctx.reply('❌ 用法: /reprocess <link_id>\n例如: /reprocess 58');
+      return;
+    }
+
+    const linkId = Number(linkIdStr);
+    const link = await getLink(linkId);
+
+    if (!link) {
+      await ctx.reply(`❌ 链接 #${linkId} 不存在`);
+      return;
+    }
+
+    if (link.user_id !== user.id) {
+      await ctx.reply(`❌ 链接 #${linkId} 不属于你`);
+      return;
+    }
+
+    // Spawn reprocess task
+    const { taskId } = await spawnProcessLink(user.id!, link.url, linkId);
+    log.info({ linkId, taskId }, 'Reprocess triggered');
+
+    await ctx.reply(`🔄 开始重新处理链接 #${linkId}\n\n处理完成后会通知你。`);
+
+    // Start polling for completion in background
+    pollAndNotify(ctx, linkId, link.url, webBaseUrl).catch((err) => {
+      log.error({ linkId, err: err instanceof Error ? err.message : String(err) }, 'pollAndNotify error');
+    });
+  });
+
   // Handle messages with URLs
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
@@ -140,6 +184,7 @@ export function startBot(token: string, webBaseUrl: string): Bot {
   // Set bot commands menu
   bot.api.setMyCommands([
     { command: 'login', description: '获取网页登录链接' },
+    { command: 'reprocess', description: '重新处理链接 (用法: /reprocess <id>)' },
     { command: 'start', description: '开始使用 / 查看帮助' },
   ]).catch((err) => {
     log.warn({ err: err instanceof Error ? err.message : String(err) }, 'Failed to set bot commands');
@@ -153,6 +198,61 @@ export function startBot(token: string, webBaseUrl: string): Bot {
   log.info('Telegram bot started');
 
   return bot;
+}
+
+async function pollAndNotify(ctx: any, linkId: number, url: string, webBaseUrl: string): Promise<void> {
+  const maxWait = 300_000;
+  const interval = 3_000;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWait) {
+    await new Promise((r) => setTimeout(r, interval));
+
+    const link = await getLink(linkId);
+    if (!link) continue;
+
+    if (link.status === 'analyzed') {
+      const tags: string[] = safeParseJson(link.tags);
+      const relatedNotes: any[] = safeParseJson(link.related_notes);
+      const relatedLinks: any[] = safeParseJson(link.related_links);
+      const images: any[] = safeParseJson(link.images);
+      const permanentLink = `${webBaseUrl}/link/${linkId}`;
+
+      const resultText = formatResult({
+        title: link.og_title || url,
+        url,
+        summary: link.summary || '',
+        insight: link.insight || '',
+        tags,
+        relatedNotes,
+        relatedLinks,
+        permanentLink,
+      });
+
+      // Check if we have a local image to send
+      const firstImage = images[0];
+      const imagePath = firstImage?.local_path
+        ? path.resolve(import.meta.dirname, '../data/images', String(linkId), firstImage.local_path)
+        : null;
+
+      if (imagePath && existsSync(imagePath)) {
+        await ctx.api.sendPhoto(ctx.chat.id, new InputFile(imagePath), {
+          caption: resultText,
+          parse_mode: 'HTML',
+        });
+      } else {
+        await ctx.reply(resultText, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+      }
+      return;
+    }
+
+    if (link.status === 'error') {
+      await ctx.reply(`❌ 重新处理失败: ${(link.error_message || '').slice(0, 200)}`);
+      return;
+    }
+  }
+
+  await ctx.reply('⏰ 处理超时，请稍后在网页端查看结果。');
 }
 
 async function handleUrl(ctx: any, url: string, webBaseUrl: string, userId: number): Promise<void> {
@@ -195,6 +295,7 @@ async function handleUrl(ctx: any, url: string, webBaseUrl: string, userId: numb
       const tags: string[] = safeParseJson(link.tags);
       const relatedNotes: any[] = safeParseJson(link.related_notes);
       const relatedLinks: any[] = safeParseJson(link.related_links);
+      const images: any[] = safeParseJson(link.images);
       const permanentLink = `${webBaseUrl}/link/${linkId}`;
 
       const resultText = formatResult({
@@ -208,7 +309,26 @@ async function handleUrl(ctx: any, url: string, webBaseUrl: string, userId: numb
         permanentLink,
       });
 
-      await editMessage(ctx, statusMsg, resultText, true);
+      // Check if we have a local image to send (Twitter links with images)
+      const firstImage = images[0];
+      const imagePath = firstImage?.local_path
+        ? path.resolve(import.meta.dirname, '../data/images', String(linkId), firstImage.local_path)
+        : null;
+
+      if (imagePath && existsSync(imagePath)) {
+        // Delete the status message and send a new photo message
+        try {
+          await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
+        } catch {
+          // Ignore delete errors
+        }
+        await ctx.api.sendPhoto(ctx.chat.id, new InputFile(imagePath), {
+          caption: resultText,
+          parse_mode: 'HTML',
+        });
+      } else {
+        await editMessage(ctx, statusMsg, resultText, true);
+      }
       return;
     }
 

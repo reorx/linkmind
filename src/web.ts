@@ -139,6 +139,10 @@ export function startWebServer(port: number): void {
   app.use(express.json());
   app.use(cookieParser());
 
+  // Serve images from data/images directory
+  const imagesDir = path.resolve(import.meta.dirname, '../data/images');
+  app.use('/images', express.static(imagesDir));
+
   // ── Public routes ──
 
   // GET /auth/callback — handle login from Telegram bot
@@ -332,6 +336,7 @@ export function startWebServer(port: number): void {
       const linksWithDay = links.map((l) => ({
         ...l,
         _dayLabel: getDayLabel(l.created_at),
+        _images: safeParseJson(l.images),
       }));
 
       const html = await renderPage('home', {
@@ -364,6 +369,7 @@ export function startWebServer(port: number): void {
     }
 
     const tags = safeParseJson(link.tags);
+    const images = safeParseJson(link.images);
     const rawNotes = safeParseJson(link.related_notes);
     const relatedNotes = rawNotes.map((n: any) => ({
       ...n,
@@ -379,6 +385,7 @@ export function startWebServer(port: number): void {
         pageTitle: `${link.og_title || link.url} — LinkMind`,
         link,
         tags,
+        images,
         relatedNotes,
         relatedLinks,
         user: req.user,

@@ -123,6 +123,35 @@
     background: var(--badge-scraped-bg);
     color: var(--badge-scraped-text);
   }
+  /* Card with thumbnail */
+  .link-card-inner {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .link-card-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .link-card-thumb {
+    width: 80px;
+    height: 80px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .link-card-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  @media (max-width: 480px) {
+    .link-card-thumb {
+      width: 60px;
+      height: 60px;
+    }
+  }
 </style>
 
 <% if (links.length === 0) { %>
@@ -136,28 +165,45 @@
       <div class="day-label"><%= currentDay %></div>
     <% } %>
     <div class="link-card<%= item.status === 'error' ? ' is-error' : '' %>">
-      <h3>
-        <a href="/link/<%= item.id %>"><%= item.og_title || item.url %></a>
-        <% if (item.status === 'error') { %>
-        <span class="status-badge error">失败</span>
-        <% } else if (item.status === 'pending') { %>
-        <span class="status-badge pending">等待中</span>
-        <% } else if (item.status === 'scraped') { %>
-        <span class="status-badge scraped">待分析</span>
+      <div class="link-card-inner">
+        <div class="link-card-content">
+          <h3>
+            <a href="/link/<%= item.id %>"><%= item.og_title || item.url %></a>
+            <% if (item.status === 'error') { %>
+            <span class="status-badge error">失败</span>
+            <% } else if (item.status === 'pending') { %>
+            <span class="status-badge pending">等待中</span>
+            <% } else if (item.status === 'scraped') { %>
+            <span class="status-badge scraped">待分析</span>
+            <% } %>
+          </h3>
+          <div class="card-meta">
+            <a href="<%= item.url %>" target="_blank"><%= item.url.length > 80 ? item.url.slice(0, 80) + '...' : item.url %></a>
+            <% if (item.og_site_name) { %> · <%= item.og_site_name %><% } %>
+            <% if (item.created_at) { %> · <%= item.created_at.slice(11, 16) %><% } %>
+          </div>
+          <% if (item.summary) { %>
+          <details>
+            <summary><%= item.summary %></summary>
+          </details>
+          <% } else if (item.error_message) { %>
+          <div style="color: var(--error-text); font-size: 0.85rem; margin-top: 6px;"><%= item.error_message %></div>
+          <% } %>
+        </div>
+        <% if (item._images && item._images.length > 0) { %>
+        <div class="link-card-thumb">
+          <a href="/link/<%= item.id %>">
+            <img src="/images/<%= item.id %>/<%= item._images[0].thumbnail_path %>" loading="lazy" alt="">
+          </a>
+        </div>
+        <% } else if (item.og_image) { %>
+        <div class="link-card-thumb">
+          <a href="/link/<%= item.id %>">
+            <img src="<%= item.og_image %>" loading="lazy" alt="">
+          </a>
+        </div>
         <% } %>
-      </h3>
-      <div class="card-meta">
-        <a href="<%= item.url %>" target="_blank"><%= item.url.length > 80 ? item.url.slice(0, 80) + '...' : item.url %></a>
-        <% if (item.og_site_name) { %> · <%= item.og_site_name %><% } %>
-        <% if (item.created_at) { %> · <%= item.created_at.slice(11, 16) %><% } %>
       </div>
-      <% if (item.summary) { %>
-      <details>
-        <summary><%= item.summary %></summary>
-      </details>
-      <% } else if (item.error_message) { %>
-      <div style="color: var(--error-text); font-size: 0.85rem; margin-top: 6px;"><%= item.error_message %></div>
-      <% } %>
     </div>
   <% } %>
 </div>

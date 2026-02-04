@@ -12,7 +12,8 @@ import {
   removeFromRelatedLinks,
   type LinkRecord,
 } from './db.js';
-import { scrapeUrl, type ScrapeResult } from './scraper.js';
+import { scrapeUrl, isTwitterUrl, type ScrapeResult } from './scraper.js';
+import { processTwitterImages } from './image-handler.js';
 import { analyzeArticle, findRelatedAndInsight } from './agent.js';
 import { exportLinkMarkdown, deleteLinkExport, qmdIndexQueue } from './export.js';
 import { logger } from './logger.js';
@@ -124,6 +125,7 @@ async function runPipeline(
   let markdown: string | undefined;
   let ogDescription: string | undefined;
   let siteName: string | undefined;
+  let ocrTexts: string[] = [];
 
   if (existingLink?.markdown && existingLink.markdown.length > 0) {
     log.info({ linkId }, '[scrape] Skipped (already have content)');
@@ -152,6 +154,30 @@ async function runPipeline(
       siteName = scrapeResult.og.siteName;
 
       log.info({ title: title || url, chars: markdown.length }, '[scrape] OK');
+
+      // ── Process Twitter images ──
+      if (isTwitterUrl(url) && scrapeResult.rawMedia?.length) {
+        try {
+          await onProgress?.('downloading images');
+          const images = await processTwitterImages(linkId, scrapeResult.rawMedia);
+          if (images.length > 0) {
+            await updateLink(linkId, { images: JSON.stringify(images) });
+            log.info({ linkId, count: images.length }, '[images] Downloaded and processed');
+
+            // Collect OCR text for LLM analysis
+            ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
+            if (ocrTexts.length > 0) {
+              log.info({ linkId, ocrCount: ocrTexts.length }, '[ocr] Extracted text from images');
+            }
+          }
+        } catch (imgErr) {
+          // Image processing failure is non-fatal
+          log.warn(
+            { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
+            '[images] Failed (non-fatal)',
+          );
+        }
+      }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[scrape] Failed');
@@ -165,12 +191,19 @@ async function runPipeline(
   // ── Stage 2: Analyze (LLM) ──
   try {
     await onProgress?.('analyzing');
+
+    // Append OCR text to markdown for LLM context
+    let markdownForAnalysis = markdown!;
+    if (ocrTexts.length > 0) {
+      markdownForAnalysis += '\n\n---\n**图片文字 (OCR):**\n' + ocrTexts.join('\n\n');
+    }
+
     const analysis = await analyzeArticle({
       url,
       title,
       ogDescription,
       siteName,
-      markdown: markdown!,
+      markdown: markdownForAnalysis,
       linkId,
     });
 
@@ -226,9 +259,7 @@ export interface RefreshResult {
  * Does NOT re-scrape or re-summarize — only re-searches and re-generates insight.
  */
 export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> {
-  const links = linkId
-    ? ([await getLink(linkId)].filter(Boolean) as LinkRecord[])
-    : await getAllAnalyzedLinks();
+  const links = linkId ? ([await getLink(linkId)].filter(Boolean) as LinkRecord[]) : await getAllAnalyzedLinks();
 
   if (links.length === 0) {
     log.warn({ linkId }, '[refresh] No links found');

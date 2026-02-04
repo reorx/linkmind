@@ -36,6 +36,7 @@ export interface LinkRecord {
   related_notes?: string; // JSON string (for compat with existing code)
   related_links?: string; // JSON string
   tags?: string; // JSON string
+  images?: string; // JSON string (ImageInfo[])
   status: 'pending' | 'scraped' | 'analyzed' | 'error';
   error_message?: string;
   created_at?: string;
@@ -77,6 +78,7 @@ interface LinksTable {
   related_notes: string | null;
   related_links: string | null;
   tags: string | null;
+  images: string | null;
   status: string;
   error_message: string | null;
   created_at: Generated<Date>;
@@ -128,8 +130,7 @@ function toLinkRecord(row: any): LinkRecord {
           ? row.related_links
           : JSON.stringify(row.related_links)
         : undefined,
-    tags:
-      row.tags != null ? (typeof row.tags === 'string' ? row.tags : JSON.stringify(row.tags)) : undefined,
+    tags: row.tags != null ? (typeof row.tags === 'string' ? row.tags : JSON.stringify(row.tags)) : undefined,
     created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     updated_at: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
     og_title: row.og_title ?? undefined,
@@ -140,6 +141,7 @@ function toLinkRecord(row: any): LinkRecord {
     markdown: row.markdown ?? undefined,
     summary: row.summary ?? undefined,
     insight: row.insight ?? undefined,
+    images: row.images ?? undefined,
     error_message: row.error_message ?? undefined,
   };
 }
@@ -156,7 +158,11 @@ function toUserRecord(row: any): UserRecord {
 
 /* ── Users CRUD ── */
 
-export async function findOrCreateUser(telegramId: number, username?: string, displayName?: string): Promise<UserRecord> {
+export async function findOrCreateUser(
+  telegramId: number,
+  username?: string,
+  displayName?: string,
+): Promise<UserRecord> {
   const existing = await getDb()
     .selectFrom('users')
     .selectAll()
@@ -197,11 +203,7 @@ export async function findOrCreateUser(telegramId: number, username?: string, di
 /* ── Invites ── */
 
 export async function getInviteByCode(code: string): Promise<InviteRecord | undefined> {
-  const row = await getDb()
-    .selectFrom('invites')
-    .selectAll()
-    .where('code', '=', code)
-    .executeTakeFirst();
+  const row = await getDb().selectFrom('invites').selectAll().where('code', '=', code).executeTakeFirst();
   if (!row) return undefined;
   return {
     ...row,
@@ -226,30 +228,18 @@ export async function useInvite(inviteId: number, userId: number): Promise<boole
   }
 
   // Activate user
-  await getDb()
-    .updateTable('users')
-    .set({ status: 'active', invite_id: inviteId })
-    .where('id', '=', userId)
-    .execute();
+  await getDb().updateTable('users').set({ status: 'active', invite_id: inviteId }).where('id', '=', userId).execute();
 
   return true;
 }
 
 export async function getUserById(id: number): Promise<UserRecord | undefined> {
-  const row = await getDb()
-    .selectFrom('users')
-    .selectAll()
-    .where('id', '=', id)
-    .executeTakeFirst();
+  const row = await getDb().selectFrom('users').selectAll().where('id', '=', id).executeTakeFirst();
   return row ? toUserRecord(row) : undefined;
 }
 
 export async function getUserByTelegramId(telegramId: number): Promise<UserRecord | undefined> {
-  const row = await getDb()
-    .selectFrom('users')
-    .selectAll()
-    .where('telegram_id', '=', telegramId)
-    .executeTakeFirst();
+  const row = await getDb().selectFrom('users').selectAll().where('telegram_id', '=', telegramId).executeTakeFirst();
   return row ? toUserRecord(row) : undefined;
 }
 
@@ -383,10 +373,7 @@ export async function removeFromRelatedLinks(deletedLinkId: number): Promise<num
 
 export async function searchLinks(query: string, limit: number = 10, userId?: number): Promise<LinkRecord[]> {
   const pattern = `%${query}%`;
-  let q = getDb()
-    .selectFrom('links')
-    .selectAll()
-    .where('status', '=', 'analyzed');
+  let q = getDb().selectFrom('links').selectAll().where('status', '=', 'analyzed');
   if (userId != null) {
     q = q.where('user_id', '=', userId);
   }
