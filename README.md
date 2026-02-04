@@ -141,6 +141,45 @@ pnpm dev
 
 服务启动后会同时运行 Telegram Bot 和 Web 服务器。
 
+### 7. 用 launchd 常驻（macOS）
+
+项目提供了 launchd plist 文件 [`deploy/com.linkmind.plist`](deploy/com.linkmind.plist)，用于在 macOS 上以 daemon 方式运行。
+
+**安装：**
+
+```bash
+# 复制 plist 到 LaunchAgents 目录
+cp deploy/com.linkmind.plist ~/Library/LaunchAgents/
+
+# 加载并启动服务
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.linkmind.plist
+```
+
+**日常控制：**
+
+```bash
+# 查看服务状态
+launchctl print gui/$(id -u)/com.linkmind
+
+# 停止服务
+launchctl bootout gui/$(id -u)/com.linkmind
+
+# 启动服务
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.linkmind.plist
+
+# 重启服务（停止 + 启动）
+launchctl bootout gui/$(id -u)/com.linkmind && \
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.linkmind.plist
+```
+
+**日志位置：**
+
+| 文件 | 说明 |
+|---|---|
+| `data/linkmind.log` | 应用日志（JSON lines，由 pino 写入，通过 `.env` 的 `LOG_FILE` 配置） |
+| `data/launchd-stdout.log` | launchd 标准输出（pretty-print 格式） |
+| `data/launchd-stderr.log` | launchd 标准错误（崩溃信息等） |
+
 ## 环境变量
 
 | 变量 | 必填 | 默认值 | 说明 |
@@ -191,7 +230,7 @@ npx tsx src/test-pipeline.ts <url> --analyze-only   # 仅测试 LLM 分析
 - **运行时** — Node.js + TypeScript (tsx)
 - **Telegram Bot** — [grammY](https://grammy.dev/)
 - **Web 框架** — Express 5 + EJS 模板
-- **数据库** — SQLite (better-sqlite3, WAL mode)
+- **数据库** — PostgreSQL (Kysely)
 - **网页抓取** — Playwright + [Defuddle](https://github.com/nichochar/defuddle)
 - **LLM** — OpenAI 兼容 API / Google Gemini（可切换）
 - **知识库搜索** — [QMD](https://github.com/tobi/qmd)（语义搜索 + 向量化）
