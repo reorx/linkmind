@@ -13,8 +13,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks, getUserById } from './db.js';
-import { retryLink, deleteLinkFull } from './pipeline.js';
-import { spawnProcessLink } from './worker.js';
+import { retryLink, deleteLinkFull, spawnProcessLink } from './pipeline.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
@@ -321,8 +320,8 @@ export function startWebServer(port: number): void {
     }
 
     log.info({ linkId: id, url: link.url }, 'Retrying single link');
-    const result = await retryLink(id);
-    res.json(result);
+    const { taskId } = await retryLink(id);
+    res.json({ taskId, linkId: id, status: 'queued', message: 'Link queued for retry' });
   });
 
   // ── Protected page routes ──

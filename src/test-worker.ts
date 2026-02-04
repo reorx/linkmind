@@ -16,7 +16,7 @@ dotenv.config({ override: true });
 import { initLogger, logger } from './logger.js';
 initLogger();
 
-import { startWorker, spawnProcessLink } from './worker.js';
+import { startWorker, spawnProcessLink } from './pipeline.js';
 import { getLink, getLinkByUrl } from './db.js';
 
 const url = process.argv[2];
