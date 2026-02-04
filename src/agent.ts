@@ -3,7 +3,10 @@
  */
 
 import { getLLM } from './llm.js';
+import { logger } from './logger.js';
 import { searchAll, type SearchResult } from './search.js';
+
+const log = logger.child({ module: 'agent' });
 
 export interface AnalysisResult {
   summary: string;
@@ -81,6 +84,14 @@ async function generateSummary(input: {
   // Truncate markdown to avoid token limits
   const content = input.markdown.slice(0, 12000);
 
+  const userPrompt = `标题: ${input.title || '无'}
+来源: ${input.url}
+描述: ${input.ogDescription || '无'}
+
+正文:
+${content}`;
+  log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'summary prompt (first 500 chars)');
+
   const text = await getLLM().chat(
     [
       {
@@ -96,12 +107,7 @@ async function generateSummary(input: {
       },
       {
         role: 'user',
-        content: `标题: ${input.title || '无'}
-来源: ${input.url}
-描述: ${input.ogDescription || '无'}
-
-正文:
-${content}`,
+        content: userPrompt,
       },
     ],
     { maxTokens: 2048, jsonMode: true, label: 'summary' },

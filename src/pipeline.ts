@@ -1,7 +1,14 @@
 /**
- * Pipeline: shared link processing logic (scrape → analyze → export).
+ * Pipeline: single source of truth for link processing logic.
+ *
+ * Contains:
+ *   - Step functions: scrapeStep / analyzeStep / exportStep
+ *   - Absurd durable execution: task registration, worker lifecycle
+ *   - Public API: processUrl, retryLink, spawnProcessLink, spawnRefreshRelated, startWorker
+ *   - Utilities: deleteLinkFull, refreshRelated
  */
 
+import { Absurd } from 'absurd-sdk';
 import {
   insertLink,
   updateLink,
@@ -20,52 +27,331 @@ import { logger } from './logger.js';
 
 const log = logger.child({ module: 'pipeline' });
 
-export interface ProcessResult {
-  linkId: number;
-  title: string;
-  url: string;
-  status: 'analyzed' | 'error';
-  error?: string;
-  duplicate?: boolean;
+/* ── Absurd infrastructure ── */
+
+const QUEUE_NAME = 'linkmind';
+
+let absurd: Absurd | null = null;
+
+function getAbsurd(): Absurd {
+  if (absurd) return absurd;
+
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error('DATABASE_URL is required');
+  }
+
+  absurd = new Absurd({
+    db: connectionString,
+    queueName: QUEUE_NAME,
+  });
+
+  return absurd;
 }
 
-export type ProgressCallback = (stage: string) => void | Promise<void>;
+/* ── Types ── */
+
+interface ProcessLinkParams {
+  userId: number;
+  url: string;
+  linkId?: number; // set if re-processing existing link
+}
+
+interface RefreshRelatedParams {
+  linkId: number;
+}
+
+export interface SpawnProcessResult {
+  taskId: string;
+  linkId?: number;
+}
+
+/* ── Step functions (core business logic) ── */
+
+interface ScrapeStepResult {
+  title?: string;
+  ogDescription?: string;
+  siteName?: string;
+  markdownLength: number;
+  ocrTexts: string[];
+}
 
 /**
- * Process a URL through the full pipeline: scrape → analyze → export.
- * If the URL already exists, re-processes the existing link instead of creating a new one.
- * Returns { ...result, duplicate: true } when re-processing an existing link.
+ * Scrape a URL: fetch content via Playwright/Defuddle, process Twitter images + OCR.
+ * Updates the link record in DB with scraped data.
  */
-export async function processUrl(userId: number, url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
+async function scrapeStep(linkId: number, url: string): Promise<ScrapeStepResult> {
+  log.info({ linkId, url }, '[scrape] Starting');
+  const result = await scrapeUrl(url);
+
+  await updateLink(linkId, {
+    og_title: result.og.title,
+    og_description: result.og.description,
+    og_image: result.og.image,
+    og_site_name: result.og.siteName,
+    og_type: result.og.type,
+    markdown: result.markdown,
+    status: 'scraped',
+  });
+
+  log.info({ linkId, title: result.og.title, chars: result.markdown.length }, '[scrape] OK');
+
+  // Process Twitter images + OCR
+  let ocrTexts: string[] = [];
+  if (isTwitterUrl(url) && result.rawMedia?.length) {
+    try {
+      const images = await processTwitterImages(linkId, result.rawMedia);
+      if (images.length > 0) {
+        await updateLink(linkId, { images: JSON.stringify(images) });
+        log.info({ linkId, count: images.length }, '[images] Downloaded and processed');
+
+        ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
+        if (ocrTexts.length > 0) {
+          log.info({ linkId, ocrCount: ocrTexts.length }, '[ocr] Extracted text from images');
+        }
+      }
+    } catch (imgErr) {
+      // Image processing failure is non-fatal
+      log.warn(
+        { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
+        '[images] Failed (non-fatal)',
+      );
+    }
+  }
+
+  return {
+    title: result.og.title,
+    ogDescription: result.og.description,
+    siteName: result.og.siteName,
+    markdownLength: result.markdown.length,
+    ocrTexts,
+  };
+}
+
+/**
+ * Analyze a scraped link: run LLM summarization + insight generation.
+ * Re-reads markdown from DB (not passed via checkpoint to save space).
+ * Appends OCR text to markdown for LLM context.
+ */
+async function analyzeStep(linkId: number, url: string, scrapeData: ScrapeStepResult): Promise<void> {
+  const link = await getLink(linkId);
+  if (!link?.markdown) throw new Error('Link markdown not found after scrape');
+
+  log.info({ linkId, title: scrapeData.title }, '[analyze] Starting');
+
+  // Append OCR text to markdown for LLM context
+  let markdownForAnalysis = link.markdown;
+  if (scrapeData.ocrTexts.length > 0) {
+    markdownForAnalysis += '\n\n---\n**图片文字 (OCR):**\n' + scrapeData.ocrTexts.join('\n\n');
+  }
+
+  const analysis = await analyzeArticle({
+    url,
+    title: scrapeData.title,
+    ogDescription: scrapeData.ogDescription,
+    siteName: scrapeData.siteName,
+    markdown: markdownForAnalysis,
+    linkId,
+  });
+
+  await updateLink(linkId, {
+    summary: analysis.summary,
+    insight: analysis.insight,
+    tags: JSON.stringify(analysis.tags),
+    related_notes: JSON.stringify(analysis.relatedNotes),
+    related_links: JSON.stringify(analysis.relatedLinks),
+    status: 'analyzed',
+  });
+
+  log.info({ linkId, tags: analysis.tags.length }, '[analyze] OK');
+}
+
+/**
+ * Export an analyzed link to markdown + trigger QMD re-index.
+ */
+async function exportStep(linkId: number): Promise<void> {
+  const fullLink = await getLink(linkId);
+  if (!fullLink) throw new Error('Link not found for export');
+
+  const exportPath = exportLinkMarkdown(fullLink);
+  log.info({ linkId, path: exportPath }, '[export] OK');
+
+  qmdIndexQueue.requestUpdate().catch(() => {});
+}
+
+/* ── Absurd task registration ── */
+
+function registerTasks(): void {
+  const app = getAbsurd();
+
+  app.registerTask({ name: 'process-link' }, async (params: ProcessLinkParams, ctx) => {
+    const { userId, url } = params;
+
+    // Resolve or create linkId
+    let linkId = params.linkId;
+    if (!linkId) {
+      const existing = await getLinkByUrl(userId, url);
+      if (existing?.id) {
+        linkId = existing.id;
+        await updateLink(linkId, { status: 'pending', error_message: undefined });
+      } else {
+        linkId = await insertLink(userId, url);
+      }
+    }
+
+    log.info({ linkId, url, taskId: ctx.taskID }, '[process-link] Starting');
+
+    // Step 1: Scrape (checkpoint returns serializable subset)
+    const scrapeData = await ctx.step('scrape', async () => {
+      const result = await scrapeStep(linkId!, url);
+      // Return serializable checkpoint data (ocrTexts are small strings, fine to checkpoint)
+      return result;
+    });
+
+    // Step 2: Analyze
+    await ctx.step('analyze', async () => {
+      await analyzeStep(linkId!, url, scrapeData);
+    });
+
+    // Step 3: Export
+    await ctx.step('export', async () => {
+      await exportStep(linkId!);
+    });
+
+    log.info({ linkId, url, title: scrapeData.title }, '[process-link] Complete');
+    return { linkId, title: scrapeData.title, status: 'analyzed' };
+  });
+
+  /* ── Task: refresh-related ── */
+
+  app.registerTask({ name: 'refresh-related' }, async (params: RefreshRelatedParams, ctx) => {
+    const { linkId } = params;
+    const link = await getLink(linkId);
+    if (!link) throw new Error(`Link ${linkId} not found`);
+    if (!link.summary || !link.markdown) throw new Error(`Link ${linkId} missing summary/markdown`);
+
+    const title = link.og_title || link.url;
+    log.info({ linkId, title }, '[refresh-related] Starting');
+
+    const related = await ctx.step('find-related', async () => {
+      return await findRelatedAndInsight(
+        { url: link.url, title: link.og_title, markdown: link.markdown!, linkId },
+        link.summary!,
+      );
+    });
+
+    await ctx.step('update-and-export', async () => {
+      await updateLink(linkId, {
+        related_notes: JSON.stringify(related.relatedNotes),
+        related_links: JSON.stringify(related.relatedLinks),
+        insight: related.insight,
+      });
+
+      const updatedLink = await getLink(linkId);
+      if (updatedLink) {
+        exportLinkMarkdown(updatedLink);
+      }
+
+      qmdIndexQueue.requestUpdate().catch(() => {});
+    });
+
+    log.info(
+      { linkId, title, notes: related.relatedNotes.length, links: related.relatedLinks.length },
+      '[refresh-related] Complete',
+    );
+    return { linkId, relatedNotes: related.relatedNotes.length, relatedLinks: related.relatedLinks.length };
+  });
+}
+
+/* ── Public API: spawn tasks ── */
+
+/**
+ * Spawn a process-link task via Absurd.
+ * Returns immediately — the worker will pick it up.
+ */
+export async function spawnProcessLink(userId: number, url: string, linkId?: number): Promise<SpawnProcessResult> {
+  const result = await getAbsurd().spawn('process-link', { userId, url, linkId } satisfies ProcessLinkParams, {
+    maxAttempts: 3,
+    retryStrategy: { kind: 'exponential', baseSeconds: 10, factor: 2, maxSeconds: 300 },
+  });
+  log.info({ taskId: result.taskID, url, userId }, 'Spawned process-link task');
+  return { taskId: result.taskID, linkId };
+}
+
+/**
+ * Spawn a refresh-related task via Absurd.
+ */
+export async function spawnRefreshRelated(linkId: number): Promise<string> {
+  const result = await getAbsurd().spawn('refresh-related', { linkId } satisfies RefreshRelatedParams, {
+    maxAttempts: 2,
+    retryStrategy: { kind: 'fixed', baseSeconds: 30 },
+  });
+  log.info({ taskId: result.taskID, linkId }, 'Spawned refresh-related task');
+  return result.taskID;
+}
+
+/**
+ * Start the Absurd worker. Call once at app startup.
+ */
+export async function startWorker(): Promise<void> {
+  registerTasks();
+
+  const worker = await getAbsurd().startWorker({
+    concurrency: 2,
+    claimTimeout: 300, // 5 min per step batch (LLM calls can be slow)
+    pollInterval: 1,
+    onError: (err) => {
+      log.error({ err: err.message, stack: err.stack }, 'Worker task error');
+    },
+  });
+
+  log.info('Absurd worker started (queue: linkmind, concurrency: 2)');
+
+  // Graceful shutdown
+  const shutdown = async () => {
+    log.info('Shutting down worker...');
+    await worker.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+}
+
+/* ── Public API: processUrl / retryLink ── */
+
+/**
+ * Process a URL: upsert link record, then spawn the durable task.
+ * Returns spawn result (taskId). Callers poll the DB for completion.
+ */
+export async function processUrl(userId: number, url: string): Promise<SpawnProcessResult> {
   const existing = await getLinkByUrl(userId, url);
   if (existing && existing.id) {
     log.info({ url, linkId: existing.id }, '[start] URL already exists, re-processing');
     await updateLink(existing.id, { status: 'pending', error_message: undefined });
-    const result = await runPipeline(existing.id, url, onProgress);
-    return { ...result, duplicate: true };
+    return spawnProcessLink(userId, url, existing.id);
   }
 
   const linkId = await insertLink(userId, url);
   log.info({ url, linkId }, '[start] Processing URL');
-  return runPipeline(linkId, url, onProgress);
+  return spawnProcessLink(userId, url, linkId);
 }
 
 /**
- * Retry a link: re-run the full pipeline from scratch (scrape → analyze → export).
+ * Retry a link: reset status and spawn a new process-link task.
+ * Returns spawn result (taskId). Async — does not wait for completion.
  */
-export async function retryLink(linkId: number): Promise<ProcessResult> {
+export async function retryLink(linkId: number): Promise<SpawnProcessResult> {
   const link = await getLink(linkId);
   if (!link) {
-    return { linkId, title: '', url: '', status: 'error', error: 'Link not found' };
+    throw new Error(`Link ${linkId} not found`);
   }
 
   log.info({ url: link.url, linkId, prevStatus: link.status }, '[retry] Retrying link');
-
-  // Reset status
   await updateLink(linkId, { status: 'pending', error_message: undefined });
-
-  return runPipeline(linkId, link.url);
+  return spawnProcessLink(link.user_id, link.url, linkId);
 }
+
+/* ── Delete ── */
 
 export interface DeleteResult {
   linkId: number;
@@ -109,128 +395,7 @@ export async function deleteLinkFull(linkId: number): Promise<DeleteResult> {
   return { linkId, url: link.url, relatedLinksUpdated, exportDeleted };
 }
 
-/**
- * Core pipeline logic. Always runs the full pipeline: scrape → analyze → export.
- * Idempotent — re-running on the same linkId overwrites previous results.
- */
-async function runPipeline(linkId: number, url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
-  // ── Stage 1: Scrape ──
-  let title: string | undefined;
-  let markdown: string | undefined;
-  let ogDescription: string | undefined;
-  let siteName: string | undefined;
-  let ocrTexts: string[] = [];
-
-  try {
-    await onProgress?.('scraping');
-    const scrapeResult = await scrapeUrl(url);
-
-    await updateLink(linkId, {
-      og_title: scrapeResult.og.title,
-      og_description: scrapeResult.og.description,
-      og_image: scrapeResult.og.image,
-      og_site_name: scrapeResult.og.siteName,
-      og_type: scrapeResult.og.type,
-      markdown: scrapeResult.markdown,
-      status: 'scraped',
-    });
-
-    title = scrapeResult.og.title;
-    markdown = scrapeResult.markdown;
-    ogDescription = scrapeResult.og.description;
-    siteName = scrapeResult.og.siteName;
-
-    log.info({ title: title || url, chars: markdown.length }, '[scrape] OK');
-
-    // ── Process Twitter images ──
-    if (isTwitterUrl(url) && scrapeResult.rawMedia?.length) {
-      try {
-        await onProgress?.('downloading images');
-        const images = await processTwitterImages(linkId, scrapeResult.rawMedia);
-        if (images.length > 0) {
-          await updateLink(linkId, { images: JSON.stringify(images) });
-          log.info({ linkId, count: images.length }, '[images] Downloaded and processed');
-
-          // Collect OCR text for LLM analysis
-          ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
-          if (ocrTexts.length > 0) {
-            log.info({ linkId, ocrCount: ocrTexts.length }, '[ocr] Extracted text from images');
-          }
-        }
-      } catch (imgErr) {
-        // Image processing failure is non-fatal
-        log.warn(
-          { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
-          '[images] Failed (non-fatal)',
-        );
-      }
-    }
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[scrape] Failed');
-    try {
-      await updateLink(linkId, { status: 'error', error_message: `[scrape] ${errMsg}` });
-    } catch {}
-    return { linkId, title: url, url, status: 'error', error: `[scrape] ${errMsg}` };
-  }
-
-  // ── Stage 2: Analyze (LLM) ──
-  try {
-    await onProgress?.('analyzing');
-
-    // Append OCR text to markdown for LLM context
-    let markdownForAnalysis = markdown!;
-    if (ocrTexts.length > 0) {
-      markdownForAnalysis += '\n\n---\n**图片文字 (OCR):**\n' + ocrTexts.join('\n\n');
-    }
-
-    const analysis = await analyzeArticle({
-      url,
-      title,
-      ogDescription,
-      siteName,
-      markdown: markdownForAnalysis,
-      linkId,
-    });
-
-    await updateLink(linkId, {
-      summary: analysis.summary,
-      insight: analysis.insight,
-      tags: JSON.stringify(analysis.tags),
-      related_notes: JSON.stringify(analysis.relatedNotes),
-      related_links: JSON.stringify(analysis.relatedLinks),
-      status: 'analyzed',
-    });
-
-    log.info({ title: title || url, tags: analysis.tags.length }, '[analyze] OK');
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[analyze] Failed');
-    try {
-      await updateLink(linkId, { status: 'error', error_message: `[analyze] ${errMsg}` });
-    } catch {}
-    return { linkId, title: title || url, url, status: 'error', error: `[analyze] ${errMsg}` };
-  }
-
-  // ── Stage 3: Export + QMD Index ──
-  const fullLink = await getLink(linkId);
-  if (fullLink) {
-    try {
-      const exportPath = exportLinkMarkdown(fullLink);
-      log.info({ path: exportPath }, '[export] OK');
-
-      // Fire-and-forget: queue QMD re-index (serialized, won't block pipeline)
-      qmdIndexQueue.requestUpdate().catch(() => {});
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      log.error({ err: errMsg }, '[export] Failed (non-fatal)');
-    }
-  }
-
-  log.info({ linkId, title: title || url }, '[done] Processing complete');
-
-  return { linkId, title: title || url, url, status: 'analyzed' };
-}
+/* ── Refresh related ── */
 
 export interface RefreshResult {
   linkId: number;
