@@ -1,171 +1,286 @@
 /**
  * Integration test: full pipeline (scrape → analyze → export) via Absurd.
  *
- * Starts the Absurd worker in-process, spawns a process-link task,
- * polls until completion. Tests both new link creation and upsert
- * (re-processing an existing URL).
+ * Uses a separate test database (linkmind_test) to avoid affecting production data.
+ * Mocks the scraper and LLM to avoid external dependencies.
  *
  * Usage:
- *   npx tsx src/test-pipeline.ts <url>
- *   npx tsx src/test-pipeline.ts https://example.com/article
+ *   npx vitest run src/test-pipeline.ts
  */
 
 import dotenv from 'dotenv';
 dotenv.config({ override: true });
 
+// Override DATABASE_URL to use test database BEFORE any imports that use it
+const PROD_DB_URL = process.env.DATABASE_URL!;
+const TEST_DB_URL = PROD_DB_URL.replace(/\/[^/]+$/, '/linkmind_test');
+process.env.DATABASE_URL = TEST_DB_URL;
+
+import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
+import pg from 'pg';
+
+// ── Mock scraper ──
+vi.mock('./scraper.js', () => ({
+  scrapeUrl: vi.fn().mockResolvedValue({
+    title: 'What HotS Means to Me',
+    og: {
+      title: 'What HotS Means to Me',
+      description: 'A personal reflection on Heroes of the Storm and what the game meant.',
+      image: 'https://reorx.com/og-image.png',
+      siteName: 'reorx.com',
+      type: 'article',
+    },
+    markdown:
+      '# What HotS Means to Me\n\nHeroes of the Storm was more than a game to me. ' +
+      'It was a place where I found community, learned teamwork, and experienced some of the most ' +
+      'memorable gaming moments of my life. The game taught me about strategy, adaptability, and ' +
+      'the importance of team composition. Even though Blizzard pulled the plug on its esports scene, ' +
+      'the community persists. The lessons I learned playing HotS — about cooperation, about reading ' +
+      'situations, about making the best of imperfect circumstances — carry over into everything I do.',
+    rawMedia: [],
+    author: 'Reorx',
+    published: '2023-01-15',
+  }),
+  isTwitterUrl: vi.fn().mockReturnValue(false),
+}));
+
+// ── Mock LLM ──
+vi.mock('./llm.js', () => ({
+  getLLM: vi.fn().mockReturnValue({
+    name: 'mock-llm',
+    chat: vi.fn().mockImplementation(async (messages: any[], opts?: any) => {
+      if (opts?.jsonMode) {
+        return JSON.stringify({
+          summary: '这是一篇关于风暴英雄（HotS）的个人回忆文章，作者分享了这款游戏对他的意义。',
+          tags: ['gaming', 'HotS', 'community', 'personal-essay'],
+        });
+      }
+      // Insight response
+      return '这篇文章很有共鸣感，作为游戏玩家能理解社区消亡的失落。值得收藏。';
+    }),
+  }),
+}));
+
+// ── Mock search (for related content) ──
+vi.mock('./search.js', () => ({
+  searchAll: vi.fn().mockResolvedValue({
+    notes: [],
+    links: [],
+  }),
+}));
+
+// ── Mock export (avoid filesystem side effects) ──
+vi.mock('./export.js', () => ({
+  exportLinkMarkdown: vi.fn().mockReturnValue('/tmp/mock-export.md'),
+  deleteLinkExport: vi.fn().mockReturnValue(true),
+  qmdIndexQueue: {
+    requestUpdate: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 import { initLogger } from './logger.js';
 initLogger();
 
-import { startWorker, spawnProcessLink } from './pipeline.js';
+const TEST_URL = 'https://reorx.com/essays/2023/01/what-hots-means-to-me/';
+const TEST_TELEGRAM_ID = 999999;
+
+// ── Test database setup ──
+
+async function createTestDatabase(): Promise<void> {
+  // Connect as superuser to create/drop test database
+  const adminPool = new pg.Pool({
+    host: 'localhost',
+    port: 5432,
+    user: 'reorx',
+    database: 'postgres',
+  });
+
+  try {
+    // Drop if exists, then create (owned by linkmind so the app user has full access)
+    await adminPool.query('DROP DATABASE IF EXISTS linkmind_test');
+    await adminPool.query('CREATE DATABASE linkmind_test OWNER linkmind');
+  } finally {
+    await adminPool.end();
+  }
+
+  // Now connect to the test database and set up schema
+  const testPool = new pg.Pool({ connectionString: TEST_DB_URL });
+  try {
+    // Create application tables
+    await testPool.query(`
+      CREATE TABLE IF NOT EXISTS invites (
+        id SERIAL PRIMARY KEY,
+        code TEXT NOT NULL UNIQUE,
+        max_uses INTEGER NOT NULL DEFAULT 1,
+        used_count INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        telegram_id BIGINT NOT NULL UNIQUE,
+        username TEXT,
+        display_name TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        status TEXT NOT NULL DEFAULT 'pending',
+        invite_id INTEGER REFERENCES invites(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS links (
+        id SERIAL PRIMARY KEY,
+        url TEXT NOT NULL,
+        og_title TEXT,
+        og_description TEXT,
+        og_image TEXT,
+        og_site_name TEXT,
+        og_type TEXT,
+        markdown TEXT,
+        summary TEXT,
+        insight TEXT,
+        related_notes JSONB DEFAULT '[]',
+        related_links JSONB DEFAULT '[]',
+        tags JSONB DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'pending',
+        error_message TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        images TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_links_url ON links(url);
+      CREATE INDEX IF NOT EXISTS idx_links_user_id ON links(user_id);
+      CREATE INDEX IF NOT EXISTS idx_links_status ON links(status);
+      CREATE INDEX IF NOT EXISTS idx_links_created_at ON links(created_at DESC);
+    `);
+
+    // Create Absurd schema, functions, and queue
+    const fs = await import('fs');
+    const path = await import('path');
+    const absurdSql = fs.readFileSync(path.resolve(import.meta.dirname, '../sql/absurd.sql'), 'utf-8');
+    await testPool.query(absurdSql);
+    await testPool.query("SELECT absurd.create_queue('linkmind')");
+
+    // Create test user
+    await testPool.query(
+      `INSERT INTO users (telegram_id, username, display_name, status)
+       VALUES ($1, 'test_user', 'Test User', 'active')`,
+      [TEST_TELEGRAM_ID],
+    );
+  } finally {
+    await testPool.end();
+  }
+}
+
+async function dropTestDatabase(): Promise<void> {
+  const adminPool = new pg.Pool({
+    host: 'localhost',
+    port: 5432,
+    user: 'reorx',
+    database: 'postgres',
+  });
+  try {
+    await adminPool.query('DROP DATABASE IF EXISTS linkmind_test WITH (FORCE)');
+  } finally {
+    await adminPool.end();
+  }
+}
+
+// ── Helpers ──
+
 import { getLink, getLinkByUrl } from './db.js';
+import { startWorker, spawnProcessLink } from './pipeline.js';
 
-const url = process.argv[2];
-if (!url) {
-  console.error('Usage: npx tsx src/test-pipeline.ts <url>');
-  process.exit(1);
+async function waitForLink(userId: number, url: string, timeoutMs: number = 60_000): Promise<number> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const link = await getLinkByUrl(userId, url);
+    if (link?.id && link.status === 'analyzed') return link.id;
+    if (link?.id && link.status === 'error') throw new Error(`Pipeline failed: ${link.error_message}`);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`Timed out waiting for link to be analyzed`);
 }
 
-const TEST_USER_ID = 1;
-const POLL_INTERVAL_MS = 1000;
-const TIMEOUT_MS = 120_000; // 2 min max
+// ── Tests ──
 
-interface RunResult {
-  linkId: number;
-  title: string;
-  summary: string;
-  tags: string;
-  status: string;
-}
+describe('Pipeline integration', () => {
+  let testUserId: number;
 
-/**
- * Spawn a process-link task and poll until terminal state.
- */
-async function runPipelineAndWait(label: string): Promise<RunResult | null> {
-  console.log(`\n━━━ ${label} ━━━\n`);
+  beforeAll(async () => {
+    await createTestDatabase();
 
-  // Check if URL already exists
-  const existing = await getLinkByUrl(TEST_USER_ID, url);
-  if (existing?.id) {
-    console.log(`📎 URL already exists as link #${existing.id} (status: ${existing.status})`);
-  } else {
-    console.log('📎 URL is new, will create link record');
-  }
-
-  // Spawn task
-  console.log('⏳ Spawning process-link task...');
-  const { taskId } = await spawnProcessLink(TEST_USER_ID, url, existing?.id);
-  console.log(`✅ Task spawned: ${taskId}\n`);
-
-  // Poll for completion
-  const startTime = Date.now();
-  let linkId: number | null = existing?.id ?? null;
-  let lastStatus = '';
-
-  while (Date.now() - startTime < TIMEOUT_MS) {
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-
-    // Wait for link record to appear
-    if (!linkId) {
-      const link = await getLinkByUrl(TEST_USER_ID, url);
-      if (link?.id) {
-        linkId = link.id;
-        console.log(`  [${elapsed}s] 📎 Link created: ID=${linkId}`);
-      } else {
-        process.stdout.write(`  [${elapsed}s] waiting for link record...\r`);
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-        continue;
-      }
+    // Look up the test user ID
+    const pool = new pg.Pool({ connectionString: TEST_DB_URL });
+    try {
+      const res = await pool.query('SELECT id FROM users WHERE telegram_id = $1', [TEST_TELEGRAM_ID]);
+      testUserId = res.rows[0].id;
+    } finally {
+      await pool.end();
     }
 
-    const current = await getLink(linkId);
-    if (!current) {
-      console.error('❌ Link record disappeared');
-      return null;
+    // Start the Absurd worker
+    await startWorker();
+  }, 30_000);
+
+  afterAll(async () => {
+    // Suppress pg connection errors during teardown (DROP DATABASE WITH FORCE kills idle connections)
+    const suppress = (err: Error) => {
+      if (err.message?.includes('terminating connection')) return;
+      throw err;
+    };
+    process.on('uncaughtException', suppress);
+
+    await dropTestDatabase();
+
+    // Give a tick for errors to fire, then remove the handler
+    await new Promise((r) => setTimeout(r, 100));
+    process.removeListener('uncaughtException', suppress);
+  });
+
+  it('should process a new URL through the full pipeline', async () => {
+    const { taskId } = await spawnProcessLink(testUserId, TEST_URL);
+    expect(taskId).toBeTruthy();
+
+    const linkId = await waitForLink(testUserId, TEST_URL);
+    const link = await getLink(linkId);
+
+    expect(link).toBeDefined();
+    expect(link!.status).toBe('analyzed');
+    expect(link!.og_title).toBe('What HotS Means to Me');
+    expect(link!.summary).toContain('风暴英雄');
+    expect(link!.insight).toBeTruthy();
+    expect(JSON.parse(link!.tags!)).toContain('gaming');
+  });
+
+  it('should upsert when processing the same URL again', async () => {
+    // Get the existing link
+    const existingLink = await getLinkByUrl(testUserId, TEST_URL);
+    expect(existingLink).toBeDefined();
+    const originalId = existingLink!.id!;
+
+    // Process same URL again
+    const { taskId } = await spawnProcessLink(testUserId, TEST_URL, originalId);
+    expect(taskId).toBeTruthy();
+
+    const linkId = await waitForLink(testUserId, TEST_URL);
+
+    // Should be the same link ID (upsert, not duplicate)
+    expect(linkId).toBe(originalId);
+
+    const link = await getLink(linkId);
+    expect(link).toBeDefined();
+    expect(link!.status).toBe('analyzed');
+    expect(link!.og_title).toBe('What HotS Means to Me');
+  });
+
+  it('should have exactly one record for the test URL', async () => {
+    const pool = new pg.Pool({ connectionString: TEST_DB_URL });
+    try {
+      const res = await pool.query('SELECT COUNT(*) as count FROM links WHERE url = $1', [TEST_URL]);
+      expect(parseInt(res.rows[0].count)).toBe(1);
+    } finally {
+      await pool.end();
     }
-
-    if (current.status !== lastStatus) {
-      console.log(`  [${elapsed}s] status: ${lastStatus || '(init)'} → ${current.status}`);
-      lastStatus = current.status!;
-    }
-
-    if (current.status === 'analyzed') {
-      console.log(`\n✅ Pipeline completed in ${elapsed}s`);
-      return {
-        linkId: current.id!,
-        title: current.og_title || url,
-        summary: current.summary || '',
-        tags: current.tags || '[]',
-        status: current.status,
-      };
-    }
-
-    if (current.status === 'error') {
-      console.error(`\n❌ Pipeline failed after ${elapsed}s`);
-      console.error(`  Error: ${current.error_message}`);
-      return null;
-    }
-
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-  }
-
-  console.error(`\n❌ Timed out after ${TIMEOUT_MS / 1000}s`);
-  return null;
-}
-
-async function main() {
-  console.log('\n━━━ PIPELINE INTEGRATION TEST ━━━');
-  console.log(`URL: ${url}`);
-  console.log(`User ID: ${TEST_USER_ID}`);
-
-  // Start worker
-  console.log('\n⏳ Starting Absurd worker...');
-  await startWorker();
-  console.log('✅ Worker started');
-
-  // ── Pass 1: process the URL ──
-  const result1 = await runPipelineAndWait('PASS 1: Process URL');
-  if (!result1) {
-    console.error('\n🛑 Pass 1 failed, aborting.');
-    process.exit(1);
-  }
-
-  console.log('\n  📄 RESULT:');
-  console.log(`    ID:      ${result1.linkId}`);
-  console.log(`    Title:   ${result1.title}`);
-  console.log(`    Tags:    ${result1.tags}`);
-  console.log(`    Summary: ${result1.summary.slice(0, 200)}`);
-
-  // ── Pass 2: re-process same URL (upsert) ──
-  const result2 = await runPipelineAndWait('PASS 2: Re-process same URL (upsert)');
-  if (!result2) {
-    console.error('\n🛑 Pass 2 failed, aborting.');
-    process.exit(1);
-  }
-
-  console.log('\n  📄 RESULT:');
-  console.log(`    ID:      ${result2.linkId}`);
-  console.log(`    Title:   ${result2.title}`);
-  console.log(`    Tags:    ${result2.tags}`);
-  console.log(`    Summary: ${result2.summary.slice(0, 200)}`);
-
-  // ── Verify idempotency ──
-  console.log('\n━━━ IDEMPOTENCY CHECK ━━━\n');
-
-  const sameId = result1.linkId === result2.linkId;
-  console.log(`  Same link ID:  ${sameId ? '✅' : '❌'} (${result1.linkId} vs ${result2.linkId})`);
-
-  if (sameId) {
-    console.log('\n  ✅ Pipeline is idempotent — same URL produces same record, updated in place.');
-  } else {
-    console.error('\n  ❌ IDEMPOTENCY VIOLATION — duplicate records created!');
-    process.exit(1);
-  }
-
-  console.log('\n━━━ ALL TESTS PASSED ━━━\n');
-  process.exit(0);
-}
-
-main().catch((err) => {
-  console.error('Fatal:', err);
-  process.exit(1);
+  });
 });
