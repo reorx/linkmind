@@ -12,7 +12,7 @@ import {
   removeFromRelatedLinks,
   type LinkRecord,
 } from './db.js';
-import { scrapeUrl, isTwitterUrl, type ScrapeResult } from './scraper.js';
+import { scrapeUrl, isTwitterUrl } from './scraper.js';
 import { processTwitterImages } from './image-handler.js';
 import { analyzeArticle, findRelatedAndInsight } from './agent.js';
 import { exportLinkMarkdown, deleteLinkExport, qmdIndexQueue } from './export.js';
@@ -51,7 +51,7 @@ export async function processUrl(userId: number, url: string, onProgress?: Progr
 }
 
 /**
- * Retry a failed link: resume from the appropriate stage based on existing data.
+ * Retry a link: re-run the full pipeline from scratch (scrape → analyze → export).
  */
 export async function retryLink(linkId: number): Promise<ProcessResult> {
   const link = await getLink(linkId);
@@ -64,7 +64,7 @@ export async function retryLink(linkId: number): Promise<ProcessResult> {
   // Reset status
   await updateLink(linkId, { status: 'pending', error_message: undefined });
 
-  return runPipeline(linkId, link.url, undefined, link);
+  return runPipeline(linkId, link.url);
 }
 
 export interface DeleteResult {
@@ -110,82 +110,68 @@ export async function deleteLinkFull(linkId: number): Promise<DeleteResult> {
 }
 
 /**
- * Core pipeline logic. If `existingLink` is provided and already has scraped data,
- * skip the scrape stage.
+ * Core pipeline logic. Always runs the full pipeline: scrape → analyze → export.
+ * Idempotent — re-running on the same linkId overwrites previous results.
  */
-async function runPipeline(
-  linkId: number,
-  url: string,
-  onProgress?: ProgressCallback,
-  existingLink?: LinkRecord,
-): Promise<ProcessResult> {
+async function runPipeline(linkId: number, url: string, onProgress?: ProgressCallback): Promise<ProcessResult> {
   // ── Stage 1: Scrape ──
-  // Skip if we already have scraped content
   let title: string | undefined;
   let markdown: string | undefined;
   let ogDescription: string | undefined;
   let siteName: string | undefined;
   let ocrTexts: string[] = [];
 
-  if (existingLink?.markdown && existingLink.markdown.length > 0) {
-    log.info({ linkId }, '[scrape] Skipped (already have content)');
-    title = existingLink.og_title;
-    markdown = existingLink.markdown;
-    ogDescription = existingLink.og_description;
-    siteName = existingLink.og_site_name;
-  } else {
-    try {
-      await onProgress?.('scraping');
-      const scrapeResult = await scrapeUrl(url);
+  try {
+    await onProgress?.('scraping');
+    const scrapeResult = await scrapeUrl(url);
 
-      await updateLink(linkId, {
-        og_title: scrapeResult.og.title,
-        og_description: scrapeResult.og.description,
-        og_image: scrapeResult.og.image,
-        og_site_name: scrapeResult.og.siteName,
-        og_type: scrapeResult.og.type,
-        markdown: scrapeResult.markdown,
-        status: 'scraped',
-      });
+    await updateLink(linkId, {
+      og_title: scrapeResult.og.title,
+      og_description: scrapeResult.og.description,
+      og_image: scrapeResult.og.image,
+      og_site_name: scrapeResult.og.siteName,
+      og_type: scrapeResult.og.type,
+      markdown: scrapeResult.markdown,
+      status: 'scraped',
+    });
 
-      title = scrapeResult.og.title;
-      markdown = scrapeResult.markdown;
-      ogDescription = scrapeResult.og.description;
-      siteName = scrapeResult.og.siteName;
+    title = scrapeResult.og.title;
+    markdown = scrapeResult.markdown;
+    ogDescription = scrapeResult.og.description;
+    siteName = scrapeResult.og.siteName;
 
-      log.info({ title: title || url, chars: markdown.length }, '[scrape] OK');
+    log.info({ title: title || url, chars: markdown.length }, '[scrape] OK');
 
-      // ── Process Twitter images ──
-      if (isTwitterUrl(url) && scrapeResult.rawMedia?.length) {
-        try {
-          await onProgress?.('downloading images');
-          const images = await processTwitterImages(linkId, scrapeResult.rawMedia);
-          if (images.length > 0) {
-            await updateLink(linkId, { images: JSON.stringify(images) });
-            log.info({ linkId, count: images.length }, '[images] Downloaded and processed');
-
-            // Collect OCR text for LLM analysis
-            ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
-            if (ocrTexts.length > 0) {
-              log.info({ linkId, ocrCount: ocrTexts.length }, '[ocr] Extracted text from images');
-            }
-          }
-        } catch (imgErr) {
-          // Image processing failure is non-fatal
-          log.warn(
-            { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
-            '[images] Failed (non-fatal)',
-          );
-        }
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[scrape] Failed');
+    // ── Process Twitter images ──
+    if (isTwitterUrl(url) && scrapeResult.rawMedia?.length) {
       try {
-        await updateLink(linkId, { status: 'error', error_message: `[scrape] ${errMsg}` });
-      } catch {}
-      return { linkId, title: url, url, status: 'error', error: `[scrape] ${errMsg}` };
+        await onProgress?.('downloading images');
+        const images = await processTwitterImages(linkId, scrapeResult.rawMedia);
+        if (images.length > 0) {
+          await updateLink(linkId, { images: JSON.stringify(images) });
+          log.info({ linkId, count: images.length }, '[images] Downloaded and processed');
+
+          // Collect OCR text for LLM analysis
+          ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
+          if (ocrTexts.length > 0) {
+            log.info({ linkId, ocrCount: ocrTexts.length }, '[ocr] Extracted text from images');
+          }
+        }
+      } catch (imgErr) {
+        // Image processing failure is non-fatal
+        log.warn(
+          { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
+          '[images] Failed (non-fatal)',
+        );
+      }
     }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log.error({ url, linkId, err: errMsg, stack: err instanceof Error ? err.stack : undefined }, '[scrape] Failed');
+    try {
+      await updateLink(linkId, { status: 'error', error_message: `[scrape] ${errMsg}` });
+    } catch {}
+    return { linkId, title: url, url, status: 'error', error: `[scrape] ${errMsg}` };
   }
 
   // ── Stage 2: Analyze (LLM) ──
