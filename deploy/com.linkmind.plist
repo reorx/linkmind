@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.linkmind</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>cd /Users/reorx/Code/linkmind &amp;&amp; exec npx tsx src/index.ts</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/reorx/Code/linkmind</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/reorx/Code/linkmind/data/launchd-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/reorx/Code/linkmind/data/launchd-stderr.log</string>
+</dict>
+</plist>
