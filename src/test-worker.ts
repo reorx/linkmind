@@ -1,13 +1,8 @@
 /**
- * Minimal integration test: Absurd worker + pipeline.
+ * @deprecated — Use test-pipeline.ts instead.
  *
- * Starts the Absurd worker (no Telegram bot / web server),
- * spawns a process-link task for a given URL, polls the link
- * record until it reaches a terminal state, and prints the result.
- *
- * Usage:
- *   npx tsx src/test-worker.ts <url>
- *   npx tsx src/test-worker.ts https://example.com/article
+ * Previously: minimal integration test for Absurd worker + pipeline.
+ * Now superseded by test-pipeline.ts which tests full pipeline including upsert.
  */
 
 import dotenv from 'dotenv';
