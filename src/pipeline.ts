@@ -22,6 +22,7 @@ import {
 import { scrapeUrl, isTwitterUrl } from './scraper.js';
 import { processTwitterImages } from './image-handler.js';
 import { analyzeArticle, findRelatedAndInsight } from './agent.js';
+import { createEmbedding } from './llm.js';
 import { exportLinkMarkdown, deleteLinkExport, qmdIndexQueue } from './export.js';
 import { logger } from './logger.js';
 
@@ -167,6 +168,52 @@ async function analyzeStep(linkId: number, url: string, scrapeData: ScrapeStepRe
 }
 
 /**
+ * Build text content for embedding from a link record.
+ * Combines title, description, summary, and markdown for comprehensive semantic representation.
+ */
+function buildEmbeddingText(link: LinkRecord): string {
+  const parts: string[] = [];
+
+  if (link.og_title) {
+    parts.push(`标题: ${link.og_title}`);
+  }
+  if (link.og_description) {
+    parts.push(`描述: ${link.og_description}`);
+  }
+  if (link.summary) {
+    parts.push(`摘要: ${link.summary}`);
+  }
+  if (link.markdown) {
+    // Truncate markdown to avoid exceeding embedding model limits
+    const maxMarkdownLength = 6000;
+    const markdown =
+      link.markdown.length > maxMarkdownLength ? link.markdown.slice(0, maxMarkdownLength) + '...' : link.markdown;
+    parts.push(`正文: ${markdown}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+/**
+ * Generate embedding vector for a link and store it in DB.
+ */
+async function embedStep(linkId: number): Promise<void> {
+  const link = await getLink(linkId);
+  if (!link) throw new Error('Link not found for embedding');
+
+  log.info({ linkId, title: link.og_title }, '[embed] Starting');
+
+  const text = buildEmbeddingText(link);
+  const embedding = await createEmbedding(text);
+
+  // Store embedding as PostgreSQL vector format
+  const vectorStr = `[${embedding.join(',')}]`;
+  await updateLink(linkId, { embedding: vectorStr } as any);
+
+  log.info({ linkId, dimensions: embedding.length }, '[embed] OK');
+}
+
+/**
  * Export an analyzed link to markdown + trigger QMD re-index.
  */
 async function exportStep(linkId: number): Promise<void> {
@@ -213,7 +260,12 @@ function registerTasks(): void {
       await analyzeStep(linkId!, url, scrapeData);
     });
 
-    // Step 3: Export
+    // Step 3: Embed (generate vector embedding)
+    await ctx.step('embed', async () => {
+      await embedStep(linkId!);
+    });
+
+    // Step 4: Export
     await ctx.step('export', async () => {
       await exportStep(linkId!);
     });
