@@ -62,6 +62,39 @@ function createOpenAIProvider(): LLMProvider {
   };
 }
 
+/* ── Embedding ── */
+
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'text-embedding-v3';
+
+/**
+ * Create an embedding vector for the given text using DashScope's text-embedding API.
+ * Returns a 1024-dimensional vector (text-embedding-v3 default).
+ */
+export async function createEmbedding(text: string): Promise<number[]> {
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL,
+  });
+
+  const startTime = Date.now();
+  log.debug({ model: EMBEDDING_MODEL, textLength: text.length }, '→ Embedding');
+
+  const response = await client.embeddings.create({
+    model: EMBEDDING_MODEL,
+    input: text,
+  });
+
+  const embedding = response.data[0]?.embedding;
+  if (!embedding) {
+    throw new Error('Embedding API returned empty result');
+  }
+
+  const elapsed = Date.now() - startTime;
+  log.info({ model: EMBEDDING_MODEL, elapsed: `${elapsed}ms`, dimensions: embedding.length }, '← Embedding done');
+
+  return embedding;
+}
+
 /* ── Provider: Gemini (direct REST API) ── */
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';

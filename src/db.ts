@@ -37,6 +37,7 @@ export interface LinkRecord {
   related_links?: string; // JSON string
   tags?: string; // JSON string
   images?: string; // JSON string (ImageInfo[])
+  embedding?: string; // PostgreSQL vector string format: [0.1,0.2,...]
   status: 'pending' | 'scraped' | 'analyzed' | 'error';
   error_message?: string;
   created_at?: string;
