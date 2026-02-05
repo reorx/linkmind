@@ -230,8 +230,99 @@ npx tsx src/test-pipeline.ts <url> --analyze-only   # 仅测试 LLM 分析
 - **运行时** — Node.js + TypeScript (tsx)
 - **Telegram Bot** — [grammY](https://grammy.dev/)
 - **Web 框架** — Express 5 + EJS 模板
-- **数据库** — PostgreSQL (Kysely)
+- **数据库** — PostgreSQL 18 (Kysely)
+- **全文搜索** — [pg_search](https://github.com/paradedb/paradedb) (ParadeDB BM25)
+- **向量搜索** — [pgvector](https://github.com/pgvector/pgvector)
 - **网页抓取** — Playwright + [Defuddle](https://github.com/nichochar/defuddle)
 - **LLM** — OpenAI 兼容 API / Google Gemini（可切换）
 - **知识库搜索** — [QMD](https://github.com/tobi/qmd)（语义搜索 + 向量化）
 - **日志** — Pino + pino-pretty
+
+## 全文搜索 (pg_search)
+
+LinkMind 使用 [pg_search](https://docs.paradedb.com/) (ParadeDB) 扩展实现全文搜索，支持 BM25 排序算法，**原生支持中文**，无需额外分词配置。
+
+### 安装 pg_search
+
+**本地开发 (macOS):**
+
+从 [ParadeDB Releases](https://github.com/paradedb/paradedb/releases) 下载对应版本的 `.pkg` 安装包：
+- macOS Sequoia + PG 18: `pg_search@18--x.x.x.arm64_sequoia.pkg`
+- macOS Sonoma + PG 18: `pg_search@18--x.x.x.arm64_sonoma.pkg`
+
+安装后启用扩展：
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_search;
+```
+
+**云端部署 (Neon):**
+
+Neon 已预装 pg_search，直接启用即可：
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_search;
+```
+
+> 注意：Neon 的 pg_search 仅支持 PG17，版本为 0.15.26；本地安装可使用 PG18 + 最新版本。
+
+### 索引字段
+
+`links` 表的 BM25 索引覆盖以下文本字段：
+
+| 字段 | 用途 | 说明 |
+|------|------|------|
+| `og_title` | 网页标题 | OpenGraph 标题，权重最高 |
+| `summary` | LLM 摘要 | 精炼的中文摘要，适合快速检索 |
+| `markdown` | 正文内容 | 完整的网页正文（Markdown 格式） |
+
+索引创建语句：
+
+```sql
+CREATE INDEX idx_links_bm25 ON links
+USING bm25 (id, og_title, summary, markdown)
+WITH (key_field='id');
+```
+
+### 搜索用法
+
+使用 `@@@` 操作符进行搜索，支持中英文混合查询：
+
+```sql
+-- 基础搜索
+SELECT id, og_title, paradedb.score(id) as score
+FROM links
+WHERE og_title @@@ '深度学习' 
+   OR summary @@@ '深度学习' 
+   OR markdown @@@ '深度学习'
+ORDER BY score DESC
+LIMIT 10;
+
+-- 短语搜索（精确匹配）
+SELECT * FROM links
+WHERE summary @@@ '"机器学习模型"';
+
+-- 模糊搜索（容错）
+SELECT * FROM links
+WHERE id @@@ paradedb.match('summary', '学习', distance => 1);
+
+-- 高亮显示匹配内容
+SELECT id, paradedb.snippet(summary) as highlight
+FROM links
+WHERE summary @@@ 'AI Agent';
+```
+
+### 与 Neon 的兼容性
+
+pg_search 在本地 PostgreSQL 和 Neon 上的 API 完全一致，代码无需修改即可在两个环境间切换：
+
+| 环境 | PostgreSQL 版本 | pg_search 版本 |
+|------|----------------|----------------|
+| 本地开发 | 18.1 | 0.21.6 |
+| Neon 生产 | 17 | 0.15.26 |
+
+### 参考资料
+
+- [ParadeDB 官方文档](https://docs.paradedb.com/)
+- [Neon pg_search 文档](https://neon.com/docs/extensions/pg_search)
+- [BM25 算法介绍](https://en.wikipedia.org/wiki/Okapi_BM25)
