@@ -1,183 +1,174 @@
 /**
- * Search: qmd vsearch for notes and historical links.
+ * Hybrid search combining BM25 (full-text) and vector similarity search.
+ * Uses Reciprocal Rank Fusion (RRF) for combining results.
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { searchLinks, getLink } from './db.js';
-import { logger } from './logger.js';
-
-const execAsync = promisify(exec);
-
-const log = logger.child({ module: 'search' });
-
-const NOTES_COLLECTION = process.env.QMD_NOTES_COLLECTION || 'notes';
-const LINKS_COLLECTION = process.env.QMD_LINKS_COLLECTION || 'links';
+import { sql } from 'kysely';
+import { getDb, type LinkRecord } from './db.js';
+import { createEmbedding } from './llm.js';
+import { logger as log } from './logger.js';
 
 export interface SearchResult {
-  source: string;
-  title: string;
-  snippet: string;
-  heading?: string;
-  path?: string;
-  url?: string;
-  linkId?: number;
-  score?: number;
+  id: number;
+  url: string;
+  title: string | null;
+  summary: string | null;
+  bm25Rank: number | null;
+  vectorRank: number | null;
+  rrfScore: number;
+}
+
+interface RankedResult {
+  id: number;
+  url: string;
+  og_title: string | null;
+  summary: string | null;
+  rank: number;
+}
+
+const RRF_K = 60; // RRF constant, typically 60
+
+/**
+ * Perform hybrid search combining BM25 and vector similarity.
+ * @param query - Search query string
+ * @param userId - User ID to scope search
+ * @param limit - Maximum number of results to return (default 5)
+ */
+export async function hybridSearch(query: string, userId: number, limit: number = 5): Promise<SearchResult[]> {
+  const db = getDb();
+
+  log.info({ query, userId, limit }, '[search] Starting hybrid search');
+
+  // Run BM25 and vector searches in parallel
+  const [bm25Results, vectorResults] = await Promise.all([
+    searchBM25(query, userId, limit * 2),
+    searchVector(query, userId, limit * 2),
+  ]);
+
+  log.info(
+    { bm25Count: bm25Results.length, vectorCount: vectorResults.length },
+    '[search] Got results from both methods',
+  );
+
+  // Build lookup maps for ranks
+  const bm25Ranks = new Map<number, number>();
+  bm25Results.forEach((r, i) => bm25Ranks.set(r.id, i + 1));
+
+  const vectorRanks = new Map<number, number>();
+  vectorResults.forEach((r, i) => vectorRanks.set(r.id, i + 1));
+
+  // Collect all unique IDs
+  const allIds = new Set<number>([...bm25Results.map((r) => r.id), ...vectorResults.map((r) => r.id)]);
+
+  // Calculate RRF scores
+  const scoredResults: SearchResult[] = [];
+  const resultsById = new Map<number, RankedResult>();
+
+  // Build lookup for result details
+  for (const r of [...bm25Results, ...vectorResults]) {
+    if (!resultsById.has(r.id)) {
+      resultsById.set(r.id, r);
+    }
+  }
+
+  for (const id of allIds) {
+    const bm25Rank = bm25Ranks.get(id) ?? null;
+    const vectorRank = vectorRanks.get(id) ?? null;
+
+    // RRF score: sum of 1/(k + rank) for each method where result appears
+    let rrfScore = 0;
+    if (bm25Rank !== null) {
+      rrfScore += 1 / (RRF_K + bm25Rank);
+    }
+    if (vectorRank !== null) {
+      rrfScore += 1 / (RRF_K + vectorRank);
+    }
+
+    const result = resultsById.get(id)!;
+    scoredResults.push({
+      id,
+      url: result.url,
+      title: result.og_title,
+      summary: result.summary,
+      bm25Rank,
+      vectorRank,
+      rrfScore,
+    });
+  }
+
+  // Sort by RRF score (descending) and take top K
+  scoredResults.sort((a, b) => b.rrfScore - a.rrfScore);
+  const topResults = scoredResults.slice(0, limit);
+
+  log.info({ resultCount: topResults.length }, '[search] Hybrid search complete');
+
+  return topResults;
 }
 
 /**
- * Search notes using qmd vsearch.
- * Falls back gracefully if qmd is not installed or no collections configured.
+ * BM25 full-text search using pg_search.
  */
-export async function searchNotes(query: string, limit: number = 5): Promise<SearchResult[]> {
-  // TEMP DISABLED: QMD notes are not user-scoped yet.
-  // In multi-tenant mode, all users would see the same notes (from the admin's vault).
-  // Re-enable when per-user note collections are implemented.
-  return [];
+async function searchBM25(query: string, userId: number, limit: number): Promise<RankedResult[]> {
+  const db = getDb();
 
-  // @ts-ignore — unreachable code below kept for when feature is re-enabled
   try {
-    const startTime = Date.now();
-    log.debug({ query, collection: 'notes' }, '→ qmd vsearch: notes');
+    // Use pg_search's score_bm25 for ranking
+    const results = await db
+      .selectFrom('links')
+      .select(['id', 'url', 'og_title', 'summary'])
+      .select(sql<number>`paradedb.score(id)`.as('score'))
+      .where('user_id', '=', userId)
+      .where('status', '=', 'analyzed')
+      .where(sql`id @@@ paradedb.parse(${query})`)
+      .orderBy(sql`paradedb.score(id)`, 'desc')
+      .limit(limit)
+      .execute();
 
-    const stdout = await qmdVsearchWithRetry(`qmd vsearch "${escapeShell(query)}" --json -n ${limit * 3}`);
-
-    const parsed = JSON.parse(stdout);
-    if (!Array.isArray(parsed)) return [];
-
-    // Filter to notes collection only
-    const noteResults = parsed
-      .filter((item: any) => item.file?.startsWith(`qmd://${NOTES_COLLECTION}/`))
-      .slice(0, limit);
-
-    const elapsed = Date.now() - startTime;
-    log.info({ elapsed: `${elapsed}ms`, results: noteResults.length, query }, '← qmd vsearch: notes done');
-
-    return noteResults.map((item: any) => {
-      const filePath = (item.path || item.file || '').replace(`qmd://${NOTES_COLLECTION}/`, '');
-      // Extract filename without extension as title
-      const filename = filePath.split('/').pop()?.replace(/\.md$/i, '') || 'Untitled';
-      return {
-        source: 'notes',
-        title: filename,
-        heading: item.title || undefined,
-        snippet: item.snippet || item.content?.slice(0, 200) || '',
-        path: item.path || item.file,
-        score: item.score,
-      };
-    });
-  } catch (err: any) {
-    log.warn({ query, err: err instanceof Error ? err.message : String(err) }, '← qmd vsearch: notes failed');
+    return results.map((r, i) => ({
+      id: r.id!,
+      url: r.url,
+      og_title: r.og_title ?? null,
+      summary: r.summary ?? null,
+      rank: i + 1,
+    }));
+  } catch (err) {
+    log.warn({ err }, '[search] BM25 search failed, returning empty');
     return [];
   }
 }
 
 /**
- * Search previously saved links via qmd vsearch.
- * Falls back to SQLite LIKE search if qmd is unavailable.
+ * Vector similarity search using pgvector.
  */
-export async function searchHistoricalLinks(query: string, limit: number = 5): Promise<SearchResult[]> {
+async function searchVector(query: string, userId: number, limit: number): Promise<RankedResult[]> {
+  const db = getDb();
+
   try {
-    const startTime = Date.now();
-    log.debug({ query, collection: 'links' }, '→ qmd vsearch: links');
+    // Generate query embedding
+    const queryEmbedding = await createEmbedding(query);
+    const vectorStr = `[${queryEmbedding.join(',')}]`;
 
-    const stdout = await qmdVsearchWithRetry(`qmd vsearch "${escapeShell(query)}" -n ${limit * 3} --json`);
+    // Cosine distance search (lower distance = more similar)
+    const results = await db
+      .selectFrom('links')
+      .select(['id', 'url', 'og_title', 'summary'])
+      .select(sql<number>`embedding <=> ${vectorStr}::vector`.as('distance'))
+      .where('user_id', '=', userId)
+      .where('status', '=', 'analyzed')
+      .where('embedding', 'is not', null)
+      .orderBy(sql`embedding <=> ${vectorStr}::vector`)
+      .limit(limit)
+      .execute();
 
-    const parsed = JSON.parse(stdout);
-    if (Array.isArray(parsed)) {
-      // Filter to links collection only
-      const linkResults = parsed
-        .filter((item: any) => item.file?.startsWith(`qmd://${LINKS_COLLECTION}/`))
-        .slice(0, limit);
-
-      const elapsed = Date.now() - startTime;
-      log.info({ elapsed: `${elapsed}ms`, results: linkResults.length, query }, '← qmd vsearch: links done');
-
-      if (linkResults.length > 0) {
-        const results: SearchResult[] = [];
-        for (const item of linkResults) {
-          const filename = item.file?.replace(`qmd://${LINKS_COLLECTION}/`, '') || '';
-          const idMatch = filename.match(/^(\d+)-/);
-          const linkId = idMatch ? parseInt(idMatch[1], 10) : undefined;
-          results.push({
-            source: 'links',
-            title: item.title || filename || 'Untitled',
-            snippet: item.snippet || '',
-            url: linkId ? await getLinkUrl(linkId) : undefined,
-            linkId,
-            score: item.score,
-          });
-        }
-        return results;
-      }
-    }
+    return results.map((r, i) => ({
+      id: r.id!,
+      url: r.url,
+      og_title: r.og_title ?? null,
+      summary: r.summary ?? null,
+      rank: i + 1,
+    }));
   } catch (err) {
-    log.warn(
-      { query, err: err instanceof Error ? err.message : String(err) },
-      '← qmd vsearch: links failed, falling back to SQLite',
-    );
+    log.warn({ err }, '[search] Vector search failed, returning empty');
+    return [];
   }
-
-  // Fallback: database LIKE search
-  const links = await searchLinks(query, limit);
-  return links.map((link) => ({
-    source: 'links',
-    title: link.og_title || link.url,
-    snippet: link.summary || link.og_description || '',
-    url: link.id ? `/link/${link.id}` : link.url,
-    linkId: link.id,
-  }));
-}
-
-/**
- * Combined search: notes + historical links.
- * Runs sequentially to avoid concurrent qmd processes fighting over SQLite locks.
- */
-export async function searchAll(
-  query: string,
-  limit: number = 5,
-): Promise<{ notes: SearchResult[]; links: SearchResult[] }> {
-  const notes = await searchNotes(query, limit);
-  const links = await searchHistoricalLinks(query, limit);
-  return { notes, links };
-}
-
-/**
- * Look up the URL for a link by its database ID.
- */
-async function getLinkUrl(id: number): Promise<string | undefined> {
-  try {
-    const link = await getLink(id);
-    return link ? `/link/${id}` : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function escapeShell(s: string): string {
-  return s.replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * Run a qmd vsearch command with retry on SQLITE_BUSY errors.
- * Retries up to `maxRetries` times with exponential backoff.
- */
-async function qmdVsearchWithRetry(cmd: string, maxRetries: number = 3, baseDelayMs: number = 1000): Promise<string> {
-  let lastErr: Error | undefined;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const { stdout } = await execAsync(cmd, { encoding: 'utf-8', timeout: 30000 });
-      return stdout;
-    } catch (err) {
-      lastErr = err instanceof Error ? err : new Error(String(err));
-      const isBusy = lastErr.message.includes('SQLITE_BUSY');
-      if (!isBusy || attempt === maxRetries) break;
-      const delay = baseDelayMs * 2 ** attempt;
-      log.debug({ attempt: attempt + 1, delay }, '[qmd-retry] SQLITE_BUSY, retrying...');
-      await sleep(delay);
-    }
-  }
-  throw lastErr;
 }
