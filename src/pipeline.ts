@@ -260,7 +260,7 @@ async function exportStep(linkId: number): Promise<void> {
 
 /* ── Absurd task registration ── */
 
-function registerTasks(): void {
+export function registerTasks(): void {
   const app = getAbsurd();
 
   app.registerTask({ name: 'process-link' }, async (params: ProcessLinkParams, ctx) => {
