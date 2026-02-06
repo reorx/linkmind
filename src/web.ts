@@ -44,21 +44,22 @@ function safeParseJson(s?: string): any[] {
   }
 }
 
-/**
- * Fetch note content via `qmd get`.
- */
-async function qmdGet(qmdPath: string): Promise<string | undefined> {
-  try {
-    const { stdout } = await execAsync(`qmd get "${qmdPath.replace(/"/g, '\\"')}"`, {
-      encoding: 'utf-8',
-      timeout: 10000,
-    });
-    return stdout.trim();
-  } catch (err) {
-    log.warn({ path: qmdPath, err: err instanceof Error ? err.message : String(err) }, 'qmd get failed');
-    return undefined;
-  }
-}
+// TODO: 未来可能会换成 mykb 调用
+// /**
+//  * Fetch note content via `qmd get`.
+//  */
+// async function qmdGet(qmdPath: string): Promise<string | undefined> {
+//   try {
+//     const { stdout } = await execAsync(`qmd get "${qmdPath.replace(/"/g, '\\"')}"`, {
+//       encoding: 'utf-8',
+//       timeout: 10000,
+//     });
+//     return stdout.trim();
+//   } catch (err) {
+//     log.warn({ path: qmdPath, err: err instanceof Error ? err.message : String(err) }, 'qmd get failed');
+//     return undefined;
+//   }
+// }
 
 function getDayLabel(dateStr?: string): string {
   if (!dateStr) return 'Unknown';
@@ -407,38 +408,39 @@ export function startWebServer(port: number): void {
     }
   });
 
-  // GET /note — view a note fetched via qmd
-  app.get('/note', requireAuth, async (req: AuthRequest, res) => {
-    const qmdPath = req.query.path as string;
-    if (!qmdPath || !qmdPath.startsWith('qmd://')) {
-      res.status(400).send('Invalid path');
-      return;
-    }
+  // TODO: 未来可能会换成 mykb 调用
+  // // GET /note — view a note fetched via qmd
+  // app.get('/note', requireAuth, async (req: AuthRequest, res) => {
+  //   const qmdPath = req.query.path as string;
+  //   if (!qmdPath || !qmdPath.startsWith('qmd://')) {
+  //     res.status(400).send('Invalid path');
+  //     return;
+  //   }
 
-    const content = await qmdGet(qmdPath);
-    if (content === undefined) {
-      res.status(404).send('Note not found');
-      return;
-    }
+  //   const content = await qmdGet(qmdPath);
+  //   if (content === undefined) {
+  //     res.status(404).send('Note not found');
+  //     return;
+  //   }
 
-    const segments = qmdPath.split('/');
-    const fileName = segments[segments.length - 1] || 'Note';
-    const title = fileName.replace(/\.md$/, '').replace(/-/g, ' ');
+  //   const segments = qmdPath.split('/');
+  //   const fileName = segments[segments.length - 1] || 'Note';
+  //   const title = fileName.replace(/\.md$/, '').replace(/-/g, ' ');
 
-    try {
-      const html = await renderPage('note', {
-        pageTitle: `${title} — LinkMind`,
-        title,
-        qmdPath,
-        content,
-        user: req.user,
-      });
-      res.type('html').send(html);
-    } catch (err) {
-      log.error({ err: err instanceof Error ? err.message : String(err) }, 'Note render failed');
-      res.status(500).send('Internal error');
-    }
-  });
+  //   try {
+  //     const html = await renderPage('note', {
+  //       pageTitle: `${title} — LinkMind`,
+  //       title,
+  //       qmdPath,
+  //       content,
+  //       user: req.user,
+  //     });
+  //     res.type('html').send(html);
+  //   } catch (err) {
+  //     log.error({ err: err instanceof Error ? err.message : String(err) }, 'Note render failed');
+  //     res.status(500).send('Internal error');
+  //   }
+  // });
 
   app.listen(port, () => {
     log.info({ port }, `Server listening on http://localhost:${port}`);
