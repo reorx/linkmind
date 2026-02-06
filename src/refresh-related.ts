@@ -23,7 +23,7 @@ async function main() {
 
   console.log('\n── Results ──');
   for (const r of results) {
-    const status = r.error ? `❌ ${r.error}` : `✅ ${r.relatedNotes} notes, ${r.relatedLinks} links`;
+    const status = r.error ? `❌ ${r.error}` : `✅ ${r.relatedLinks} related links`;
     console.log(`  #${r.linkId} ${r.title.slice(0, 60)} → ${status}`);
   }
 

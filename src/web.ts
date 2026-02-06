@@ -12,7 +12,7 @@ import ejs from 'ejs';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
-import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks, getUserById } from './db.js';
+import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks, getUserById, getRelatedLinks } from './db.js';
 import { retryLink, deleteLinkFull, spawnProcessLink } from './pipeline.js';
 import { logger } from './logger.js';
 
@@ -374,10 +374,21 @@ export function startWebServer(port: number): void {
       ...n,
       noteUrl: n.path ? `/note?path=${encodeURIComponent(n.path)}` : undefined,
     }));
-    const relatedLinks = safeParseJson(link.related_links).map((l: any) => ({
-      ...l,
-      url: l.linkId ? `/link/${l.linkId}` : l.url,
-    }));
+    // Get related links from link_relations table
+    const relatedLinkData = await getRelatedLinks(link.id!);
+    const relatedLinks: { linkId: number; title: string; url: string; tags: string[]; score: number }[] = [];
+    for (const item of relatedLinkData) {
+      const relatedLink = await getLink(item.relatedLinkId);
+      if (relatedLink) {
+        relatedLinks.push({
+          linkId: item.relatedLinkId,
+          title: relatedLink.og_title || relatedLink.url,
+          url: `/link/${item.relatedLinkId}`,
+          tags: safeParseJson(relatedLink.tags),
+          score: item.score,
+        });
+      }
+    }
 
     try {
       const html = await renderPage('link-detail', {

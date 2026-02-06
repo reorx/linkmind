@@ -63,10 +63,7 @@ vi.mock('./llm.js', () => ({
 
 // ── Mock search (for related content) ──
 vi.mock('./search.js', () => ({
-  searchAll: vi.fn().mockResolvedValue({
-    notes: [],
-    links: [],
-  }),
+  searchRelatedLinks: vi.fn().mockResolvedValue([]),
 }));
 
 // ── Mock export (avoid filesystem side effects) ──
