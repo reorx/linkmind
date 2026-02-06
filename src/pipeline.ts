@@ -1,8 +1,10 @@
 /**
  * Pipeline: single source of truth for link processing logic.
  *
+ * Pipeline steps: scrape → summarize → embed → related → insight → export
+ *
  * Contains:
- *   - Step functions: scrapeStep / analyzeStep / exportStep
+ *   - Step functions: scrapeStep / summarizeStep / embedStep / relatedStep / insightStep / exportStep
  *   - Absurd durable execution: task registration, worker lifecycle
  *   - Public API: processUrl, retryLink, spawnProcessLink, spawnRefreshRelated, startWorker
  *   - Utilities: deleteLinkFull, refreshRelated
@@ -17,12 +19,14 @@ import {
   getAllAnalyzedLinks,
   deleteLink,
   removeFromRelatedLinks,
+  saveRelatedLinks,
   type LinkRecord,
 } from './db.js';
 import { scrapeUrl, isTwitterUrl } from './scraper.js';
 import { processTwitterImages } from './image-handler.js';
-import { analyzeArticle, findRelatedAndInsight } from './agent.js';
+import { generateSummary, generateInsight } from './agent.js';
 import { createEmbedding } from './llm.js';
+import { searchRelatedLinks, type RelatedLinkResult } from './search.js';
 import { exportLinkMarkdown, deleteLinkExport, qmdIndexQueue } from './export.js';
 import { logger } from './logger.js';
 
@@ -78,8 +82,7 @@ interface ScrapeStepResult {
 }
 
 /**
- * Scrape a URL: fetch content via Playwright/Defuddle, process Twitter images + OCR.
- * Updates the link record in DB with scraped data.
+ * Step 1: Scrape a URL - fetch content via Playwright/Defuddle, process Twitter images + OCR.
  */
 async function scrapeStep(linkId: number, url: string): Promise<ScrapeStepResult> {
   log.info({ linkId, url }, '[scrape] Starting');
@@ -112,7 +115,6 @@ async function scrapeStep(linkId: number, url: string): Promise<ScrapeStepResult
         }
       }
     } catch (imgErr) {
-      // Image processing failure is non-fatal
       log.warn(
         { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
         '[images] Failed (non-fatal)',
@@ -129,92 +131,122 @@ async function scrapeStep(linkId: number, url: string): Promise<ScrapeStepResult
   };
 }
 
+interface SummarizeStepResult {
+  summary: string;
+  tags: string[];
+}
+
 /**
- * Analyze a scraped link: run LLM summarization + insight generation.
- * Re-reads markdown from DB (not passed via checkpoint to save space).
- * Appends OCR text to markdown for LLM context.
+ * Step 2: Summarize - generate summary and tags via LLM.
  */
-async function analyzeStep(linkId: number, url: string, scrapeData: ScrapeStepResult): Promise<void> {
+async function summarizeStep(linkId: number, url: string, scrapeData: ScrapeStepResult): Promise<SummarizeStepResult> {
   const link = await getLink(linkId);
   if (!link?.markdown) throw new Error('Link markdown not found after scrape');
 
-  log.info({ linkId, title: scrapeData.title }, '[analyze] Starting');
+  log.info({ linkId, title: scrapeData.title }, '[summarize] Starting');
 
   // Append OCR text to markdown for LLM context
-  let markdownForAnalysis = link.markdown;
+  let markdownForSummary = link.markdown;
   if (scrapeData.ocrTexts.length > 0) {
-    markdownForAnalysis += '\n\n---\n**图片文字 (OCR):**\n' + scrapeData.ocrTexts.join('\n\n');
+    markdownForSummary += '\n\n---\n**图片文字 (OCR):**\n' + scrapeData.ocrTexts.join('\n\n');
   }
 
-  const analysis = await analyzeArticle({
+  const result = await generateSummary({
     url,
     title: scrapeData.title,
     ogDescription: scrapeData.ogDescription,
-    siteName: scrapeData.siteName,
-    markdown: markdownForAnalysis,
-    linkId,
+    markdown: markdownForSummary,
   });
 
   await updateLink(linkId, {
-    summary: analysis.summary,
-    insight: analysis.insight,
-    tags: JSON.stringify(analysis.tags),
-    related_notes: JSON.stringify(analysis.relatedNotes),
-    related_links: JSON.stringify(analysis.relatedLinks),
-    status: 'analyzed',
+    summary: result.summary,
+    tags: JSON.stringify(result.tags),
   });
 
-  log.info({ linkId, tags: analysis.tags.length }, '[analyze] OK');
+  log.info({ linkId, tags: result.tags.length }, '[summarize] OK');
+  return result;
 }
 
 /**
- * Build text content for embedding from a link record.
- * Combines title, description, summary, and markdown for comprehensive semantic representation.
+ * Step 3: Embed - generate embedding vector for summary only.
  */
-function buildEmbeddingText(link: LinkRecord): string {
-  const parts: string[] = [];
-
-  if (link.og_title) {
-    parts.push(`标题: ${link.og_title}`);
-  }
-  if (link.og_description) {
-    parts.push(`描述: ${link.og_description}`);
-  }
-  if (link.summary) {
-    parts.push(`摘要: ${link.summary}`);
-  }
-  if (link.markdown) {
-    // Truncate markdown to avoid exceeding embedding model limits
-    const maxMarkdownLength = 6000;
-    const markdown =
-      link.markdown.length > maxMarkdownLength ? link.markdown.slice(0, maxMarkdownLength) + '...' : link.markdown;
-    parts.push(`正文: ${markdown}`);
-  }
-
-  return parts.join('\n\n');
-}
-
-/**
- * Generate embedding vector for a link and store it in DB.
- */
-async function embedStep(linkId: number): Promise<void> {
+async function embedStep(linkId: number): Promise<number[]> {
   const link = await getLink(linkId);
-  if (!link) throw new Error('Link not found for embedding');
+  if (!link?.summary) throw new Error('Link summary not found for embedding');
 
   log.info({ linkId, title: link.og_title }, '[embed] Starting');
 
-  const text = buildEmbeddingText(link);
-  const embedding = await createEmbedding(text);
+  const embedding = await createEmbedding(link.summary);
 
   // Store embedding as PostgreSQL vector format
   const vectorStr = `[${embedding.join(',')}]`;
-  await updateLink(linkId, { embedding: vectorStr } as any);
+  await updateLink(linkId, { summary_embedding: vectorStr } as any);
 
   log.info({ linkId, dimensions: embedding.length }, '[embed] OK');
+  return embedding;
+}
+
+const RELATED_SCORE_THRESHOLD = 0.65; // Minimum score to save relation
+const RELATED_MAX_COUNT = 5; // Maximum related links to save
+
+/**
+ * Step 4: Related - search for related links based on summary embedding.
+ * Filters by score threshold and saves to link_relations table.
+ */
+async function relatedStep(linkId: number, userId: number, embedding: number[]): Promise<RelatedLinkResult[]> {
+  log.info({ linkId }, '[related] Starting');
+
+  // Search more than we need, then filter by threshold
+  const searchResults = await searchRelatedLinks(embedding, userId, linkId, 10);
+
+  // Filter by threshold and take top N
+  const relatedLinks = searchResults
+    .filter((r) => r.score >= RELATED_SCORE_THRESHOLD)
+    .slice(0, RELATED_MAX_COUNT);
+
+  // Save to link_relations table
+  await saveRelatedLinks(
+    linkId,
+    relatedLinks.map((r) => ({ relatedLinkId: r.id, score: r.score })),
+  );
+
+  // Also update JSON field for backward compat (can remove later)
+  await updateLink(linkId, {
+    related_links: JSON.stringify(relatedLinks),
+    related_notes: JSON.stringify([]),
+  });
+
+  log.info(
+    { linkId, searched: searchResults.length, saved: relatedLinks.length, threshold: RELATED_SCORE_THRESHOLD },
+    '[related] OK',
+  );
+  return relatedLinks;
 }
 
 /**
- * Export an analyzed link to markdown + trigger QMD re-index.
+ * Step 5: Insight - generate insight with related links context.
+ */
+async function insightStep(
+  linkId: number,
+  url: string,
+  title: string | undefined,
+  summary: string,
+  relatedIds: number[],
+): Promise<void> {
+  log.info({ linkId, relatedCount: relatedIds.length }, '[insight] Starting');
+
+  const insight = await generateInsight({ url, title }, summary, relatedIds);
+
+  await updateLink(linkId, {
+    insight,
+    status: 'analyzed',
+  });
+
+  log.info({ linkId }, '[insight] OK');
+}
+
+/**
+ * Step 6: Export - export link to markdown file + trigger QMD re-index.
  */
 async function exportStep(linkId: number): Promise<void> {
   const fullLink = await getLink(linkId);
@@ -248,24 +280,33 @@ function registerTasks(): void {
 
     log.info({ linkId, url, taskId: ctx.taskID }, '[process-link] Starting');
 
-    // Step 1: Scrape (checkpoint returns serializable subset)
+    // Step 1: Scrape
     const scrapeData = await ctx.step('scrape', async () => {
-      const result = await scrapeStep(linkId!, url);
-      // Return serializable checkpoint data (ocrTexts are small strings, fine to checkpoint)
-      return result;
+      return await scrapeStep(linkId!, url);
     });
 
-    // Step 2: Analyze
-    await ctx.step('analyze', async () => {
-      await analyzeStep(linkId!, url, scrapeData);
+    // Step 2: Summarize
+    const summaryData = await ctx.step('summarize', async () => {
+      return await summarizeStep(linkId!, url, scrapeData);
     });
 
-    // Step 3: Embed (generate vector embedding)
-    await ctx.step('embed', async () => {
-      await embedStep(linkId!);
+    // Step 3: Embed (summary only)
+    const embedding = await ctx.step('embed', async () => {
+      return await embedStep(linkId!);
     });
 
-    // Step 4: Export
+    // Step 4: Related links
+    const relatedLinks = await ctx.step('related', async () => {
+      return await relatedStep(linkId!, userId, embedding);
+    });
+
+    // Step 5: Insight
+    await ctx.step('insight', async () => {
+      const relatedIds = relatedLinks.map((r) => r.id);
+      await insightStep(linkId!, url, scrapeData.title, summaryData.summary, relatedIds);
+    });
+
+    // Step 6: Export
     await ctx.step('export', async () => {
       await exportStep(linkId!);
     });
@@ -280,38 +321,39 @@ function registerTasks(): void {
     const { linkId } = params;
     const link = await getLink(linkId);
     if (!link) throw new Error(`Link ${linkId} not found`);
-    if (!link.summary || !link.markdown) throw new Error(`Link ${linkId} missing summary/markdown`);
+    if (!link.summary) throw new Error(`Link ${linkId} missing summary`);
 
     const title = link.og_title || link.url;
     log.info({ linkId, title }, '[refresh-related] Starting');
 
-    const related = await ctx.step('find-related', async () => {
-      return await findRelatedAndInsight(
-        { url: link.url, title: link.og_title, markdown: link.markdown!, linkId },
-        link.summary!,
-      );
-    });
-
-    await ctx.step('update-and-export', async () => {
-      await updateLink(linkId, {
-        related_notes: JSON.stringify(related.relatedNotes),
-        related_links: JSON.stringify(related.relatedLinks),
-        insight: related.insight,
+    // Re-embed if needed
+    let embedding: number[];
+    if (link.summary_embedding) {
+      embedding = JSON.parse(link.summary_embedding);
+    } else {
+      embedding = await ctx.step('embed', async () => {
+        return await embedStep(linkId);
       });
+    }
 
-      const updatedLink = await getLink(linkId);
-      if (updatedLink) {
-        exportLinkMarkdown(updatedLink);
-      }
-
-      qmdIndexQueue.requestUpdate().catch(() => {});
+    // Search related
+    const relatedLinks = await ctx.step('related', async () => {
+      return await relatedStep(linkId, link.user_id, embedding);
     });
 
-    log.info(
-      { linkId, title, notes: related.relatedNotes.length, links: related.relatedLinks.length },
-      '[refresh-related] Complete',
-    );
-    return { linkId, relatedNotes: related.relatedNotes.length, relatedLinks: related.relatedLinks.length };
+    // Regenerate insight
+    await ctx.step('insight', async () => {
+      const relatedIds = relatedLinks.map((r) => r.id);
+      await insightStep(linkId, link.url, link.og_title, link.summary!, relatedIds);
+    });
+
+    // Re-export
+    await ctx.step('export', async () => {
+      await exportStep(linkId);
+    });
+
+    log.info({ linkId, title, relatedCount: relatedLinks.length }, '[refresh-related] Complete');
+    return { linkId, relatedLinks: relatedLinks.length };
   });
 }
 
@@ -452,14 +494,13 @@ export async function deleteLinkFull(linkId: number): Promise<DeleteResult> {
 export interface RefreshResult {
   linkId: number;
   title: string;
-  relatedNotes: number;
   relatedLinks: number;
   error?: string;
 }
 
 /**
- * Refresh related content (notes + links + insight) for a single link or all analyzed links.
- * Does NOT re-scrape or re-summarize — only re-searches and re-generates insight.
+ * Refresh related links + insight for a single link or all analyzed links.
+ * Does NOT re-scrape or re-summarize.
  */
 export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> {
   const links = linkId ? ([await getLink(linkId)].filter(Boolean) as LinkRecord[]) : await getAllAnalyzedLinks();
@@ -477,44 +518,42 @@ export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> 
     const title = link.og_title || link.url;
 
     try {
-      if (!link.summary || !link.markdown) {
-        log.warn({ linkId: id, title }, '[refresh] Skipped (missing summary or markdown)');
-        results.push({ linkId: id, title, relatedNotes: 0, relatedLinks: 0, error: 'missing summary/markdown' });
+      if (!link.summary) {
+        log.warn({ linkId: id, title }, '[refresh] Skipped (missing summary)');
+        results.push({ linkId: id, title, relatedLinks: 0, error: 'missing summary' });
         continue;
       }
 
-      log.info({ linkId: id, title }, '[refresh] Finding related content...');
-      const related = await findRelatedAndInsight(
-        { url: link.url, title: link.og_title, markdown: link.markdown, linkId: id },
-        link.summary,
-      );
+      // Get or create embedding
+      let embedding: number[];
+      if (link.summary_embedding) {
+        embedding = JSON.parse(link.summary_embedding);
+      } else {
+        log.info({ linkId: id, title }, '[refresh] Generating embedding...');
+        embedding = await embedStep(id);
+      }
 
-      await updateLink(id, {
-        related_notes: JSON.stringify(related.relatedNotes),
-        related_links: JSON.stringify(related.relatedLinks),
-        insight: related.insight,
-      });
+      // Search related
+      log.info({ linkId: id, title }, '[refresh] Searching related links...');
+      const relatedLinks = await relatedStep(id, link.user_id, embedding);
 
-      // Re-export markdown with updated related info
+      // Regenerate insight
+      log.info({ linkId: id, title }, '[refresh] Generating insight...');
+      const relatedIds = relatedLinks.map((r) => r.id);
+      await insightStep(id, link.url, link.og_title, link.summary, relatedIds);
+
+      // Re-export
       const updatedLink = await getLink(id);
       if (updatedLink) {
         exportLinkMarkdown(updatedLink);
       }
 
-      log.info(
-        { linkId: id, title, notes: related.relatedNotes.length, links: related.relatedLinks.length },
-        '[refresh] Done',
-      );
-      results.push({
-        linkId: id,
-        title,
-        relatedNotes: related.relatedNotes.length,
-        relatedLinks: related.relatedLinks.length,
-      });
+      log.info({ linkId: id, title, relatedCount: relatedLinks.length }, '[refresh] Done');
+      results.push({ linkId: id, title, relatedLinks: relatedLinks.length });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error({ linkId: id, title, err: errMsg }, '[refresh] Failed');
-      results.push({ linkId: id, title, relatedNotes: 0, relatedLinks: 0, error: errMsg });
+      results.push({ linkId: id, title, relatedLinks: 0, error: errMsg });
     }
   }
 

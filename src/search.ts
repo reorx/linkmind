@@ -119,7 +119,7 @@ async function searchBM25(query: string, userId: number, limit: number): Promise
       .select(sql<number>`paradedb.score(id)`.as('score'))
       .where('user_id', '=', userId)
       .where('status', '=', 'analyzed')
-      .where(sql`id @@@ paradedb.parse(${query})`)
+      .where(sql<boolean>`id @@@ paradedb.parse(${query})`)
       .orderBy(sql`paradedb.score(id)`, 'desc')
       .limit(limit)
       .execute();
@@ -152,11 +152,11 @@ async function searchVector(query: string, userId: number, limit: number): Promi
     const results = await db
       .selectFrom('links')
       .select(['id', 'url', 'og_title', 'summary'])
-      .select(sql<number>`embedding <=> ${vectorStr}::vector`.as('distance'))
+      .select(sql<number>`summary_embedding <=> ${vectorStr}::vector`.as('distance'))
       .where('user_id', '=', userId)
       .where('status', '=', 'analyzed')
-      .where('embedding', 'is not', null)
-      .orderBy(sql`embedding <=> ${vectorStr}::vector`)
+      .where(sql<boolean>`summary_embedding IS NOT NULL`)
+      .orderBy(sql`summary_embedding <=> ${vectorStr}::vector`)
       .limit(limit)
       .execute();
 
@@ -169,6 +169,54 @@ async function searchVector(query: string, userId: number, limit: number): Promi
     }));
   } catch (err) {
     log.warn({ err }, '[search] Vector search failed, returning empty');
+    return [];
+  }
+}
+
+/**
+ * Search for related links based on summary embedding similarity.
+ * @param summaryEmbedding - The embedding vector of the current link's summary
+ * @param userId - User ID to scope search
+ * @param excludeLinkId - Link ID to exclude from results (the current link)
+ * @param limit - Maximum number of results to return (default 5)
+ * @returns Array of related link IDs, sorted by similarity
+ */
+export interface RelatedLinkResult {
+  id: number;
+  score: number; // Similarity score (0-1, higher is more similar)
+}
+
+export async function searchRelatedLinks(
+  summaryEmbedding: number[],
+  userId: number,
+  excludeLinkId: number,
+  limit: number = 5,
+): Promise<RelatedLinkResult[]> {
+  const db = getDb();
+  const vectorStr = `[${summaryEmbedding.join(',')}]`;
+
+  try {
+    const results = await db
+      .selectFrom('links')
+      .select(['id'])
+      .select(sql<number>`summary_embedding <=> ${vectorStr}::vector`.as('distance'))
+      .where('user_id', '=', userId)
+      .where('status', '=', 'analyzed')
+      .where('id', '!=', excludeLinkId)
+      .where(sql<boolean>`summary_embedding IS NOT NULL`)
+      .orderBy(sql`summary_embedding <=> ${vectorStr}::vector`)
+      .limit(limit)
+      .execute();
+
+    // Convert distance to similarity score (1 / (1 + distance))
+    const relatedLinks = results.map((r) => ({
+      id: r.id,
+      score: Math.round((1 / (1 + (r as any).distance)) * 100) / 100,
+    }));
+    log.info({ excludeLinkId, resultCount: relatedLinks.length }, '[search] Related links search complete');
+    return relatedLinks;
+  } catch (err) {
+    log.warn({ err, excludeLinkId }, '[search] Related links search failed, returning empty');
     return [];
   }
 }

@@ -37,7 +37,7 @@ export interface LinkRecord {
   related_links?: string; // JSON string
   tags?: string; // JSON string
   images?: string; // JSON string (ImageInfo[])
-  embedding?: string; // PostgreSQL vector string format: [0.1,0.2,...]
+  summary_embedding?: string; // PostgreSQL vector string format: [0.1,0.2,...] - embedding of summary only
   status: 'pending' | 'scraped' | 'analyzed' | 'error';
   error_message?: string;
   created_at?: string;
@@ -80,16 +80,26 @@ interface LinksTable {
   related_links: string | null;
   tags: string | null;
   images: string | null;
+  summary_embedding: string | null;
   status: string;
   error_message: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
 
+interface LinkRelationsTable {
+  id: Generated<number>;
+  link_id: number;
+  related_link_id: number;
+  score: number;
+  created_at: Generated<Date>;
+}
+
 interface Database {
   invites: InvitesTable;
   users: UsersTable;
   links: LinksTable;
+  link_relations: LinkRelationsTable;
 }
 
 /* ── Database instance ── */
@@ -356,10 +366,11 @@ export async function removeFromRelatedLinks(deletedLinkId: number): Promise<num
 
   let updated = 0;
   for (const link of links) {
-    const related: any[] = JSON.parse(
+    const related: number[] = JSON.parse(
       typeof link.related_links === 'string' ? link.related_links : JSON.stringify(link.related_links || []),
     );
-    const filtered = related.filter((r: any) => r.linkId !== deletedLinkId);
+    // related_links is now an array of IDs: [42, 37, 15, ...]
+    const filtered = related.filter((id: number) => id !== deletedLinkId);
     if (filtered.length !== related.length) {
       await getDb()
         .updateTable('links')
@@ -391,4 +402,85 @@ export async function searchLinks(query: string, limit: number = 10, userId?: nu
     .limit(limit)
     .execute();
   return rows.map(toLinkRecord);
+}
+
+/* ── Link Relations ── */
+
+export interface LinkRelation {
+  id?: number;
+  link_id: number;
+  related_link_id: number;
+  score: number;
+  created_at?: string;
+}
+
+/**
+ * Save related links for a given link.
+ * Replaces existing relations for link_id.
+ * @param linkId - The source link
+ * @param relations - Array of {relatedLinkId, score}
+ */
+export async function saveRelatedLinks(
+  linkId: number,
+  relations: { relatedLinkId: number; score: number }[],
+): Promise<void> {
+  const db = getDb();
+
+  // Delete existing relations for this link
+  await db.deleteFrom('link_relations').where('link_id', '=', linkId).execute();
+
+  // Insert new relations
+  if (relations.length > 0) {
+    await db
+      .insertInto('link_relations')
+      .values(
+        relations.map((r) => ({
+          link_id: linkId,
+          related_link_id: r.relatedLinkId,
+          score: r.score,
+        })),
+      )
+      .execute();
+  }
+}
+
+/**
+ * Get related links for a given link (bidirectional).
+ * Queries both directions: links I found related + links that found me related.
+ * Returns deduplicated results ordered by score, max 5.
+ */
+export async function getRelatedLinks(linkId: number): Promise<{ relatedLinkId: number; score: number }[]> {
+  const db = getDb();
+
+  // Query 1: links I found related (link_id = me)
+  const outgoing = await db
+    .selectFrom('link_relations')
+    .select(['related_link_id as other_id', 'score'])
+    .where('link_id', '=', linkId)
+    .execute();
+
+  // Query 2: links that found me related (related_link_id = me)
+  const incoming = await db
+    .selectFrom('link_relations')
+    .select(['link_id as other_id', 'score'])
+    .where('related_link_id', '=', linkId)
+    .execute();
+
+  // Merge and dedupe (keep highest score if duplicate)
+  const scoreMap = new Map<number, number>();
+  for (const row of [...outgoing, ...incoming]) {
+    const otherId = (row as any).other_id;
+    const existing = scoreMap.get(otherId);
+    if (!existing || row.score > existing) {
+      scoreMap.set(otherId, row.score);
+    }
+  }
+
+  // Sort by score desc, take top 5
+  const results = Array.from(scoreMap.entries())
+    .map(([relatedLinkId, score]) => ({ relatedLinkId, score }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  return results;
 }

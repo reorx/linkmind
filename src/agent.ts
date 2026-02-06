@@ -1,86 +1,31 @@
 /**
- * Agent: analyze scraped content, generate summary + insight + find related content.
+ * Agent: LLM-powered content analysis.
+ *
+ * Provides:
+ * - generateSummary: Generate summary and tags from article content
+ * - generateInsight: Generate insight with related links context
  */
 
 import { getLLM } from './llm.js';
+import { getLink } from './db.js';
 import { logger } from './logger.js';
-import { searchAll, type SearchResult } from './search.js';
 
 const log = logger.child({ module: 'agent' });
 
-export interface AnalysisResult {
+export interface SummaryResult {
   summary: string;
-  insight: string;
   tags: string[];
-  relatedNotes: SearchResult[];
-  relatedLinks: SearchResult[];
 }
 
 /**
- * Analyze a scraped article: generate summary, find related content, produce insight.
+ * Generate summary and extract tags from article content.
  */
-export async function analyzeArticle(input: {
-  url: string;
-  title?: string;
-  ogDescription?: string;
-  siteName?: string;
-  markdown: string;
-  linkId?: number;
-}): Promise<AnalysisResult> {
-  // Step 1: Generate summary and extract keywords
-  const summaryResult = await generateSummary(input);
-
-  // Step 2+3: Find related content and generate insight
-  const related = await findRelatedAndInsight(input, summaryResult.summary);
-
-  return {
-    summary: summaryResult.summary,
-    insight: related.insight,
-    tags: summaryResult.tags,
-    relatedNotes: related.relatedNotes,
-    relatedLinks: related.relatedLinks,
-  };
-}
-
-export interface RelatedResult {
-  insight: string;
-  relatedNotes: SearchResult[];
-  relatedLinks: SearchResult[];
-}
-
-/**
- * Search for related content and generate insight. Reusable for both
- * initial analysis and refreshing related info on existing links.
- */
-export async function findRelatedAndInsight(
-  input: { url: string; title?: string; markdown: string; linkId?: number },
-  summary: string,
-): Promise<RelatedResult> {
-  // Search for related content: combine title + summary into one query
-  const query = [input.title, summary].filter(Boolean).join('\n');
-  const { notes, links } = await searchAll(query, 5);
-  let allNotes = notes;
-  let allLinks = links;
-
-  // Filter out the article itself from related links (by ID)
-  allLinks = allLinks.filter((l) => !input.linkId || l.linkId !== input.linkId);
-
-  // Generate insight with context of related content
-  const insight = await generateInsight(input, summary, allNotes, allLinks);
-
-  return {
-    insight,
-    relatedNotes: allNotes.slice(0, 5),
-    relatedLinks: allLinks.slice(0, 5),
-  };
-}
-
-async function generateSummary(input: {
+export async function generateSummary(input: {
   url: string;
   title?: string;
   ogDescription?: string;
   markdown: string;
-}): Promise<{ summary: string; tags: string[] }> {
+}): Promise<SummaryResult> {
   // Truncate markdown to avoid token limits
   const content = input.markdown.slice(0, 12000);
 
@@ -124,20 +69,33 @@ ${content}`;
   }
 }
 
-async function generateInsight(
-  input: { url: string; title?: string; markdown: string },
+/**
+ * Generate insight based on article content and related links.
+ * @param input - Article metadata
+ * @param summary - Generated summary
+ * @param relatedLinkIds - IDs of related links found via embedding search
+ */
+export async function generateInsight(
+  input: { url: string; title?: string },
   summary: string,
-  relatedNotes: SearchResult[],
-  relatedLinks: SearchResult[],
+  relatedLinkIds: number[],
 ): Promise<string> {
-  const notesContext =
-    relatedNotes.length > 0
-      ? relatedNotes.map((n) => `- [${n.title}] ${n.snippet.slice(0, 150)}`).join('\n')
-      : '（无相关笔记）';
+  // Fetch related links details
+  const relatedLinks: { title: string; url: string; summary: string }[] = [];
+  for (const id of relatedLinkIds) {
+    const link = await getLink(id);
+    if (link) {
+      relatedLinks.push({
+        title: link.og_title || link.url,
+        url: link.url,
+        summary: link.summary || '',
+      });
+    }
+  }
 
   const linksContext =
     relatedLinks.length > 0
-      ? relatedLinks.map((l) => `- [${l.title}](${l.url}) ${l.snippet.slice(0, 100)}`).join('\n')
+      ? relatedLinks.map((l) => `- [${l.title}](${l.url}): ${l.summary.slice(0, 100)}`).join('\n')
       : '（无相关历史链接）';
 
   const text = await getLLM().chat(
@@ -159,9 +117,6 @@ async function generateInsight(
         content: `文章: ${input.title || input.url}
 摘要: ${summary}
 
-用户相关的笔记:
-${notesContext}
-
 用户之前收藏过的相关链接:
 ${linksContext}
 
@@ -172,14 +127,4 @@ ${linksContext}
   );
 
   return text || '无法生成 insight';
-}
-
-function dedup<T>(arr: T[], keyFn: (item: T) => string | undefined): T[] {
-  const seen = new Set<string>();
-  return arr.filter((item) => {
-    const key = keyFn(item);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
