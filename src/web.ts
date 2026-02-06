@@ -377,7 +377,7 @@ export function startWebServer(port: number): void {
     }));
     // Get related links from link_relations table
     const relatedLinkData = await getRelatedLinks(link.id!);
-    const relatedLinks: { linkId: number; title: string; url: string; tags: string[]; score: number }[] = [];
+    const relatedLinks: { linkId: number; title: string; url: string; sourceUrl: string; tags: string[]; score: number }[] = [];
     for (const item of relatedLinkData) {
       const relatedLink = await getLink(item.relatedLinkId);
       if (relatedLink) {
@@ -385,6 +385,7 @@ export function startWebServer(port: number): void {
           linkId: item.relatedLinkId,
           title: relatedLink.og_title || relatedLink.url,
           url: `/link/${item.relatedLinkId}`,
+          sourceUrl: relatedLink.url,
           tags: safeParseJson(relatedLink.tags),
           score: item.score,
         });

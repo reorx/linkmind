@@ -26,13 +26,14 @@ const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
 interface RelatedLinkInfo {
   linkId: number;
   title: string;
-  url: string;
+  sourceUrl: string; // Original URL
+  internalUrl: string; // Our link detail page URL
 }
 
 /**
  * Fetch related links from link_relations table with their details.
  */
-async function fetchRelatedLinksInfo(linkId: number): Promise<RelatedLinkInfo[]> {
+async function fetchRelatedLinksInfo(linkId: number, webBaseUrl: string): Promise<RelatedLinkInfo[]> {
   const relatedLinkData = await getRelatedLinks(linkId);
   const results: RelatedLinkInfo[] = [];
 
@@ -42,7 +43,8 @@ async function fetchRelatedLinksInfo(linkId: number): Promise<RelatedLinkInfo[]>
       results.push({
         linkId: item.relatedLinkId,
         title: relatedLink.og_title || relatedLink.url,
-        url: relatedLink.url,
+        sourceUrl: relatedLink.url,
+        internalUrl: `${webBaseUrl}/link/${item.relatedLinkId}`,
       });
     }
   }
@@ -249,7 +251,7 @@ async function pollAndNotify(ctx: any, linkId: number, url: string, webBaseUrl: 
     if (link.status === 'analyzed') {
       const tags: string[] = safeParseJson(link.tags);
       const relatedNotes: any[] = safeParseJson(link.related_notes);
-      const relatedLinks = await fetchRelatedLinksInfo(linkId);
+      const relatedLinks = await fetchRelatedLinksInfo(linkId, webBaseUrl);
       const images: any[] = safeParseJson(link.images);
       const permanentLink = `${webBaseUrl}/link/${linkId}`;
 
@@ -327,7 +329,7 @@ async function handleUrl(ctx: any, url: string, webBaseUrl: string, userId: numb
     if (link.status === 'analyzed') {
       const tags: string[] = safeParseJson(link.tags);
       const relatedNotes: any[] = safeParseJson(link.related_notes);
-      const relatedLinks = await fetchRelatedLinksInfo(linkId);
+      const relatedLinks = await fetchRelatedLinksInfo(linkId, webBaseUrl);
       const images: any[] = safeParseJson(link.images);
       const permanentLink = `${webBaseUrl}/link/${linkId}`;
 
@@ -405,7 +407,7 @@ function formatResult(data: {
   if (data.relatedLinks.length > 0) {
     msg += `\n<b>🔗 相关链接</b>\n`;
     for (const l of data.relatedLinks.slice(0, 3)) {
-      msg += `• <a href="${escHtml(l.url || '')}">${escHtml(truncate(l.title || l.url || '', 50))}</a>\n`;
+      msg += `• <a href="${escHtml(l.internalUrl)}">${escHtml(truncate(l.title, 45))}</a> (<a href="${escHtml(l.sourceUrl)}">Source</a>)\n`;
     }
   }
 
