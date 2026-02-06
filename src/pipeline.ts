@@ -284,39 +284,48 @@ export function registerTasks(): void {
 
     log.info({ linkId, url, taskId: ctx.taskID }, '[process-link] Starting');
 
-    // Step 1: Scrape
-    const scrapeData = await ctx.step('scrape', async () => {
-      return await scrapeStep(linkId!, url);
-    });
+    try {
+      // Step 1: Scrape
+      const scrapeData = await ctx.step('scrape', async () => {
+        return await scrapeStep(linkId!, url);
+      });
 
-    // Step 2: Summarize
-    const summaryData = await ctx.step('summarize', async () => {
-      return await summarizeStep(linkId!, url, scrapeData);
-    });
+      // Step 2: Summarize
+      const summaryData = await ctx.step('summarize', async () => {
+        return await summarizeStep(linkId!, url, scrapeData);
+      });
 
-    // Step 3: Embed (summary only)
-    const embedding = await ctx.step('embed', async () => {
-      return await embedStep(linkId!);
-    });
+      // Step 3: Embed (summary only)
+      const embedding = await ctx.step('embed', async () => {
+        return await embedStep(linkId!);
+      });
 
-    // Step 4: Related links
-    const relatedLinks = await ctx.step('related', async () => {
-      return await relatedStep(linkId!, userId, embedding);
-    });
+      // Step 4: Related links
+      const relatedLinks = await ctx.step('related', async () => {
+        return await relatedStep(linkId!, userId, embedding);
+      });
 
-    // Step 5: Insight
-    await ctx.step('insight', async () => {
-      const relatedIds = relatedLinks.map((r) => r.id);
-      await insightStep(linkId!, url, scrapeData.title, summaryData.summary, relatedIds);
-    });
+      // Step 5: Insight
+      await ctx.step('insight', async () => {
+        const relatedIds = relatedLinks.map((r) => r.id);
+        await insightStep(linkId!, url, scrapeData.title, summaryData.summary, relatedIds);
+      });
 
-    // Step 6: Export
-    await ctx.step('export', async () => {
-      await exportStep(linkId!);
-    });
+      // Step 6: Export
+      await ctx.step('export', async () => {
+        await exportStep(linkId!);
+      });
 
-    log.info({ linkId, url, title: scrapeData.title }, '[process-link] Complete');
-    return { linkId, title: scrapeData.title, status: 'analyzed' };
+      log.info({ linkId, url, title: scrapeData.title }, '[process-link] Complete');
+      return { linkId, title: scrapeData.title, status: 'analyzed' };
+    } catch (err) {
+      // Update link status to error with error message
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error({ linkId, url, err: errorMessage }, '[process-link] Failed');
+      await updateLink(linkId!, { status: 'error', error_message: errorMessage.slice(0, 1000) });
+      // Re-throw to let Absurd handle retry logic
+      throw err;
+    }
   });
 
   /* ── Task: refresh-related ── */
