@@ -323,7 +323,22 @@ export function registerTasks(): void {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error({ linkId, url, err: errorMessage }, '[process-link] Failed');
       await updateLink(linkId!, { status: 'error', error_message: errorMessage.slice(0, 1000) });
-      // Re-throw to let Absurd handle retry logic
+
+      // Check if this is a permanent error that should not be retried
+      const permanentErrors = [
+        'Download is starting', // PDF or other downloadable files
+        'net::ERR_ABORTED', // Download triggered
+        'Navigation failed because page was closed', // Page closed during download
+      ];
+      const isPermanent = permanentErrors.some((pe) => errorMessage.includes(pe));
+
+      if (isPermanent) {
+        log.info({ linkId, url }, '[process-link] Permanent error, not retrying');
+        // Return without throwing to prevent Absurd from retrying
+        return { linkId, title: undefined, status: 'error' };
+      }
+
+      // Re-throw to let Absurd handle retry logic for transient errors
       throw err;
     }
   });
