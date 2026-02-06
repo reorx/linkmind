@@ -200,9 +200,7 @@ async function relatedStep(linkId: number, userId: number, embedding: number[]):
   const searchResults = await searchRelatedLinks(embedding, userId, linkId, 10);
 
   // Filter by threshold and take top N
-  const relatedLinks = searchResults
-    .filter((r) => r.score >= RELATED_SCORE_THRESHOLD)
-    .slice(0, RELATED_MAX_COUNT);
+  const relatedLinks = searchResults.filter((r) => r.score >= RELATED_SCORE_THRESHOLD).slice(0, RELATED_MAX_COUNT);
 
   // Save to link_relations table
   await saveRelatedLinks(
@@ -266,9 +264,12 @@ export function registerTasks(): void {
   app.registerTask({ name: 'process-link' }, async (params: ProcessLinkParams, ctx) => {
     const { userId, url } = params;
 
-    // Resolve or create linkId
+    // Resolve or create linkId, and reset status to pending
     let linkId = params.linkId;
-    if (!linkId) {
+    if (linkId) {
+      // Existing link passed directly - reset status
+      await updateLink(linkId, { status: 'pending', error_message: undefined });
+    } else {
       const existing = await getLinkByUrl(userId, url);
       if (existing?.id) {
         linkId = existing.id;
@@ -421,7 +422,7 @@ export async function processUrl(userId: number, url: string): Promise<SpawnProc
   const existing = await getLinkByUrl(userId, url);
   if (existing && existing.id) {
     log.info({ url, linkId: existing.id }, '[start] URL already exists, re-processing');
-    await updateLink(existing.id, { status: 'pending', error_message: undefined });
+    // Status reset happens inside task handler
     return spawnProcessLink(userId, url, existing.id);
   }
 
@@ -441,7 +442,7 @@ export async function retryLink(linkId: number): Promise<SpawnProcessResult> {
   }
 
   log.info({ url: link.url, linkId, prevStatus: link.status }, '[retry] Retrying link');
-  await updateLink(linkId, { status: 'pending', error_message: undefined });
+  // Status reset happens inside task handler
   return spawnProcessLink(link.user_id, link.url, linkId);
 }
 
