@@ -5,13 +5,12 @@
 /* ── Summary Prompts ── */
 
 export const SUMMARY_SYSTEM_PROMPT = `你是一个信息分析助手。用户会给你一篇文章的内容，请你：
-1. 用中文写一个简洁的摘要（3-5句话），抓住核心要点。无论原文是什么语言，摘要必须使用中文。
-2. 提取 3-5 个关键标签（用于后续搜索关联内容）
+1. 生成摘要，具体要求遵循用户消息 (summary)
+2. 提取 3-5 个关键标签 (tags)
 
-以 JSON 格式输出：
+你必须以 JSON 格式输出数据：
 {"summary": "...", "tags": ["tag1", "tag2", ...]}
-
-注意：summary 字段必须是中文，不要使用英文。`;
+`;
 
 export interface SummaryPromptInput {
   url: string;
@@ -24,17 +23,26 @@ export function buildSummaryUserPrompt(input: SummaryPromptInput): string {
   // Truncate markdown to avoid token limits
   const content = input.markdown.slice(0, 12000);
 
-  return `标题: ${input.title || '无'}
+  return `
+请严格按照以下要求总结网页的内容，生成摘要 (summary):
+1. 请使用中文进行总结，但对于一些关键信息和名词，请保留英文词并用括号放在中文后
+2. 使用 markdown 格式输出 3-5 个列表条目，每条字数不超过 100 字，总字数不超过 500 字。
+3. 可以向下展开子条目，但同样限制在 3-5 条。请仔细思考，输出有价值的内容
+4. 直接输出总结，不要做额外声明。
+
+<web_content>
+标题: ${input.title || '无'}
 来源: ${input.url}
 描述: ${input.ogDescription || '无'}
-
 正文:
-${content}`;
+${content}
+</web_content>
+`;
 }
 
 /* ── Insight Prompts ── */
 
-export const INSIGHT_SYSTEM_PROMPT = `你是用户的个人信息分析师。用户是一个 web 开发者，关注 AI 工具、开发者工具和开源项目。
+export const INSIGHT_SYSTEM_PROMPT = `你是用户的个人信息分析师。
 
 你的任务是从**用户的角度**思考这篇文章的价值：
 - 这篇文章讲了什么新东西？有什么值得关注的？
@@ -42,7 +50,7 @@ export const INSIGHT_SYSTEM_PROMPT = `你是用户的个人信息分析师。用
 - 对用户的工作或项目有什么启发？
 - 是否值得深入研究？
 
-语气要像朋友之间的分享，简洁有力，不要模板化的套话。2-4 句话即可。`;
+语气要像朋友之间的分享，简洁有力，不要模板化的套话。3-5 句话即可。`;
 
 export interface RelatedLinkContext {
   title: string;
