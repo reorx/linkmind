@@ -27,7 +27,9 @@ import { processTwitterImages } from './image-handler.js';
 import { generateSummary, generateInsight } from './agent.js';
 import { createEmbedding } from './llm.js';
 import { searchRelatedLinks, type RelatedLinkResult } from './search.js';
-import { exportLinkMarkdown, deleteLinkExport, qmdIndexQueue } from './export.js';
+import { exportLinkMarkdown, deleteLinkExport } from './export.js';
+// TODO: 未来可能会换成 mykb 调用
+// import { qmdIndexQueue } from './export.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'pipeline' });
@@ -253,7 +255,8 @@ async function exportStep(linkId: number): Promise<void> {
   const exportPath = exportLinkMarkdown(fullLink);
   log.info({ linkId, path: exportPath }, '[export] OK');
 
-  qmdIndexQueue.requestUpdate().catch(() => {});
+  // TODO: 未来可能会换成 mykb 调用
+  // qmdIndexQueue.requestUpdate().catch(() => {});
 }
 
 /* ── Absurd task registration ── */
@@ -484,8 +487,8 @@ export async function deleteLinkFull(linkId: number): Promise<DeleteResult> {
   await deleteLink(linkId);
   log.info({ linkId }, '[delete] Deleted from database');
 
-  // 4. Trigger qmd re-index
-  qmdIndexQueue.requestUpdate().catch(() => {});
+  // TODO: 未来可能会换成 mykb 调用
+  // qmdIndexQueue.requestUpdate().catch(() => {});
 
   return { linkId, url: link.url, relatedLinksUpdated, exportDeleted };
 }
@@ -558,8 +561,8 @@ export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> 
     }
   }
 
-  // Trigger one qmd index update at the end
-  qmdIndexQueue.requestUpdate().catch(() => {});
+  // TODO: 未来可能会换成 mykb 调用
+  // qmdIndexQueue.requestUpdate().catch(() => {});
 
   log.info({ total: results.length, errors: results.filter((r) => r.error).length }, '[refresh] Complete');
   return results;
