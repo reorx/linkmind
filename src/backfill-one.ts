@@ -3,7 +3,7 @@
  * Usage: npx tsx src/backfill-one.ts <linkId>
  */
 import 'dotenv/config';
-import { getLink, updateLink } from './db.js';
+import { getLink } from './db.js';
 import { registerTasks, spawnProcessLink } from './pipeline.js';
 import { initLogger } from './logger.js';
 
@@ -25,10 +25,7 @@ async function main() {
 
   console.log(`📦 Backfilling link #${linkId}: ${link.og_title || link.url}`);
 
-  // Reset status
-  await updateLink(linkId, { status: 'pending', error_message: undefined });
-
-  // Spawn task
+  // Spawn task (pipeline will reset status to pending)
   const { taskId } = await spawnProcessLink(link.user_id, link.url, linkId);
   console.log(`✅ Spawned task: ${taskId}`);
   console.log(`\n🔗 View result at: https://linkmind.reorx.com/link/${linkId}`);

@@ -8,7 +8,7 @@
  */
 import 'dotenv/config';
 import { Pool } from 'pg';
-import { getAllAnalyzedLinks, updateLink } from './db.js';
+import { getAllAnalyzedLinks } from './db.js';
 import { registerTasks, spawnProcessLink } from './pipeline.js';
 import { initLogger } from './logger.js';
 
@@ -105,10 +105,7 @@ async function main() {
     for (const link of batch) {
       const title = link.og_title || link.url;
       try {
-        // Reset status to pending
-        await updateLink(link.id!, { status: 'pending', error_message: undefined });
-
-        // Spawn the task
+        // Spawn the task (pipeline will reset status to pending)
         const { taskId } = await spawnProcessLink(link.user_id, link.url, link.id);
         tasks.push({ linkId: link.id!, title, taskId });
         console.log(`  ⏳ #${link.id} ${title.slice(0, 40)} → spawned`);
