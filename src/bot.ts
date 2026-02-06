@@ -7,13 +7,48 @@ import { Bot, InputFile } from 'grammy';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import { existsSync } from 'fs';
-import { getLink, getLinkByUrl, findOrCreateUser, getInviteByCode, useInvite, getUserByTelegramId } from './db.js';
+import {
+  getLink,
+  getLinkByUrl,
+  findOrCreateUser,
+  getInviteByCode,
+  useInvite,
+  getUserByTelegramId,
+  getRelatedLinks,
+} from './db.js';
 import { spawnProcessLink } from './pipeline.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'bot' });
 
 const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
+
+interface RelatedLinkInfo {
+  linkId: number;
+  title: string;
+  url: string;
+}
+
+/**
+ * Fetch related links from link_relations table with their details.
+ */
+async function fetchRelatedLinksInfo(linkId: number): Promise<RelatedLinkInfo[]> {
+  const relatedLinkData = await getRelatedLinks(linkId);
+  const results: RelatedLinkInfo[] = [];
+
+  for (const item of relatedLinkData) {
+    const relatedLink = await getLink(item.relatedLinkId);
+    if (relatedLink) {
+      results.push({
+        linkId: item.relatedLinkId,
+        title: relatedLink.og_title || relatedLink.url,
+        url: relatedLink.url,
+      });
+    }
+  }
+
+  return results;
+}
 
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
@@ -214,7 +249,7 @@ async function pollAndNotify(ctx: any, linkId: number, url: string, webBaseUrl: 
     if (link.status === 'analyzed') {
       const tags: string[] = safeParseJson(link.tags);
       const relatedNotes: any[] = safeParseJson(link.related_notes);
-      const relatedLinks: any[] = safeParseJson(link.related_links);
+      const relatedLinks = await fetchRelatedLinksInfo(linkId);
       const images: any[] = safeParseJson(link.images);
       const permanentLink = `${webBaseUrl}/link/${linkId}`;
 
@@ -292,7 +327,7 @@ async function handleUrl(ctx: any, url: string, webBaseUrl: string, userId: numb
     if (link.status === 'analyzed') {
       const tags: string[] = safeParseJson(link.tags);
       const relatedNotes: any[] = safeParseJson(link.related_notes);
-      const relatedLinks: any[] = safeParseJson(link.related_links);
+      const relatedLinks = await fetchRelatedLinksInfo(linkId);
       const images: any[] = safeParseJson(link.images);
       const permanentLink = `${webBaseUrl}/link/${linkId}`;
 
@@ -346,7 +381,7 @@ function formatResult(data: {
   insight: string;
   tags: string[];
   relatedNotes: any[];
-  relatedLinks: any[];
+  relatedLinks: RelatedLinkInfo[];
   permanentLink: string;
 }): string {
   let msg = `📄 <b>${escHtml(data.title)}</b>\n`;
