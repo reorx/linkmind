@@ -284,7 +284,7 @@
       <div class="section-title">相关链接</div>
       <% for (const l of relatedLinks) { %>
       <div class="related-item">
-        🔗 <a href="<%= l.url %>"><%= l.title || l.url || '' %></a><% if (l.score) { %><span class="related-score">[<%= l.score %>]</span><% } %>
+        🔗 <a href="<%= l.url %>"><%= l.title || l.url || '' %></a> (<a href="<%= l.sourceUrl %>" target="_blank">Source</a>)<% if (l.score) { %><span class="related-score">[<%= l.score %>]</span><% } %>
         <% if (l.tags && l.tags.length > 0) { %>
         <br><span class="related-tags"><%= l.tags.map(t => '#' + t).join(' ') %></span>
         <% } %>
