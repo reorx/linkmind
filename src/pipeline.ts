@@ -27,9 +27,7 @@ import { processTwitterImages } from './image-handler.js';
 import { generateSummary, generateInsight } from './agent.js';
 import { createEmbedding } from './llm.js';
 import { searchRelatedLinks, type RelatedLinkResult } from './search.js';
-import { exportLinkMarkdown, deleteLinkExport } from './export.js';
-// TODO: 未来可能会换成 mykb 调用
-// import { qmdIndexQueue } from './export.js';
+// File export disabled for cloud deployment; renderMarkdown kept in export.ts for future use
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'pipeline' });
@@ -247,16 +245,10 @@ async function insightStep(
 
 /**
  * Step 6: Export - export link to markdown file + trigger QMD re-index.
+ * Currently disabled for cloud deployment.
  */
-async function exportStep(linkId: number): Promise<void> {
-  const fullLink = await getLink(linkId);
-  if (!fullLink) throw new Error('Link not found for export');
-
-  const exportPath = exportLinkMarkdown(fullLink);
-  log.info({ linkId, path: exportPath }, '[export] OK');
-
-  // TODO: 未来可能会换成 mykb 调用
-  // qmdIndexQueue.requestUpdate().catch(() => {});
+async function exportStep(_linkId: number): Promise<void> {
+  // File export disabled; renderMarkdown kept in export.ts for future use
 }
 
 /* ── Absurd task registration ── */
@@ -479,15 +471,12 @@ export interface DeleteResult {
   linkId: number;
   url: string;
   relatedLinksUpdated: number;
-  exportDeleted: boolean;
 }
 
 /**
  * Delete a link and clean up all references:
  * 1. Remove from other links' related_links
- * 2. Delete exported markdown file
- * 3. Delete from database
- * 4. Trigger qmd re-index
+ * 2. Delete from database
  */
 export async function deleteLinkFull(linkId: number): Promise<DeleteResult> {
   const link = await getLink(linkId);
@@ -501,20 +490,11 @@ export async function deleteLinkFull(linkId: number): Promise<DeleteResult> {
   const relatedLinksUpdated = await removeFromRelatedLinks(linkId);
   log.info({ linkId, relatedLinksUpdated }, '[delete] Cleaned up related_links references');
 
-  // 2. Delete exported markdown
-  let exportDeleted = false;
-  if (link.status === 'analyzed') {
-    exportDeleted = deleteLinkExport(link);
-  }
-
-  // 3. Delete from database
+  // 2. Delete from database
   await deleteLink(linkId);
   log.info({ linkId }, '[delete] Deleted from database');
 
-  // TODO: 未来可能会换成 mykb 调用
-  // qmdIndexQueue.requestUpdate().catch(() => {});
-
-  return { linkId, url: link.url, relatedLinksUpdated, exportDeleted };
+  return { linkId, url: link.url, relatedLinksUpdated };
 }
 
 /* ── Refresh related ── */
@@ -570,12 +550,6 @@ export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> 
       const relatedIds = relatedLinks.map((r) => r.id);
       await insightStep(id, link.url, link.og_title, link.summary, relatedIds);
 
-      // Re-export
-      const updatedLink = await getLink(id);
-      if (updatedLink) {
-        exportLinkMarkdown(updatedLink);
-      }
-
       log.info({ linkId: id, title, relatedCount: relatedLinks.length }, '[refresh] Done');
       results.push({ linkId: id, title, relatedLinks: relatedLinks.length });
     } catch (err) {
@@ -584,9 +558,6 @@ export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> 
       results.push({ linkId: id, title, relatedLinks: 0, error: errMsg });
     }
   }
-
-  // TODO: 未来可能会换成 mykb 调用
-  // qmdIndexQueue.requestUpdate().catch(() => {});
 
   log.info({ total: results.length, errors: results.filter((r) => r.error).length }, '[refresh] Complete');
   return results;
