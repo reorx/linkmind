@@ -26,6 +26,7 @@ import {
   updateProbeEventStatus,
   type LinkRecord,
 } from './db.js';
+import type { ScrapeData } from '@linkmind/core';
 import { scrapeUrl, isTwitterUrl } from './scraper.js';
 import { processTwitterImages } from './image-handler.js';
 import { generateSummary, generateInsight } from './agent.js';
@@ -60,17 +61,7 @@ function getAbsurd(): Absurd {
 
 /* ── Types ── */
 
-/** Data provided by a probe device after scraping a URL. Field names match DB columns. */
-export interface ScrapeData {
-  title?: string;
-  markdown: string;
-  og_title?: string;
-  og_description?: string;
-  og_image?: string;
-  og_site_name?: string;
-  og_type?: string;
-  raw_media?: Array<{ type: string; url: string }>;
-}
+export type { ScrapeData } from '@linkmind/core';
 
 interface ProcessLinkParams {
   userId: number;

@@ -1,0 +1,10 @@
+{
+  "name": "@linkmind/core",
+  "version": "0.1.0",
+  "description": "Shared types and utilities for LinkMind",
+  "type": "module",
+  "exports": {
+    ".": "./src/types.ts",
+    "./scraper-utils": "./src/scraper-utils.ts"
+  }
+}
