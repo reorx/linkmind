@@ -1,0 +1,67 @@
+<style>
+  .device-auth-container {
+    max-width: 400px;
+    margin: 80px auto;
+    text-align: center;
+  }
+  .device-auth-container h1 {
+    font-size: 1.5rem;
+    margin-bottom: 12px;
+  }
+  .device-auth-container p {
+    color: var(--dim);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    margin-bottom: 20px;
+  }
+  .device-auth-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px;
+  }
+  .device-code {
+    font-size: 2rem;
+    font-weight: 700;
+    font-family: monospace;
+    letter-spacing: 0.15em;
+    margin: 16px 0 24px;
+    color: var(--accent);
+  }
+  .authorize-btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 12px 32px;
+    border-radius: 8px;
+    font-size: 1rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .authorize-btn:hover {
+    opacity: 0.9;
+  }
+  .success-msg {
+    color: var(--green);
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+</style>
+
+<div class="device-auth-container">
+  <div class="device-auth-box">
+    <% if (typeof success !== 'undefined' && success) { %>
+      <div class="success-msg">Device authorized successfully!</div>
+      <p style="margin-top: 16px;">You can close this page and return to the probe device.</p>
+    <% } else { %>
+      <h1>Authorize linkmind-probe?</h1>
+      <p>A device is requesting access to your LinkMind account.</p>
+      <div class="device-code"><%= user_code %></div>
+      <form method="POST" action="/auth/device/authorize">
+        <input type="hidden" name="user_code" value="<%= user_code %>">
+        <button type="submit" class="authorize-btn">Authorize</button>
+      </form>
+    <% } %>
+  </div>
+</div>
