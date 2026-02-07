@@ -10,6 +10,7 @@
  *   - Utilities: deleteLinkFull, refreshRelated
  */
 
+import crypto from 'crypto';
 import { Absurd } from 'absurd-sdk';
 import {
   insertLink,
@@ -20,6 +21,9 @@ import {
   deleteLink,
   removeFromRelatedLinks,
   saveRelatedLinks,
+  createProbeEvent,
+  getProbeEventById,
+  updateProbeEventStatus,
   type LinkRecord,
 } from './db.js';
 import { scrapeUrl, isTwitterUrl } from './scraper.js';
@@ -56,10 +60,23 @@ function getAbsurd(): Absurd {
 
 /* ── Types ── */
 
+/** Data provided by a probe device after scraping a URL. Field names match DB columns. */
+export interface ScrapeData {
+  title?: string;
+  markdown: string;
+  og_title?: string;
+  og_description?: string;
+  og_image?: string;
+  og_site_name?: string;
+  og_type?: string;
+  raw_media?: Array<{ type: string; url: string }>;
+}
+
 interface ProcessLinkParams {
   userId: number;
   url: string;
   linkId?: number; // set if re-processing existing link
+  scrapeData?: ScrapeData; // provided by probe device
 }
 
 interface RefreshRelatedParams {
@@ -277,10 +294,72 @@ export function registerTasks(): void {
     log.info({ linkId, url, taskId: ctx.taskID }, '[process-link] Starting');
 
     try {
-      // Step 1: Scrape
-      const scrapeData = await ctx.step('scrape', async () => {
-        return await scrapeStep(linkId!, url);
-      });
+      // Step 1: Scrape (or use probe data, or defer to probe)
+      let scrapeData: ScrapeStepResult;
+
+      if (params.scrapeData) {
+        // Probe provided scrape data — populate link directly
+        scrapeData = await ctx.step('scrape', async () => {
+          const sd = params.scrapeData!;
+          await updateLink(linkId!, {
+            og_title: sd.og_title,
+            og_description: sd.og_description,
+            og_image: sd.og_image,
+            og_site_name: sd.og_site_name,
+            og_type: sd.og_type,
+            markdown: sd.markdown,
+            status: 'scraped',
+          });
+
+          log.info({ linkId, title: sd.og_title, chars: sd.markdown.length }, '[scrape] OK (from probe)');
+
+          // Process images if provided
+          let ocrTexts: string[] = [];
+          if (isTwitterUrl(url) && sd.raw_media?.length) {
+            try {
+              const images = await processTwitterImages(linkId!, sd.raw_media);
+              if (images.length > 0) {
+                await updateLink(linkId!, { images: JSON.stringify(images) });
+                ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
+              }
+            } catch (imgErr) {
+              log.warn(
+                { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
+                '[images] Failed (non-fatal)',
+              );
+            }
+          }
+
+          return {
+            title: sd.og_title,
+            ogDescription: sd.og_description,
+            siteName: sd.og_site_name,
+            markdownLength: sd.markdown.length,
+            ocrTexts,
+          } satisfies ScrapeStepResult;
+        });
+      } else if (isTwitterUrl(url)) {
+        // Twitter URL without probe data — create probe event and wait
+        const { pushEventToProbe } = await import('./web.js');
+        const eventId = crypto.randomBytes(8).toString('hex');
+        await createProbeEvent(eventId, userId, linkId!, url, 'twitter');
+        await updateLink(linkId!, { status: 'waiting_probe' });
+
+        pushEventToProbe(userId, 'scrape_request', {
+          event_id: eventId,
+          url,
+          url_type: 'twitter',
+          link_id: linkId,
+        });
+
+        log.info({ linkId, url, eventId }, '[process-link] Waiting for probe, returning early');
+        return { linkId, title: undefined, status: 'waiting_probe' };
+      } else {
+        // Normal scrape
+        scrapeData = await ctx.step('scrape', async () => {
+          return await scrapeStep(linkId!, url);
+        });
+      }
 
       // Step 2: Summarize
       const summaryData = await ctx.step('summarize', async () => {
@@ -383,11 +462,20 @@ export function registerTasks(): void {
  * Spawn a process-link task via Absurd.
  * Returns immediately — the worker will pick it up.
  */
-export async function spawnProcessLink(userId: number, url: string, linkId?: number): Promise<SpawnProcessResult> {
-  const result = await getAbsurd().spawn('process-link', { userId, url, linkId } satisfies ProcessLinkParams, {
-    maxAttempts: 3,
-    retryStrategy: { kind: 'exponential', baseSeconds: 10, factor: 2, maxSeconds: 300 },
-  });
+export async function spawnProcessLink(
+  userId: number,
+  url: string,
+  linkId?: number,
+  scrapeData?: ScrapeData,
+): Promise<SpawnProcessResult> {
+  const result = await getAbsurd().spawn(
+    'process-link',
+    { userId, url, linkId, scrapeData } satisfies ProcessLinkParams,
+    {
+      maxAttempts: 3,
+      retryStrategy: { kind: 'exponential', baseSeconds: 10, factor: 2, maxSeconds: 300 },
+    },
+  );
   log.info({ taskId: result.taskID, url, userId }, 'Spawned process-link task');
   return { taskId: result.taskID, linkId };
 }
@@ -561,4 +649,26 @@ export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> 
 
   log.info({ total: results.length, errors: results.filter((r) => r.error).length }, '[refresh] Complete');
   return results;
+}
+
+/* ── Probe result handler ── */
+
+/**
+ * Handle a scrape result received from a probe device.
+ * Looks up the probe event, finds the associated link, and resumes processing.
+ */
+export async function handleProbeResult(eventId: string, scrapeData: ScrapeData): Promise<void> {
+  const event = await getProbeEventById(eventId);
+  if (!event) throw new Error(`Probe event ${eventId} not found`);
+
+  const linkId = event.link_id;
+  if (!linkId) throw new Error(`Probe event ${eventId} has no link_id`);
+
+  const link = await getLink(linkId);
+  if (!link) throw new Error(`Link ${linkId} not found for probe event ${eventId}`);
+
+  log.info({ eventId, linkId, url: event.url }, '[probe-result] Resuming pipeline with probe data');
+
+  // Spawn a new process-link task with the probe scrape data
+  await spawnProcessLink(link.user_id, event.url, linkId, scrapeData);
 }

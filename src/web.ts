@@ -3,6 +3,7 @@
  * Auth via JWT cookie (issued by Telegram bot /login command).
  */
 
+import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -12,8 +13,27 @@ import ejs from 'ejs';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
-import { getLink, getRecentLinks, getPaginatedLinks, getFailedLinks, getUserById, getRelatedLinks } from './db.js';
-import { retryLink, deleteLinkFull, spawnProcessLink } from './pipeline.js';
+import {
+  getLink,
+  getRecentLinks,
+  getPaginatedLinks,
+  getFailedLinks,
+  getUserById,
+  getRelatedLinks,
+  getProbeDeviceByToken,
+  updateProbeDeviceLastSeen,
+  createProbeDevice,
+  getProbeDevicesByUserId,
+  createDeviceAuthRequest,
+  getDeviceAuthRequest,
+  getDeviceAuthRequestByUserCode,
+  authorizeDeviceAuthRequest,
+  createProbeEvent,
+  getProbeEventById,
+  updateProbeEventStatus,
+  getPendingProbeEvents,
+} from './db.js';
+import { retryLink, deleteLinkFull, spawnProcessLink, handleProbeResult } from './pipeline.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
@@ -131,12 +151,58 @@ function sendUnauth(req: Request, res: Response): void {
   }
 }
 
+/* ── Probe auth middleware ── */
+
+interface ProbeAuthRequest extends Request {
+  userId?: number;
+  deviceId?: string;
+}
+
+function requireProbeAuth(req: ProbeAuthRequest, res: Response, next: NextFunction): void {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    return;
+  }
+
+  const token = authHeader.slice(7);
+  getProbeDeviceByToken(token).then((device) => {
+    if (!device) {
+      res.status(401).json({ error: 'Invalid access token' });
+      return;
+    }
+    req.userId = device.user_id;
+    req.deviceId = device.id;
+    updateProbeDeviceLastSeen(device.id);
+    next();
+  });
+}
+
+/* ── SSE connection tracking ── */
+
+const probeConnections = new Map<number, Set<Response>>();
+
+/**
+ * Push a probe event to connected probe devices for a user via SSE.
+ * Uses proper SSE format: event: <type>\ndata: <json>\n\n
+ */
+export function pushEventToProbe(userId: number, eventType: string, eventData: any): void {
+  const connections = probeConnections.get(userId);
+  if (!connections || connections.size === 0) return;
+
+  const msg = `event: ${eventType}\ndata: ${JSON.stringify(eventData)}\n\n`;
+  for (const res of connections) {
+    res.write(msg);
+  }
+}
+
 /* ── server ── */
 
 export function startWebServer(port: number): void {
   const app = express();
 
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
   app.use(cookieParser());
 
   // Serve images from data/images directory
@@ -201,6 +267,67 @@ export function startWebServer(port: number): void {
   app.get('/logout', (req, res) => {
     res.clearCookie(COOKIE_NAME);
     res.redirect('/login');
+  });
+
+  // ── Probe device auth (public) ──
+
+  // POST /api/auth/device — initiate device auth flow
+  app.post('/api/auth/device', async (req, res) => {
+    const deviceCode = crypto.randomBytes(16).toString('hex');
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I,O,0,1 to avoid confusion
+    let userCode = '';
+    for (let i = 0; i < 8; i++) {
+      if (i === 4) userCode += '-';
+      userCode += chars[crypto.randomInt(chars.length)];
+    }
+
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await createDeviceAuthRequest(deviceCode, userCode, expiresAt);
+
+    const webBaseUrl = process.env.WEB_BASE_URL || `http://localhost:${port}`;
+    res.json({
+      device_code: deviceCode,
+      user_code: userCode,
+      verification_uri: `${webBaseUrl}/auth/device`,
+      expires_in: 900,
+      interval: 5,
+    });
+  });
+
+  // POST /api/auth/token — poll for device auth completion
+  app.post('/api/auth/token', async (req, res) => {
+    const { device_code } = req.body;
+    if (!device_code) {
+      res.status(400).json({ error: 'missing_device_code' });
+      return;
+    }
+
+    const authReq = await getDeviceAuthRequest(device_code);
+    if (!authReq) {
+      res.status(400).json({ error: 'invalid_device_code' });
+      return;
+    }
+
+    if (new Date(authReq.expires_at) < new Date()) {
+      res.status(400).json({ error: 'expired_token' });
+      return;
+    }
+
+    if (authReq.status === 'pending') {
+      res.status(400).json({ error: 'authorization_pending' });
+      return;
+    }
+
+    if (authReq.status === 'authorized' && authReq.user_id) {
+      const deviceId = crypto.randomBytes(8).toString('hex');
+      const accessToken = 'lmp_' + crypto.randomBytes(16).toString('hex');
+      await createProbeDevice(deviceId, authReq.user_id, accessToken);
+      log.info({ userId: authReq.user_id, deviceId }, 'Probe device registered');
+      res.json({ access_token: accessToken, user_id: authReq.user_id });
+      return;
+    }
+
+    res.status(400).json({ error: 'unknown_status' });
   });
 
   // ── Protected API routes ──
@@ -325,6 +452,132 @@ export function startWebServer(port: number): void {
     res.json({ taskId, linkId: id, status: 'queued', message: 'Link queued for retry' });
   });
 
+  // ── Probe API routes (probe device auth) ──
+
+  // GET /api/probe/subscribe_events — SSE endpoint for probe devices
+  app.get('/api/probe/subscribe_events', requireProbeAuth, (req: ProbeAuthRequest, res) => {
+    const userId = req.userId!;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.write('\n');
+
+    // Register this connection
+    if (!probeConnections.has(userId)) {
+      probeConnections.set(userId, new Set());
+    }
+    probeConnections.get(userId)!.add(res);
+
+    // Send pending events immediately
+    getPendingProbeEvents(userId).then(async (events) => {
+      for (const event of events) {
+        const eventData = {
+          event_id: event.id,
+          url: event.url,
+          url_type: event.url_type,
+          link_id: event.link_id,
+          created_at: event.created_at,
+        };
+        res.write(`event: scrape_request\ndata: ${JSON.stringify(eventData)}\n\n`);
+        await updateProbeEventStatus(event.id, 'sent');
+      }
+    });
+
+    // Ping every 30s to keep connection alive
+    const pingInterval = setInterval(() => {
+      res.write('event: ping\ndata: {}\n\n');
+    }, 30000);
+
+    // Cleanup on close
+    req.on('close', () => {
+      clearInterval(pingInterval);
+      const conns = probeConnections.get(userId);
+      if (conns) {
+        conns.delete(res);
+        if (conns.size === 0) probeConnections.delete(userId);
+      }
+    });
+  });
+
+  // POST /api/probe/receive_result — receive scrape result from probe
+  app.post('/api/probe/receive_result', requireProbeAuth, async (req: ProbeAuthRequest, res) => {
+    const { event_id, success, data, error } = req.body;
+    if (!event_id) {
+      res.status(400).json({ error: 'Missing event_id' });
+      return;
+    }
+
+    const event = await getProbeEventById(event_id);
+    if (!event || event.user_id !== req.userId) {
+      res.status(404).json({ error: 'Event not found' });
+      return;
+    }
+
+    if (success) {
+      await updateProbeEventStatus(event_id, 'completed', data);
+      await handleProbeResult(event_id, data);
+    } else {
+      await updateProbeEventStatus(event_id, 'error', undefined, error || 'Unknown error');
+    }
+
+    res.json({ ok: true });
+  });
+
+  // GET /api/probe/status — get probe devices and pending events
+  app.get('/api/probe/status', requireAuth, async (req: AuthRequest, res) => {
+    const devices = await getProbeDevicesByUserId(req.userId!);
+    const pendingEvents = await getPendingProbeEvents(req.userId!);
+    res.json({
+      devices,
+      pending_events_count: pendingEvents.length,
+    });
+  });
+
+  // ── Device auth page routes (cookie auth) ──
+
+  // GET /auth/device — show device authorization page
+  app.get('/auth/device', requireAuth, async (req: AuthRequest, res) => {
+    const userCode = (req.query.code as string) || '';
+    const html = await renderPage('device-auth', {
+      pageTitle: 'Authorize Device — LinkMind',
+      user_code: userCode,
+    });
+    res.type('html').send(html);
+  });
+
+  // POST /auth/device/authorize — authorize a device
+  app.post('/auth/device/authorize', requireAuth, async (req: AuthRequest, res) => {
+    const userCode = req.body.user_code as string;
+    if (!userCode) {
+      res.status(400).send('Missing user_code');
+      return;
+    }
+
+    const authReq = await getDeviceAuthRequestByUserCode(userCode);
+    if (!authReq) {
+      res.status(404).send('Invalid or expired code');
+      return;
+    }
+
+    if (new Date(authReq.expires_at) < new Date()) {
+      res.status(400).send('Code expired');
+      return;
+    }
+
+    await authorizeDeviceAuthRequest(authReq.device_code, req.userId!);
+    log.info({ userId: req.userId, deviceCode: authReq.device_code }, 'Device auth request authorized');
+
+    const html = await renderPage('device-auth', {
+      pageTitle: 'Device Authorized — LinkMind',
+      user_code: userCode,
+      success: true,
+    });
+    res.type('html').send(html);
+  });
+
   // ── Protected page routes ──
 
   // GET / — homepage with timeline
@@ -377,7 +630,14 @@ export function startWebServer(port: number): void {
     }));
     // Get related links from link_relations table
     const relatedLinkData = await getRelatedLinks(link.id!);
-    const relatedLinks: { linkId: number; title: string; url: string; sourceUrl: string; tags: string[]; score: number }[] = [];
+    const relatedLinks: {
+      linkId: number;
+      title: string;
+      url: string;
+      sourceUrl: string;
+      tags: string[];
+      score: number;
+    }[] = [];
     for (const item of relatedLinkData) {
       const relatedLink = await getLink(item.relatedLinkId);
       if (relatedLink) {
