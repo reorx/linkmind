@@ -66,13 +66,9 @@ vi.mock('./search.js', () => ({
   searchRelatedLinks: vi.fn().mockResolvedValue([]),
 }));
 
-// ── Mock export (avoid filesystem side effects) ──
+// ── Mock export (file export disabled, renderMarkdown kept for future use) ──
 vi.mock('./export.js', () => ({
-  exportLinkMarkdown: vi.fn().mockReturnValue('/tmp/mock-export.md'),
-  deleteLinkExport: vi.fn().mockReturnValue(true),
-  qmdIndexQueue: {
-    requestUpdate: vi.fn().mockResolvedValue(undefined),
-  },
+  renderMarkdown: vi.fn().mockReturnValue('# Mock Markdown'),
 }));
 
 import { initLogger } from './logger.js';
