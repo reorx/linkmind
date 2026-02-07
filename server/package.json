@@ -1,13 +1,15 @@
 {
-  "name": "linkmind",
+  "name": "@linkmind/server",
   "version": "0.1.0",
   "description": "Link collector + deep analysis agent via Telegram",
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@linkmind/core": "workspace:*",
     "absurd-sdk": "^0.0.7",
     "cookie-parser": "^1.4.7",
     "defuddle": "^0.6.6",
@@ -35,10 +37,5 @@
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ]
   }
 }

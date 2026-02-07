@@ -2,7 +2,13 @@
 
 ## 概述
 
-linkmind-probe 是一个运行在用户本地的 Python daemon，负责执行需要本地环境的抓取任务（Twitter via bird、网页 via Playwright）。它通过 SSE (Server-Sent Events) 与云端 SaaS 保持连接，接收抓取事件，完成后将结果上传。
+linkmind-probe 是一个运行在用户本地的 Node.js daemon（TypeScript），负责执行需要本地环境的抓取任务（Twitter via bird CLI、网页 via Playwright + Defuddle）。它通过 SSE (Server-Sent Events) 与云端 SaaS 保持连接，接收抓取事件，完成后将结果上传。
+
+**为什么选 Node.js 而非 Python：**
+- 直接集成 `defuddle`（npm 包），未来可集成 `vibe-reader`
+- 与 linkmind server 共享 scraper 代码（复用 `scraper.ts` 逻辑）
+- 同一 runtime/toolchain（TypeScript, pnpm, tsx）
+- 单一 `node_modules` 管理 Playwright，无需独立 Python venv
 
 ## 架构图
 
@@ -34,8 +40,8 @@ linkmind-probe 是一个运行在用户本地的 Python daemon，负责执行需
 │              ┌──────────────┼──────────────┐                    │
 │              ▼                             ▼                    │
 │     ┌─────────────────┐          ┌─────────────────┐            │
-│     │  bird CLI       │          │  vibe-reader    │            │
-│     │ (Twitter/X)     │          │  (Playwright)   │            │
+│     │  bird CLI       │          │  Playwright     │            │
+│     │ (Twitter/X)     │          │  + Defuddle     │            │
 │     │ Chrome cookies  │          │  local browser  │            │
 │     └─────────────────┘          └─────────────────┘            │
 └─────────────────────────────────────────────────────────────────┘
@@ -43,41 +49,63 @@ linkmind-probe 是一个运行在用户本地的 Python daemon，负责执行需
 
 ## 组件设计
 
-### 1. linkmind-probe (Python)
+### 1. linkmind-probe (Node.js/TypeScript)
 
 **目录结构：**
 ```
 linkmind-probe/
-├── pyproject.toml
+├── package.json
+├── tsconfig.json
+├── .nvmrc                         # v22
 ├── src/
-│   └── linkmind_probe/
-│       ├── __init__.py
-│       ├── cli.py          # CLI 入口 (login, run, status)
-│       ├── daemon.py       # SSE 连接 + 事件处理
-│       ├── auth.py         # 认证逻辑
-│       ├── scrapers/
-│       │   ├── twitter.py  # bird CLI wrapper
-│       │   └── web.py      # vibe-reader/Playwright
-│       └── config.py       # 配置管理
+│   ├── cli.ts                     # CLI entry point (commander)
+│   ├── daemon.ts                  # SSE client + event dispatch + daemon lifecycle
+│   ├── auth.ts                    # Device authorization flow
+│   ├── config.ts                  # Config + PID management (~/.linkmind-probe/)
+│   ├── scraper.ts                 # Unified scraper (Twitter via bird, web via Playwright+Defuddle)
+│   └── types.ts                   # Shared types (ScrapeData, SSE events)
 └── tests/
 ```
 
+**依赖：**
+```json
+{
+  "dependencies": {
+    "commander": "^13.0.0",
+    "defuddle": "^0.6.6",
+    "playwright": "^1.50.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
+```
+
+关键决策：
+- **commander** — 轻量 CLI 框架，TypeScript 支持好
+- **Native `fetch`** — Node 22 已有稳定 fetch，无需额外依赖
+- **无 SSE 库** — 手动解析 fetch ReadableStream（简单，无额外依赖）
+- **playwright + defuddle** — 与 linkmind server 一致
+- **无 eventsource polyfill** — 原生 EventSource API 不支持自定义 headers (Authorization)，所以用 fetch + 手动 SSE 解析
+
 **CLI 命令：**
 ```bash
-linkmind-probe login             # 浏览器认证
-linkmind-probe run               # 后台启动 daemon
-linkmind-probe run --foreground  # 前台运行（调试用）
-linkmind-probe stop              # 停止 daemon
-linkmind-probe status            # 检查运行状态
-linkmind-probe logout            # 清除 token
+linkmind-probe login --api-base <url>   # Device auth flow
+linkmind-probe run                       # Start daemon (background)
+linkmind-probe run --foreground          # Run in foreground
+linkmind-probe stop                      # Stop daemon (SIGTERM)
+linkmind-probe status                    # Check if running
+linkmind-probe logout                    # Clear token
 ```
 
 **状态目录：** `~/.linkmind-probe/`
 ```
 ~/.linkmind-probe/
-├── config.json      # 配置 + token
-├── linkmind-probe.pid   # PID 文件
-└── linkmind-probe.log   # 日志文件
+├── config.json      # { api_base, access_token, user_id }
+├── probe.pid        # PID 文件
+└── probe.log        # 日志文件 (daemon mode)
 ```
 
 **配置文件：** `~/.linkmind-probe/config.json`
@@ -316,74 +344,48 @@ async function processUrl(
 ): Promise<...>
 ```
 
-## Daemon 实现 (参考 vibefs)
+## Daemon 实现
 
-采用与 vibefs 相同的 daemon 模式：
+**SSE 客户端 (native fetch)：**
+```typescript
+async function connectSSE(config: Config): Promise<void> {
+  const res = await fetch(`${config.api_base}/api/probe/subscribe_events`, {
+    headers: {
+      'Authorization': `Bearer ${config.access_token}`,
+      'Accept': 'text/event-stream',
+    },
+  });
 
-**启动流程 (`run` 命令)：**
-```python
-def run_daemon():
-    """Fork a background process running 'linkmind-probe run --foreground'."""
-    log_file = open(LOG_PATH, 'a')
-    proc = subprocess.Popen(
-        [sys.executable, '-m', 'linkmind_probe', 'run', '--foreground'],
-        stdout=log_file,
-        stderr=log_file,
-        start_new_session=True,  # 脱离终端
-    )
-    log_file.close()
-    time.sleep(0.3)
-    if proc.poll() is not None:
-        click.echo('Daemon exited immediately, check ~/.linkmind-probe/linkmind-probe.log')
-    else:
-        click.echo(f'Daemon started (pid {proc.pid})')
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE: split on \n\n, extract event: and data: fields
+    // Dispatch: ping → reset heartbeat timer, scrape_request → spawn scrape task
+  }
+}
 ```
 
-**前台模式 (`run --foreground`)：**
-```python
-def run_foreground():
-    """Run in foreground, write PID, connect SSE, process events."""
-    write_pid()
-    atexit.register(remove_pid)
-    
-    click.echo(f'linkmind-probe running (pid {os.getpid()})')
-    
-    # SSE 连接 + 事件处理主循环
-    asyncio.run(event_loop())
-```
+**重连逻辑：**
+- Exponential backoff: 5s → 10s → 20s → 40s → 60s (max)
+- 成功连接后重置 backoff
+- Heartbeat timeout: 60s 无事件 → 重连
+
+**Daemon lifecycle：**
+- `runForeground(config)`: write PID, register SIGTERM/SIGINT handlers, run SSE loop
+- `runDaemon(config)`: spawn `node --import tsx src/cli.ts run --foreground` as detached child, redirect stdout/stderr to log file
 
 **PID 管理：**
-```python
-PID_PATH = '~/.linkmind-probe/linkmind-probe.pid'
-
-def read_pid() -> int | None:
-    try:
-        return int(open(PID_PATH).read().strip())
-    except:
-        return None
-
-def is_running() -> bool:
-    pid = read_pid()
-    if pid is None:
-        return False
-    try:
-        os.kill(pid, 0)  # 检查进程是否存在
-        return True
-    except ProcessLookupError:
-        remove_pid()
-        return False
-
-def stop_daemon() -> bool:
-    pid = read_pid()
-    if pid is None:
-        return False
-    try:
-        os.kill(pid, signal.SIGTERM)
-        return True
-    except ProcessLookupError:
-        remove_pid()
-        return False
-```
+- `loadConfig()` / `saveConfig(config)` — 读写 `config.json`
+- `writePid()` / `removePid()` / `readPid()` — PID 文件管理
+- `isRunning()` — 通过 `process.kill(pid, 0)` 检查进程是否存活
+- `stopDaemon()` — 发送 SIGTERM
 
 **与 vibefs 的区别：**
 - vibefs 有 auto-cleanup（所有授权过期后自动退出）
@@ -394,48 +396,46 @@ def stop_daemon() -> bool:
 
 | 组件 | 选择 | 理由 |
 |------|------|------|
-| CLI 框架 | `click` | 与 vibefs 一致，成熟稳定 |
-| HTTP 客户端 | `httpx` | 异步友好，SSE 支持 |
-| SSE 客户端 | `httpx-sse` | 轻量，与 httpx 配合 |
-| Playwright | `vibe-reader` 库 | 已有封装，复用 |
-| Twitter | `bird` CLI subprocess | 成熟方案 |
-| Daemon 化 | subprocess.Popen | vibefs 模式，跨平台 |
+| CLI 框架 | `commander` | 轻量，零依赖，TypeScript 支持好 |
+| HTTP 客户端 | Native `fetch` | Node 22 内置稳定 fetch，无需额外依赖 |
+| SSE 客户端 | 手动解析 fetch ReadableStream | 简单，无需额外依赖；原生 EventSource 不支持自定义 headers |
+| Web 抓取 | `playwright` + `defuddle` | 与 linkmind server 一致，可复用 scraper 代码 |
+| Twitter | `bird` CLI subprocess | 成熟方案（与 Python 版相同） |
+| Daemon 化 | `child_process.spawn` (detached) | Node.js 原生，跨平台 |
+| 包管理 | `pnpm` + `package.json` | 与 linkmind server 一致 |
 
 ## 开发计划
 
-### Phase 1: 基础框架
-- [ ] Python 项目结构 + CLI 骨架 (click)
-- [ ] Daemon 模式 (run/stop/status, PID 管理)
-- [ ] Device auth flow (API + 前端页面)
-- [ ] 配置文件管理 (~/.linkmind-probe/)
+### Step 1: 项目初始化 + Config + CLI 骨架
+- [ ] pnpm init, tsconfig, .nvmrc
+- [ ] 实现 `config.ts` (PID 管理, config 读写)
+- [ ] 实现 `cli.ts` 所有命令 (commander, stubs for auth/daemon)
+- [ ] 验证 `linkmind-probe status` 可用
 
-### Phase 2: 通信层
-- [ ] SSE server 端 (Node.js/Express)
-- [ ] SSE client 端 (Python)
-- [ ] 心跳 + 重连逻辑
+### Step 2: Auth Flow
+- [ ] 实现 `auth.ts` (device auth with native fetch)
+- [ ] 接入 `linkmind-probe login`
+- [ ] 对接 linkmind server 测试
 
-### Phase 3: 抓取功能
-- [ ] Twitter scraper (bird wrapper)
-- [ ] Web scraper (vibe-reader)
-- [ ] 结果上传
+### Step 3: Scraper
+- [ ] 从 server 的 `scraper.ts` 复制并适配 `scrapeTwitter()`
+- [ ] 从 server 的 `scraper.ts` 复制并适配 `scrapeUrl()` + `htmlToSimpleMarkdown()`
+- [ ] 统一为 `scraper.ts`，返回 `ScrapeData`
 
-### Phase 4: Pipeline 集成
-- [ ] probe_events 表 + 队列逻辑
-- [ ] Pipeline 支持 scrapeData 参数
-- [ ] receive_result 触发 Pipeline 重跑
-- [ ] link.status = 'waiting_probe' 状态
+### Step 4: Daemon + SSE
+- [ ] 实现 SSE parser (native fetch + ReadableStream)
+- [ ] 实现事件循环 + 重连逻辑
+- [ ] 实现结果上传
+- [ ] 接入 daemon 模式 (foreground + background)
+- [ ] 端到端测试：发 Twitter URL → probe 收到事件 → 抓取 → 上传结果 → pipeline 继续
 
-### Phase 5: 用户体验
-- [ ] Probe 状态页面 (web)
-- [ ] 连接状态通知 (Telegram)
-- [ ] 错误重试机制
+**注意：** Server 端代码（web.ts, pipeline.ts, db.ts）已实现所有所需端点和 DB 表，无需修改。Node.js probe 是 Python probe 的 drop-in replacement，API 合约相同。
 
 ## 待讨论
 
 1. **Probe 多设备** — 一个用户可以有多个 Probe 吗？如果是，事件发给哪个？
 2. **任务队列** — Probe 离线时的事件如何处理？保留多久？
 3. **安全** — access_token 是否需要定期刷新？
-4. **vibe-reader** — 是否需要 fork 或直接依赖？是 Python 还是 Node？
 
 ---
 

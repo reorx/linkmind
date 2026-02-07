@@ -1,119 +1,98 @@
 /**
- * Web scraper: Playwright + defuddle for content extraction.
- * Twitter/X URLs are handled via the `bird` CLI tool.
+ * Unified scraper: Twitter via bird CLI, web via Playwright + Defuddle.
+ * Returns ScrapeData matching the server's interface.
  */
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import playwright from 'playwright';
 import { Defuddle } from 'defuddle/node';
-import { isTwitterUrl, htmlToSimpleMarkdown } from '@linkmind/core/scraper-utils';
+import type { ScrapeData } from '@linkmind/core';
+import { htmlToSimpleMarkdown } from '@linkmind/core/scraper-utils';
 
 const execFileAsync = promisify(execFile);
 
-export interface ScrapeResult {
-  url: string;
-  og: {
-    title?: string;
-    description?: string;
-    image?: string;
-    siteName?: string;
-    type?: string;
-  };
-  title?: string;
-  author?: string;
-  published?: string;
-  markdown: string;
-  rawHtml?: string;
-  rawMedia?: Array<{ type: string; url: string }>; // Twitter media for image processing
-}
-
-export { isTwitterUrl } from '@linkmind/core/scraper-utils';
-
 /**
- * Scrape a Twitter/X tweet using the `bird` CLI.
+ * Scrape a Twitter/X tweet using the bird CLI.
  */
-async function scrapeTwitter(url: string): Promise<ScrapeResult> {
-  // Read the tweet
+export async function scrapeTwitter(url: string): Promise<ScrapeData> {
   const { stdout } = await execFileAsync('bird', ['read', '--json', '--cookie-source', 'chrome', url], {
-    timeout: 30000,
+    timeout: 60000,
   });
 
   const tweet = JSON.parse(stdout);
+  return formatTweet(tweet);
+}
 
-  const author = tweet.author?.name
-    ? `${tweet.author.name} (@${tweet.author.username})`
-    : tweet.author?.username || 'Unknown';
+function formatTweet(tweet: any): ScrapeData {
+  const author = tweet.author || {};
+  const authorName = author.name || '';
+  const authorUsername = author.username || '';
+  const text = tweet.text || '';
+  const media: Array<{ type: string; url: string }> = tweet.media || [];
+  const quoted = tweet.quotedTweet;
 
-  // Build markdown content
+  // Build markdown (matches server's scraper.ts format)
   const parts: string[] = [];
-  parts.push(tweet.text || '');
+  parts.push(text);
 
-  // Include quoted tweet if present
-  if (tweet.quotedTweet) {
-    const qt = tweet.quotedTweet;
-    const qtAuthor = qt.author?.name ? `${qt.author.name} (@${qt.author.username})` : qt.author?.username || 'Unknown';
+  if (quoted) {
+    const qtAuthor = quoted.author || {};
+    const qtName = qtAuthor.name || '';
+    const qtUsername = qtAuthor.username || '';
+    const qtAuthorStr = qtName ? `${qtName} (@${qtUsername})` : qtUsername || 'Unknown';
+
     parts.push('');
-    parts.push(`> **${qtAuthor}:**`);
-    for (const line of (qt.text || '').split('\n')) {
+    parts.push(`> **${qtAuthorStr}:**`);
+    for (const line of (quoted.text || '').split('\n')) {
       parts.push(`> ${line}`);
     }
   }
 
-  // Include media descriptions
-  if (tweet.media?.length) {
+  if (media.length) {
     parts.push('');
-    for (const m of tweet.media) {
+    for (const m of media) {
       if (m.type === 'photo') {
         parts.push(`![](${m.url})`);
       } else if (m.type === 'video') {
-        parts.push(`🎥 Video: ${m.url || '(embedded)'}`);
+        parts.push(`video: ${m.url || '(embedded)'}`);
       }
     }
   }
 
-  // Stats line
+  const likeCount = tweet.likeCount ?? 0;
+  const retweetCount = tweet.retweetCount ?? 0;
+  const replyCount = tweet.replyCount ?? 0;
   parts.push('');
-  parts.push(`---\n❤️ ${tweet.likeCount ?? 0} · 🔁 ${tweet.retweetCount ?? 0} · 💬 ${tweet.replyCount ?? 0}`);
+  parts.push(`---\n${likeCount} likes \u00b7 ${retweetCount} retweets \u00b7 ${replyCount} replies`);
 
   const markdown = parts.join('\n');
 
-  // Parse date
-  const published = tweet.createdAt || undefined;
+  // Title
+  const firstLine = text.split('\n')[0].slice(0, 80);
+  const ellipsis = text.split('\n')[0].length >= 80 ? '\u2026' : '';
+  const title = `${authorName || authorUsername || 'Tweet'}: ${firstLine}${ellipsis}`;
 
-  // Title: author + first line of text (truncated)
-  const firstLine = (tweet.text || '').split('\n')[0].slice(0, 80);
-  const title = `${tweet.author?.name || tweet.author?.username || 'Tweet'}: ${firstLine}${firstLine.length >= 80 ? '…' : ''}`;
-
-  // OG image: use first media image or author avatar
-  const ogImage = tweet.media?.find((m: any) => m.type === 'photo')?.url;
+  // OG image: first photo
+  const ogImage = media.find((m) => m.type === 'photo')?.url || '';
 
   return {
-    url,
-    og: {
-      title,
-      description: (tweet.text || '').slice(0, 200),
-      image: ogImage,
-      siteName: 'X (Twitter)',
-      type: 'article',
-    },
     title,
-    author,
-    published,
     markdown,
-    rawMedia: tweet.media || undefined,
+    og_title: title,
+    og_description: text.slice(0, 200),
+    og_image: ogImage,
+    og_site_name: 'X (Twitter)',
+    og_type: 'article',
+    raw_media: media.length > 0 ? media : undefined,
   };
 }
 
 /**
- * Scrape a URL: fetch with Playwright, extract OG metadata + article content as Markdown.
- * Twitter/X URLs are handled via the `bird` CLI.
+ * Scrape a web URL using Playwright + Defuddle.
+ * Copied and adapted from server/src/scraper.ts.
  */
-export async function scrapeUrl(url: string): Promise<ScrapeResult> {
-  // Route Twitter/X URLs to bird CLI
-  if (isTwitterUrl(url)) {
-    return scrapeTwitter(url);
-  }
+export async function scrapeWeb(url: string): Promise<ScrapeData> {
   const browser = await playwright.chromium.launch({
     headless: true,
     args: ['--disable-blink-features=AutomationControlled'],
@@ -130,10 +109,8 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
 
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2000); // Wait for JS rendering
+    await page.waitForTimeout(2000);
 
-    // Extract OpenGraph metadata + preprocessed HTML in a single evaluate call
-    // Using a string template to avoid tsx __name decoration issues with page.evaluate
     const { og, html } = (await page.evaluate(`(() => {
       const getMeta = (prop) => {
         const el = document.querySelector('meta[property="' + prop + '"]') ||
@@ -149,7 +126,6 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
         type: getMeta("og:type"),
       };
 
-      // Preprocess DOM
       document.querySelectorAll("script, style, link[rel='stylesheet']").forEach(el => el.remove());
       document.querySelectorAll("nav, footer, aside").forEach(el => el.remove());
       document.querySelectorAll("header").forEach(el => {
@@ -160,7 +136,10 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
       document.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(el => el.remove());
 
       return { og, html: document.documentElement.outerHTML };
-    })()`)) as { og: ScrapeResult['og']; html: string };
+    })()`)) as {
+      og: { title?: string; description?: string; image?: string; siteName?: string; type?: string };
+      html: string;
+    };
 
     await browser.close();
 
@@ -173,16 +152,16 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
     const result = await Defuddle(html, url);
     console.log = _origLog;
 
-    // Convert HTML content to simple Markdown
     const markdown = htmlToSimpleMarkdown(result.content);
 
     return {
-      url,
-      og,
       title: result.title || og.title,
-      author: result.author || undefined,
-      published: result.published || undefined,
       markdown,
+      og_title: og.title,
+      og_description: og.description,
+      og_image: og.image,
+      og_site_name: og.siteName,
+      og_type: og.type,
     };
   } catch (err) {
     await browser.close();

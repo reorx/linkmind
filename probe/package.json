@@ -1,0 +1,21 @@
+{
+  "name": "@linkmind/probe",
+  "version": "0.1.0",
+  "description": "Local scraping daemon for LinkMind",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@linkmind/core": "workspace:*",
+    "commander": "^13.0.0",
+    "defuddle": "^0.6.6",
+    "playwright": "^1.50.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

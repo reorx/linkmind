@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "pnpm -r run --if-present test",
+    "typecheck": "pnpm -r --filter './server' --filter './probe' run typecheck"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
+  }
+}

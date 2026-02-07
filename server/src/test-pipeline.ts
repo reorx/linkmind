@@ -46,6 +46,7 @@ vi.mock('./scraper.js', () => ({
 
 // ── Mock LLM ──
 vi.mock('./llm.js', () => ({
+  createEmbedding: vi.fn().mockResolvedValue(new Array(1536).fill(0)),
   getLLM: vi.fn().mockReturnValue({
     name: 'mock-llm',
     chat: vi.fn().mockImplementation(async (messages: any[], opts?: any) => {
@@ -96,6 +97,19 @@ async function createTestDatabase(): Promise<void> {
     await adminPool.end();
   }
 
+  // Enable pgvector as superuser (requires elevated privileges)
+  const adminTestPool = new pg.Pool({
+    host: 'localhost',
+    port: 5432,
+    user: 'reorx',
+    database: 'linkmind_test',
+  });
+  try {
+    await adminTestPool.query('CREATE EXTENSION IF NOT EXISTS vector');
+  } finally {
+    await adminTestPool.end();
+  }
+
   // Now connect to the test database and set up schema
   const testPool = new pg.Pool({ connectionString: TEST_DB_URL });
   try {
@@ -138,13 +152,55 @@ async function createTestDatabase(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         user_id INTEGER NOT NULL REFERENCES users(id),
-        images TEXT
+        images TEXT,
+        summary_embedding vector(1536)
       );
 
       CREATE INDEX IF NOT EXISTS idx_links_url ON links(url);
       CREATE INDEX IF NOT EXISTS idx_links_user_id ON links(user_id);
       CREATE INDEX IF NOT EXISTS idx_links_status ON links(status);
       CREATE INDEX IF NOT EXISTS idx_links_created_at ON links(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS link_relations (
+        id SERIAL PRIMARY KEY,
+        link_id INTEGER NOT NULL REFERENCES links(id) ON DELETE CASCADE,
+        related_link_id INTEGER NOT NULL REFERENCES links(id) ON DELETE CASCADE,
+        score REAL NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(link_id, related_link_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS probe_devices (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        access_token TEXT UNIQUE NOT NULL,
+        name TEXT,
+        last_seen_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS probe_events (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        link_id INTEGER REFERENCES links(id),
+        url TEXT NOT NULL,
+        url_type TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        result JSONB,
+        error TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        sent_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ
+      );
+
+      CREATE TABLE IF NOT EXISTS device_auth_requests (
+        device_code TEXT PRIMARY KEY,
+        user_code TEXT NOT NULL,
+        user_id INTEGER REFERENCES users(id),
+        status TEXT DEFAULT 'pending',
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
     `);
 
     // Create Absurd schema, functions, and queue
