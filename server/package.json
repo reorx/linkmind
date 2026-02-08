@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@linkmind/core": "workspace:*",
+    "@types/multer": "^2.0.0",
     "absurd-sdk": "^0.0.7",
     "cookie-parser": "^1.4.7",
     "defuddle": "^0.6.6",
@@ -19,6 +20,7 @@
     "grammy": "^1.35.0",
     "jsonwebtoken": "^9.0.3",
     "kysely": "^0.28.11",
+    "multer": "^2.0.2",
     "openai": "^4.80.0",
     "pg": "^8.18.0",
     "pino": "^10.3.0",

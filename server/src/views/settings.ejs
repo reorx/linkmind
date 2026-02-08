@@ -1,0 +1,135 @@
+<style>
+  .settings-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .settings-section h2 {
+    font-size: 1.1rem;
+    margin-bottom: 12px;
+  }
+  .settings-section p {
+    color: var(--dim);
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+  }
+  .btn {
+    display: inline-block;
+    padding: 8px 20px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover {
+    opacity: 0.9;
+    color: #fff;
+  }
+  .file-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .file-input-wrapper input[type="file"] {
+    font-size: 0.9rem;
+  }
+  #import-result {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    display: none;
+  }
+  #import-result.success {
+    background: var(--badge-scraped-bg);
+    color: var(--badge-scraped-text);
+    display: block;
+  }
+  #import-result.error {
+    background: var(--error-bg);
+    color: var(--error-text);
+    display: block;
+  }
+</style>
+
+<h1 style="font-size:1.3rem;margin-bottom:24px;">Settings</h1>
+
+<div class="settings-section">
+  <h2>Export Links</h2>
+  <p>Download all your links as a CSV file.</p>
+  <a href="/api/settings/export" class="btn btn-primary">Export All Links (CSV)</a>
+</div>
+
+<div class="settings-section">
+  <h2>Import Links</h2>
+  <p>Upload a CSV file to import links. Format: <code>url,title,created_at</code>. Existing URLs will be skipped.</p>
+  <form id="import-form" enctype="multipart/form-data">
+    <div class="file-input-wrapper">
+      <input type="file" name="file" accept=".csv,text/csv" id="import-file" />
+      <button type="submit" class="btn">Import Links from CSV</button>
+    </div>
+  </form>
+  <div id="import-result"></div>
+</div>
+
+<script>
+document.getElementById('import-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const fileInput = document.getElementById('import-file');
+  const resultDiv = document.getElementById('import-result');
+
+  if (!fileInput.files || !fileInput.files[0]) {
+    resultDiv.className = 'error';
+    resultDiv.textContent = 'Please select a CSV file.';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  resultDiv.className = '';
+  resultDiv.style.display = 'block';
+  resultDiv.textContent = 'Importing...';
+
+  try {
+    const resp = await fetch('/api/settings/import', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      resultDiv.className = 'error';
+      resultDiv.textContent = data.error || 'Import failed';
+      return;
+    }
+
+    let msg = `Imported: ${data.imported}, Skipped: ${data.skipped}`;
+    if (data.errors && data.errors.length > 0) {
+      msg += `\nErrors:\n${data.errors.join('\n')}`;
+    }
+    resultDiv.className = data.errors && data.errors.length > 0 ? 'error' : 'success';
+    resultDiv.style.whiteSpace = 'pre-wrap';
+    resultDiv.textContent = msg;
+  } catch (err) {
+    resultDiv.className = 'error';
+    resultDiv.textContent = 'Request failed: ' + err.message;
+  }
+});
+</script>

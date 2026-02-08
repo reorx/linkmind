@@ -332,6 +332,29 @@ export async function insertLink(userId: number, url: string): Promise<number> {
   return result.id;
 }
 
+export async function insertLinkWithCreatedAt(
+  userId: number,
+  url: string,
+  createdAt: string,
+): Promise<number> {
+  const result = await getDb()
+    .insertInto('links')
+    .values({ user_id: userId, url, status: 'pending', created_at: sql`${createdAt}::timestamptz` })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  return result.id;
+}
+
+export async function getAllUserLinks(userId: number): Promise<LinkRecord[]> {
+  const rows = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .where('user_id', '=', userId)
+    .orderBy('created_at', 'desc')
+    .execute();
+  return rows.map(toLinkRecord);
+}
+
 export async function updateLink(id: number, data: Partial<LinkRecord>): Promise<void> {
   const { id: _id, user_id: _uid, created_at: _ca, ...rest } = data as any;
   await getDb()

@@ -12,6 +12,7 @@ import path from 'path';
 import ejs from 'ejs';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
+import multer from 'multer';
 import jwt from 'jsonwebtoken';
 import {
   getLink,
@@ -20,6 +21,9 @@ import {
   getFailedLinks,
   getUserById,
   getRelatedLinks,
+  getAllUserLinks,
+  getLinkByUrl,
+  insertLinkWithCreatedAt,
   getProbeDeviceByToken,
   updateProbeDeviceLastSeen,
   createProbeDevice,
@@ -49,6 +53,46 @@ function getJwtSecret(): string {
 }
 
 /* ── helpers ── */
+
+function csvEscape(s: string): string {
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        fields.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  fields.push(current);
+  return fields;
+}
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -702,6 +746,117 @@ export function startWebServer(port: number): void {
   //     res.status(500).send('Internal error');
   //   }
   // });
+
+  // ── Settings page ──
+
+  app.get('/settings', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const html = await renderPage('settings', {
+        pageTitle: 'Settings — LinkMind',
+        user: req.user,
+      });
+      res.type('html').send(html);
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : String(err) }, 'Settings render failed');
+      res.status(500).send('Internal error');
+    }
+  });
+
+  // ── Export links as CSV ──
+
+  app.get('/api/settings/export', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const links = await getAllUserLinks(req.userId!);
+      const today = new Date().toISOString().slice(0, 10);
+      const filename = `linkmind-export-${today}.csv`;
+
+      // Build CSV
+      const csvRows = ['url,title,created_at'];
+      for (const link of links) {
+        const url = csvEscape(link.url);
+        const title = csvEscape(link.og_title || '');
+        const createdAt = link.created_at || '';
+        csvRows.push(`${url},${title},${createdAt}`);
+      }
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(csvRows.join('\n'));
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : String(err) }, 'Export failed');
+      res.status(500).json({ error: 'Export failed' });
+    }
+  });
+
+  // ── Import links from CSV ──
+
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+  app.post('/api/settings/import', requireAuth, upload.single('file'), async (req: AuthRequest, res) => {
+    try {
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file) {
+        res.status(400).json({ error: 'No file uploaded' });
+        return;
+      }
+
+      const content = file.buffer.toString('utf-8');
+      const lines = content.split(/\r?\n/).filter((l) => l.trim());
+
+      if (lines.length < 1) {
+        res.status(400).json({ error: 'Empty CSV file' });
+        return;
+      }
+
+      // Skip header if present
+      const firstLine = lines[0].toLowerCase();
+      const startIdx = firstLine.startsWith('url') ? 1 : 0;
+
+      let imported = 0;
+      let skipped = 0;
+      const errors: string[] = [];
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const fields = parseCsvLine(lines[i]);
+        if (fields.length < 1 || !fields[0].trim()) {
+          errors.push(`Line ${i + 1}: missing URL`);
+          continue;
+        }
+
+        const url = fields[0].trim();
+        const createdAt = fields.length >= 3 && fields[2].trim() ? fields[2].trim() : new Date().toISOString();
+
+        // Validate URL
+        try {
+          new URL(url);
+        } catch {
+          errors.push(`Line ${i + 1}: invalid URL "${url}"`);
+          continue;
+        }
+
+        // Skip existing
+        const existing = await getLinkByUrl(req.userId!, url);
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        // Insert and spawn pipeline
+        try {
+          const linkId = await insertLinkWithCreatedAt(req.userId!, url, createdAt);
+          await spawnProcessLink(req.userId!, url, linkId);
+          imported++;
+        } catch (err) {
+          errors.push(`Line ${i + 1}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      res.json({ imported, skipped, errors });
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : String(err) }, 'Import failed');
+      res.status(500).json({ error: 'Import failed' });
+    }
+  });
 
   app.listen(port, () => {
     log.info({ port }, `Server listening on http://localhost:${port}`);
