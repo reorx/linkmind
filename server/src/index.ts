@@ -1,6 +1,9 @@
 import dotenv from 'dotenv';
 dotenv.config({ override: true });
 
+import { initSentry, Sentry } from './sentry.js';
+initSentry();
+
 import { initLogger, logger } from './logger.js';
 import { getLLM } from './llm.js';
 import { startBot } from './bot.js';
@@ -39,5 +42,14 @@ startWorker().catch((err) => {
 
 // Start enqueue cron (processes imported links)
 startEnqueueCron();
+
+process.on('unhandledRejection', (reason) => {
+  Sentry.captureException(reason);
+});
+
+process.on('uncaughtException', (err) => {
+  Sentry.captureException(err);
+  Sentry.close(2000).then(() => process.exit(1));
+});
 
 logger.info('🧠 LinkMind ready!');

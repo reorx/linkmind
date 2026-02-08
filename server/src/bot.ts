@@ -17,6 +17,7 @@ import {
   getRelatedLinks,
 } from './db.js';
 import { spawnProcessLink } from './pipeline.js';
+import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'bot' });
@@ -229,6 +230,10 @@ export function startBot(token: string, webBaseUrl: string): Bot {
 
   bot.catch((err) => {
     log.error({ err: err.message }, 'Bot error');
+    Sentry.captureException(err.error, {
+      tags: { source: 'telegram-bot' },
+      extra: { ctx: err.ctx?.update },
+    });
   });
 
   bot.start();

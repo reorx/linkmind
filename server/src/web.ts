@@ -38,6 +38,7 @@ import {
   getPendingProbeEvents,
 } from './db.js';
 import { retryLink, deleteLinkFull, spawnProcessLink, handleProbeResult } from './pipeline.js';
+import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'web' });
@@ -856,6 +857,8 @@ export function startWebServer(port: number): void {
       res.status(500).json({ error: 'Import failed' });
     }
   });
+
+  Sentry.setupExpressErrorHandler(app);
 
   app.listen(port, () => {
     log.info({ port }, `Server listening on http://localhost:${port}`);

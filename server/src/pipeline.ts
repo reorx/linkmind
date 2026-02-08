@@ -33,6 +33,7 @@ import { generateSummary, generateInsight } from './agent.js';
 import { createEmbedding } from './llm.js';
 import { searchRelatedLinks, type RelatedLinkResult } from './search.js';
 // File export disabled for cloud deployment; renderMarkdown kept in export.ts for future use
+import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'pipeline' });
@@ -127,6 +128,11 @@ async function scrapeStep(linkId: number, url: string): Promise<ScrapeStepResult
         { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
         '[images] Failed (non-fatal)',
       );
+      Sentry.captureException(imgErr, {
+        level: 'warning',
+        tags: { step: 'scrape', sub: 'twitter-images' },
+        extra: { linkId },
+      });
     }
   }
 
@@ -318,6 +324,11 @@ export function registerTasks(): void {
                 { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
                 '[images] Failed (non-fatal)',
               );
+              Sentry.captureException(imgErr, {
+                level: 'warning',
+                tags: { step: 'scrape', sub: 'twitter-images' },
+                extra: { linkId },
+              });
             }
           }
 
@@ -394,6 +405,16 @@ export function registerTasks(): void {
       ];
       const isPermanent = permanentErrors.some((pe) => errorMessage.includes(pe));
 
+      // Only report to Sentry on final attempt or permanent error
+      const task = (ctx as any).task;
+      const isLastAttempt = task && task.attempt >= (task.max_attempts || 3);
+      if (isPermanent || isLastAttempt) {
+        Sentry.captureException(err, {
+          tags: { task: 'process-link' },
+          extra: { linkId, url, userId, attempt: task?.attempt, maxAttempts: task?.max_attempts },
+        });
+      }
+
       if (isPermanent) {
         log.info({ linkId, url }, '[process-link] Permanent error, not retrying');
         // Return without throwing to prevent Absurd from retrying
@@ -416,34 +437,46 @@ export function registerTasks(): void {
     const title = link.og_title || link.url;
     log.info({ linkId, title }, '[refresh-related] Starting');
 
-    // Re-embed if needed
-    let embedding: number[];
-    if (link.summary_embedding) {
-      embedding = JSON.parse(link.summary_embedding);
-    } else {
-      embedding = await ctx.step('embed', async () => {
-        return await embedStep(linkId);
+    try {
+      // Re-embed if needed
+      let embedding: number[];
+      if (link.summary_embedding) {
+        embedding = JSON.parse(link.summary_embedding);
+      } else {
+        embedding = await ctx.step('embed', async () => {
+          return await embedStep(linkId);
+        });
+      }
+
+      // Search related
+      const relatedLinks = await ctx.step('related', async () => {
+        return await relatedStep(linkId, link.user_id, embedding);
       });
+
+      // Regenerate insight
+      await ctx.step('insight', async () => {
+        const relatedIds = relatedLinks.map((r) => r.id);
+        await insightStep(linkId, link.url, link.og_title, link.summary!, relatedIds);
+      });
+
+      // Re-export
+      await ctx.step('export', async () => {
+        await exportStep(linkId);
+      });
+
+      log.info({ linkId, title, relatedCount: relatedLinks.length }, '[refresh-related] Complete');
+      return { linkId, relatedLinks: relatedLinks.length };
+    } catch (err) {
+      const task = (ctx as any).task;
+      const isLastAttempt = task && task.attempt >= (task.max_attempts || 2);
+      if (isLastAttempt) {
+        Sentry.captureException(err, {
+          tags: { task: 'refresh-related' },
+          extra: { linkId, attempt: task?.attempt },
+        });
+      }
+      throw err;
     }
-
-    // Search related
-    const relatedLinks = await ctx.step('related', async () => {
-      return await relatedStep(linkId, link.user_id, embedding);
-    });
-
-    // Regenerate insight
-    await ctx.step('insight', async () => {
-      const relatedIds = relatedLinks.map((r) => r.id);
-      await insightStep(linkId, link.url, link.og_title, link.summary!, relatedIds);
-    });
-
-    // Re-export
-    await ctx.step('export', async () => {
-      await exportStep(linkId);
-    });
-
-    log.info({ linkId, title, relatedCount: relatedLinks.length }, '[refresh-related] Complete');
-    return { linkId, relatedLinks: relatedLinks.length };
   });
 }
 
@@ -495,6 +528,7 @@ export async function startWorker(): Promise<void> {
     pollInterval: 1,
     onError: (err) => {
       log.error({ err: err.message, stack: err.stack }, 'Worker task error');
+      Sentry.captureException(err, { tags: { source: 'absurd-worker' } });
     },
   });
 

@@ -6,6 +6,7 @@
 
 import { getEnqueuedLinks, updateLink } from './db.js';
 import { spawnProcessLink } from './pipeline.js';
+import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'enqueue-cron' });
@@ -42,6 +43,7 @@ export function startEnqueueCron(perUser?: number): void {
       }
     } catch (err) {
       log.error({ err: err instanceof Error ? err.message : String(err) }, 'Enqueue cron tick failed');
+      Sentry.captureException(err, { tags: { source: 'enqueue-cron' } });
     }
   }, INTERVAL_MS);
 }
