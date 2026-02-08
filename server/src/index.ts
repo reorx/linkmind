@@ -6,6 +6,7 @@ import { getLLM } from './llm.js';
 import { startBot } from './bot.js';
 import { startWebServer } from './web.js';
 import { startWorker } from './pipeline.js';
+import { startEnqueueCron } from './enqueue-cron.js';
 
 // Initialize logger after dotenv has loaded
 initLogger();
@@ -35,5 +36,8 @@ startBot(token, webBaseUrl);
 startWorker().catch((err) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Worker start failed');
 });
+
+// Start enqueue cron (processes imported links)
+startEnqueueCron();
 
 logger.info('🧠 LinkMind ready!');

@@ -841,10 +841,9 @@ export function startWebServer(port: number): void {
           continue;
         }
 
-        // Insert and spawn pipeline
+        // Insert as enqueued (cron job will pick them up)
         try {
-          const linkId = await insertLinkWithCreatedAt(req.userId!, url, createdAt);
-          await spawnProcessLink(req.userId!, url, linkId);
+          await insertLinkWithCreatedAt(req.userId!, url, createdAt, 'enqueued');
           imported++;
         } catch (err) {
           errors.push(`Line ${i + 1}: ${err instanceof Error ? err.message : String(err)}`);

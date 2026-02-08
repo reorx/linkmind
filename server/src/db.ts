@@ -38,7 +38,7 @@ export interface LinkRecord {
   tags?: string; // JSON string
   images?: string; // JSON string (ImageInfo[])
   summary_embedding?: string; // PostgreSQL vector string format: [0.1,0.2,...] - embedding of summary only
-  status: 'pending' | 'scraped' | 'analyzed' | 'error' | 'waiting_probe';
+  status: 'enqueued' | 'pending' | 'scraped' | 'analyzed' | 'error' | 'waiting_probe';
   error_message?: string;
   created_at?: string;
   updated_at?: string;
@@ -336,13 +336,38 @@ export async function insertLinkWithCreatedAt(
   userId: number,
   url: string,
   createdAt: string,
+  status: LinkRecord['status'] = 'pending',
 ): Promise<number> {
   const result = await getDb()
     .insertInto('links')
-    .values({ user_id: userId, url, status: 'pending', created_at: sql`${createdAt}::timestamptz` })
+    .values({ user_id: userId, url, status, created_at: sql`${createdAt}::timestamptz` })
     .returning('id')
     .executeTakeFirstOrThrow();
   return result.id;
+}
+
+/**
+ * Get enqueued links grouped by user, up to `perUser` per user, ordered by created_at asc.
+ */
+export async function getEnqueuedLinks(perUser: number): Promise<LinkRecord[]> {
+  const rows = await getDb()
+    .selectFrom('links')
+    .selectAll()
+    .where('status', '=', 'enqueued')
+    .orderBy('created_at', 'asc')
+    .execute();
+
+  // Group by user_id, take up to perUser per user
+  const byUser = new Map<number, typeof rows>();
+  for (const row of rows) {
+    const list = byUser.get(row.user_id) || [];
+    if (list.length < perUser) {
+      list.push(row);
+      byUser.set(row.user_id, list);
+    }
+  }
+
+  return Array.from(byUser.values()).flat().map(toLinkRecord);
 }
 
 export async function getAllUserLinks(userId: number): Promise<LinkRecord[]> {
