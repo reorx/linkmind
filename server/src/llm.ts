@@ -64,23 +64,48 @@ function createOpenAIProvider(): LLMProvider {
 
 /* ── Embedding ── */
 
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'text-embedding-v3';
+const EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER ?? 'dashscope';
+
+function getEmbeddingConfig(): { client: OpenAI; model: string; provider: string } {
+  switch (EMBEDDING_PROVIDER) {
+    case 'voyage': {
+      const apiKey = process.env.VOYAGE_API_KEY;
+      if (!apiKey) throw new Error('VOYAGE_API_KEY is required when EMBEDDING_PROVIDER=voyage');
+      return {
+        client: new OpenAI({
+          apiKey,
+          baseURL: 'https://api.voyageai.com/v1',
+        }),
+        model: process.env.EMBEDDING_MODEL ?? 'voyage-4',
+        provider: 'voyage',
+      };
+    }
+    case 'dashscope':
+    default:
+      return {
+        client: new OpenAI({
+          apiKey: process.env.OPENAI_API_KEY,
+          baseURL: process.env.OPENAI_BASE_URL,
+        }),
+        model: process.env.EMBEDDING_MODEL ?? 'text-embedding-v3',
+        provider: 'dashscope',
+      };
+  }
+}
 
 /**
- * Create an embedding vector for the given text using DashScope's text-embedding API.
- * Returns a 1024-dimensional vector (text-embedding-v3 default).
+ * Create an embedding vector for the given text.
+ * Provider is selected via EMBEDDING_PROVIDER env var ("dashscope" | "voyage").
+ * Returns a 1024-dimensional vector by default.
  */
 export async function createEmbedding(text: string): Promise<number[]> {
-  const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_BASE_URL,
-  });
+  const { client, model, provider } = getEmbeddingConfig();
 
   const startTime = Date.now();
-  log.debug({ model: EMBEDDING_MODEL, textLength: text.length }, '→ Embedding');
+  log.debug({ provider, model, textLength: text.length }, '→ Embedding');
 
   const response = await client.embeddings.create({
-    model: EMBEDDING_MODEL,
+    model,
     input: text,
   });
 
@@ -90,7 +115,7 @@ export async function createEmbedding(text: string): Promise<number[]> {
   }
 
   const elapsed = Date.now() - startTime;
-  log.info({ model: EMBEDDING_MODEL, elapsed: `${elapsed}ms`, dimensions: embedding.length }, '← Embedding done');
+  log.info({ provider, model, elapsed: `${elapsed}ms`, dimensions: embedding.length }, '← Embedding done');
 
   return embedding;
 }
