@@ -1,15 +1,17 @@
 /**
  * Integration test: hybrid search (BM25 + vector + RRF fusion).
  *
- * This test uses REAL embedding API calls (DashScope) and a real test database
- * with pgvector + ParadeDB pg_search extensions.
+ * Uses REAL embedding API calls (DashScope) and the actual database
+ * (local PostgreSQL or Neon) with pgvector + ParadeDB pg_search.
  *
- * Test samples are designed so that:
+ * Strategy: creates a dedicated test user, inserts test records,
+ * runs tests scoped to that user, then cleans up everything in afterAll.
+ *
+ * Test samples:
  *   - Sample A: contains exact keyword "量子计算", strong BM25 match
- *   - Sample B: semantically related (quantum physics concepts) but does NOT contain "量子计算",
- *               only vector search can find it
- *   - Sample C: contains "量子计算" AND is semantically rich, both BM25 and vector match
- *   - Sample D: completely unrelated topic (cooking recipe), should NOT appear
+ *   - Sample B: semantically related but does NOT contain "量子计算", vector-only
+ *   - Sample C: contains "量子计算" AND semantically rich, both BM25 and vector
+ *   - Sample D: completely unrelated (cooking), control sample
  *
  * Usage:
  *   npx vitest run src/test-search.ts
@@ -18,23 +20,17 @@
 import dotenv from 'dotenv';
 dotenv.config({ override: true });
 
-// Override DATABASE_URL to use test database BEFORE any imports that use it
-const PROD_DB_URL = process.env.DATABASE_URL!;
-const TEST_DB_URL = PROD_DB_URL.replace(/\/[^/]+$/, '/linkmind_search_test');
-process.env.DATABASE_URL = TEST_DB_URL;
-
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import pg from 'pg';
 
 import { initLogger } from './logger.js';
 initLogger();
 
-import { insertRecord, updateRecord } from './db.js';
+import { getDb, insertRecord, updateRecord } from './db.js';
 import { createEmbedding } from './llm.js';
 import { hybridSearch, searchRelatedRecords } from './search.js';
 
-const TEST_TELEGRAM_ID = 888888;
-const TEST_USER_ID_HOLDER = { userId: 0 };
+// Unique telegram ID for test user — high enough to avoid collision
+const TEST_TELEGRAM_ID = 777_777_777;
 
 /* ── Test Data ── */
 
@@ -46,10 +42,9 @@ interface TestSample {
   markdown: string;
 }
 
-// Sample A: BM25-strong — contains exact keyword "量子计算" prominently
 const SAMPLE_A: TestSample = {
   label: 'A (BM25-strong)',
-  url: 'https://example.com/quantum-computing-intro',
+  url: 'https://test.example.com/quantum-computing-intro',
   og_title: '量子计算入门：从量子比特到量子霸权',
   summary:
     '量子计算是利用量子力学原理进行信息处理的计算方式。量子比特（qubit）可以同时处于 0 和 1 的叠加态，' +
@@ -59,10 +54,9 @@ const SAMPLE_A: TestSample = {
     '量子比特是量子计算的基本单元，与经典比特不同，它可以同时表示多个状态。',
 };
 
-// Sample B: Vector-only — semantically about quantum physics but avoids the exact phrase "量子计算"
 const SAMPLE_B: TestSample = {
   label: 'B (vector-only)',
-  url: 'https://example.com/superconducting-qubits',
+  url: 'https://test.example.com/superconducting-qubits',
   og_title: 'Superconducting Circuits for Next-Gen Information Processing',
   summary:
     '超导电路作为下一代信息处理的核心技术，利用约瑟夫森结（Josephson junction）实现量子比特的精确操控。' +
@@ -74,10 +68,9 @@ const SAMPLE_B: TestSample = {
     'These systems exploit superposition and entanglement to solve problems intractable for classical processors.',
 };
 
-// Sample C: Both — contains keyword AND is semantically rich
 const SAMPLE_C: TestSample = {
   label: 'C (both)',
-  url: 'https://example.com/quantum-ml',
+  url: 'https://test.example.com/quantum-ml',
   og_title: '量子计算与机器学习的交叉前沿',
   summary:
     '量子计算与机器学习的结合正在开辟全新的研究方向。量子神经网络（QNN）利用参数化量子电路实现模型训练，' +
@@ -87,10 +80,9 @@ const SAMPLE_C: TestSample = {
     '正在被用于训练量子机器学习模型。这种交叉领域的研究可能带来计算效率的质的飞跃。',
 };
 
-// Sample D: Unrelated — cooking recipe, should NOT match quantum queries
 const SAMPLE_D: TestSample = {
   label: 'D (unrelated)',
-  url: 'https://example.com/sichuan-mapo-tofu',
+  url: 'https://test.example.com/sichuan-mapo-tofu',
   og_title: '正宗川味麻婆豆腐的做法',
   summary:
     '麻婆豆腐是川菜的代表菜品，以麻辣鲜香著称。关键在于选用嫩豆腐，配以郫县豆瓣酱、花椒粉和牛肉末，' +
@@ -102,101 +94,42 @@ const SAMPLE_D: TestSample = {
 
 const ALL_SAMPLES = [SAMPLE_A, SAMPLE_B, SAMPLE_C, SAMPLE_D];
 
-/* ── Database Setup ── */
+/* ── Setup & Cleanup (uses main database) ── */
 
-async function createTestDatabase(): Promise<void> {
-  const adminPool = new pg.Pool({ host: 'localhost', port: 5432, user: 'reorx', database: 'postgres' });
-  try {
-    await adminPool.query('DROP DATABASE IF EXISTS linkmind_search_test WITH (FORCE)');
-    await adminPool.query('CREATE DATABASE linkmind_search_test OWNER linkmind');
-  } finally {
-    await adminPool.end();
-  }
+async function createTestUser(): Promise<number> {
+  const db = getDb();
+  // Delete any leftover test user + records from a previous failed run
+  await cleanupTestData();
 
-  // Enable extensions as superuser
-  const adminTestPool = new pg.Pool({ host: 'localhost', port: 5432, user: 'reorx', database: 'linkmind_search_test' });
-  try {
-    await adminTestPool.query('CREATE EXTENSION IF NOT EXISTS vector');
-    await adminTestPool.query('CREATE EXTENSION IF NOT EXISTS pg_search');
-  } finally {
-    await adminTestPool.end();
-  }
+  const result = await db
+    .insertInto('users')
+    .values({
+      telegram_id: TEST_TELEGRAM_ID,
+      username: 'search_test_user',
+      display_name: 'Search Test User',
+      status: 'active',
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow();
 
-  // Create schema
-  const testPool = new pg.Pool({ connectionString: TEST_DB_URL });
-  try {
-    await testPool.query(`
-      CREATE TABLE IF NOT EXISTS invites (
-        id SERIAL PRIMARY KEY,
-        code TEXT NOT NULL UNIQUE,
-        max_uses INTEGER NOT NULL DEFAULT 1,
-        used_count INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      );
+  return result.id;
+}
 
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        telegram_id BIGINT NOT NULL UNIQUE,
-        username TEXT,
-        display_name TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        status TEXT NOT NULL DEFAULT 'pending',
-        invite_id INTEGER REFERENCES invites(id)
-      );
+async function cleanupTestData(): Promise<void> {
+  const db = getDb();
+  // Find the test user
+  const user = await db
+    .selectFrom('users')
+    .select('id')
+    .where('telegram_id', '=', TEST_TELEGRAM_ID)
+    .executeTakeFirst();
 
-      CREATE TABLE IF NOT EXISTS records (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        type TEXT NOT NULL DEFAULT 'link',
-        url TEXT,
-        content TEXT,
-        source_url TEXT,
-        user_note TEXT,
-        added_by_user BOOLEAN NOT NULL DEFAULT TRUE,
-        og_title TEXT,
-        og_description TEXT,
-        og_image TEXT,
-        og_site_name TEXT,
-        og_type TEXT,
-        markdown TEXT,
-        summary TEXT,
-        insight TEXT,
-        related_notes JSONB DEFAULT '[]',
-        related_links JSONB DEFAULT '[]',
-        tags JSONB DEFAULT '[]',
-        status TEXT NOT NULL DEFAULT 'pending',
-        error_message TEXT,
-        telegram_message_id BIGINT,
-        telegram_chat_id BIGINT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        images TEXT,
-        summary_embedding vector(1024)
-      );
+  if (!user) return;
 
-      CREATE TABLE IF NOT EXISTS record_relations (
-        id SERIAL PRIMARY KEY,
-        record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-        related_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-        score REAL NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(record_id, related_record_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS record_derivations (
-        source_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-        derived_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (source_record_id, derived_record_id)
-      );
-
-      -- Test user
-      INSERT INTO users (telegram_id, username, display_name, status)
-      VALUES (${TEST_TELEGRAM_ID}, 'search_test', 'Search Test User', 'active');
-    `);
-  } finally {
-    await testPool.end();
-  }
+  // Delete records owned by this user (cascades to record_relations, record_derivations)
+  await db.deleteFrom('records').where('user_id', '=', user.id).execute();
+  // Delete the test user
+  await db.deleteFrom('users').where('id', '=', user.id).execute();
 }
 
 async function insertSampleRecords(userId: number): Promise<Map<string, number>> {
@@ -227,28 +160,6 @@ async function insertSampleRecords(userId: number): Promise<Map<string, number>>
   return ids;
 }
 
-async function createBM25Index(): Promise<void> {
-  const adminPool = new pg.Pool({ host: 'localhost', port: 5432, user: 'reorx', database: 'linkmind_search_test' });
-  try {
-    await adminPool.query(`
-      CREATE INDEX IF NOT EXISTS idx_records_bm25_test
-      ON records USING bm25 (id, og_title, summary, markdown)
-      WITH (key_field = 'id')
-    `);
-  } finally {
-    await adminPool.end();
-  }
-}
-
-async function dropTestDatabase(): Promise<void> {
-  const adminPool = new pg.Pool({ host: 'localhost', port: 5432, user: 'reorx', database: 'postgres' });
-  try {
-    await adminPool.query('DROP DATABASE IF EXISTS linkmind_search_test WITH (FORCE)');
-  } finally {
-    await adminPool.end();
-  }
-}
-
 /* ── Tests ── */
 
 describe('Hybrid Search Integration', () => {
@@ -256,42 +167,25 @@ describe('Hybrid Search Integration', () => {
   let sampleIds: Map<string, number>;
 
   beforeAll(async () => {
-    console.log('\n📦 Creating test database...');
-    await createTestDatabase();
-
-    // Get test user ID
-    const pool = new pg.Pool({ connectionString: TEST_DB_URL });
-    try {
-      const res = await pool.query('SELECT id FROM users WHERE telegram_id = $1', [TEST_TELEGRAM_ID]);
-      userId = res.rows[0].id;
-    } finally {
-      await pool.end();
-    }
+    console.log('\n📦 Setting up test data...');
+    userId = await createTestUser();
+    console.log(`  Test user created (id=${userId})`);
 
     console.log('📝 Inserting samples with real embeddings...');
     sampleIds = await insertSampleRecords(userId);
 
-    console.log('🔧 Creating BM25 index...');
-    await createBM25Index();
-
     console.log('✅ Setup complete\n');
-  }, 120_000); // embedding API calls may take time
+  }, 120_000);
 
   afterAll(async () => {
-    const suppress = (err: Error) => {
-      if (err.message?.includes('terminating connection')) return;
-      throw err;
-    };
-    process.on('uncaughtException', suppress);
-    await dropTestDatabase();
-    await new Promise((r) => setTimeout(r, 100));
-    process.removeListener('uncaughtException', suppress);
+    console.log('\n🧹 Cleaning up test data...');
+    await cleanupTestData();
+    console.log('✅ Cleanup complete');
   });
 
   it('BM25 should find records with exact keyword "量子计算"', async () => {
     const results = await hybridSearch('量子计算', userId, 10);
 
-    const resultIds = results.map((r) => r.id);
     const idA = sampleIds.get('A (BM25-strong)')!;
     const idC = sampleIds.get('C (both)')!;
     const idD = sampleIds.get('D (unrelated)')!;
@@ -319,7 +213,6 @@ describe('Hybrid Search Integration', () => {
     const idB = sampleIds.get('B (vector-only)')!;
 
     // B is semantically about quantum computing but lacks the exact phrase
-    // → should be found by vector search
     const resultB = results.find((r) => r.id === idB);
     expect(resultB, 'Sample B should be in results via vector search').toBeDefined();
     expect(resultB!.vectorRank, 'Sample B should have vectorRank').not.toBeNull();
@@ -337,7 +230,7 @@ describe('Hybrid Search Integration', () => {
     expect(resultC!.bm25Rank, 'C should have bm25Rank').not.toBeNull();
     expect(resultC!.vectorRank, 'C should have vectorRank').not.toBeNull();
 
-    // A also has both (keyword in title/summary + semantic)
+    // A also has both
     const resultA = results.find((r) => r.id === idA);
     expect(resultA!.bm25Rank, 'A should have bm25Rank').not.toBeNull();
     expect(resultA!.vectorRank, 'A should have vectorRank').not.toBeNull();
@@ -359,7 +252,7 @@ describe('Hybrid Search Integration', () => {
     }
   }, 30_000);
 
-  it('Unrelated query should not return quantum computing records', async () => {
+  it('Unrelated query should not return quantum computing records via BM25', async () => {
     const results = await hybridSearch('麻婆豆腐做法', userId, 10);
 
     const idD = sampleIds.get('D (unrelated)')!;
@@ -377,13 +270,11 @@ describe('Hybrid Search Integration', () => {
   }, 30_000);
 
   it('searchRelatedRecords should find semantically similar records', async () => {
-    // Use sample A's embedding to find related records
     const idA = sampleIds.get('A (BM25-strong)')!;
     const embeddingA = await createEmbedding(SAMPLE_A.summary);
 
     const related = await searchRelatedRecords(embeddingA, userId, idA, 5);
 
-    // Should find B and C (quantum-related), but not D (cooking)
     const relatedIds = related.map((r) => r.id);
     const idB = sampleIds.get('B (vector-only)')!;
     const idC = sampleIds.get('C (both)')!;
@@ -392,7 +283,7 @@ describe('Hybrid Search Integration', () => {
     expect(relatedIds, 'Should include semantically related B').toContain(idB);
     expect(relatedIds, 'Should include semantically related C').toContain(idC);
 
-    // D should either not appear, or have a much lower score
+    // D should have a lower score than quantum-related records
     const scoreD = related.find((r) => r.id === idD)?.score ?? 0;
     const scoreB = related.find((r) => r.id === idB)?.score ?? 0;
     const scoreC = related.find((r) => r.id === idC)?.score ?? 0;

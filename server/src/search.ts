@@ -106,6 +106,16 @@ export async function hybridSearch(query: string, userId: number, limit: number 
 }
 
 /**
+ * Build a ParadeDB BM25 query string targeting text columns.
+ * Escapes special characters to prevent Tantivy query syntax injection.
+ */
+function buildBM25Query(query: string): string {
+  // Escape Tantivy special characters: + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+  const escaped = query.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, '\\$&');
+  return `og_title:${escaped} OR summary:${escaped} OR markdown:${escaped}`;
+}
+
+/**
  * BM25 full-text search using pg_search.
  */
 async function searchBM25(query: string, userId: number, limit: number): Promise<RankedResult[]> {
@@ -119,7 +129,7 @@ async function searchBM25(query: string, userId: number, limit: number): Promise
       .select(sql<number>`paradedb.score(id)`.as('score'))
       .where('user_id', '=', userId)
       .where('status', '=', 'analyzed')
-      .where(sql<boolean>`id @@@ paradedb.parse(${query})`)
+      .where(sql<boolean>`id @@@ paradedb.parse(${buildBM25Query(query)})`)
       .orderBy(sql`paradedb.score(id)`, 'desc')
       .limit(limit)
       .execute();
@@ -132,7 +142,7 @@ async function searchBM25(query: string, userId: number, limit: number): Promise
       rank: i + 1,
     }));
   } catch (err) {
-    log.warn({ err }, '[search] BM25 search failed, returning empty');
+    log.warn({ err: err instanceof Error ? err.message : String(err) }, '[search] BM25 search failed, returning empty');
     return [];
   }
 }
