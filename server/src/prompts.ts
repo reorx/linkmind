@@ -79,3 +79,73 @@ ${linksContext}
 
 请给出你的 insight：`;
 }
+
+/* ── Note Prompts ── */
+
+export const NOTE_SUMMARY_SYSTEM_PROMPT = `你是一个信息分析助手。用户会给你一段笔记内容，请你：
+1. 生成摘要，具体要求遵循用户消息 (summary)
+2. 提取 3-5 个关键标签 (tags)
+
+你必须以 JSON 格式输出数据：
+{"summary": "...", "tags": ["tag1", "tag2", ...]}
+`;
+
+export function buildNoteSummaryUserPrompt(content: string): string {
+  const truncated = content.slice(0, 12000);
+
+  return `
+请严格按照以下要求总结这段笔记的内容，生成摘要 (summary):
+1. 请使用中文进行总结，但对于一些关键信息和名词，请保留英文词并用括号放在中文后
+2. 使用 markdown 格式输出 3-5 个列表条目，每条字数不超过 100 字，总字数不超过 500 字。
+3. 可以向下展开子条目，但同样限制在 3-5 条。请仔细思考，输出有价值的内容
+4. 直接输出总结，不要做额外声明。
+
+<note_content>
+${truncated}
+</note_content>
+`;
+}
+
+export const NOTE_TAGS_SYSTEM_PROMPT = `你是一个信息分析助手。用户会给你一段短文本，请你提取 3-5 个关键标签 (tags)。
+
+你必须以 JSON 格式输出数据：
+{"tags": ["tag1", "tag2", ...]}
+`;
+
+export function buildNoteTagsUserPrompt(content: string): string {
+  return `请为以下内容提取 3-5 个关键标签：
+
+${content}
+`;
+}
+
+export const NOTE_INSIGHT_SYSTEM_PROMPT = `你是用户的个人信息分析师。
+
+你的任务是从**用户的角度**思考这段笔记的价值：
+- 这段笔记记录了什么？有什么值得关注的？
+- 和用户过去关注的内容有什么关联？
+- 对用户的工作或项目有什么启发？
+- 有没有值得进一步探索的方向？
+
+语气要像朋友之间的分享，简洁有力，不要模板化的套话。3-5 句话即可。`;
+
+export interface NoteInsightPromptInput {
+  content: string;
+  summary: string;
+  relatedLinks: RelatedLinkContext[];
+}
+
+export function buildNoteInsightUserPrompt(input: NoteInsightPromptInput): string {
+  const linksContext =
+    input.relatedLinks.length > 0
+      ? input.relatedLinks.map((l) => `- [${l.title}](${l.url}): ${l.summary.slice(0, 100)}`).join('\n')
+      : '（无相关历史内容）';
+
+  return `笔记内容: ${input.content.slice(0, 2000)}
+摘要: ${input.summary}
+
+用户之前收藏过的相关内容:
+${linksContext}
+
+请给出你的 insight：`;
+}

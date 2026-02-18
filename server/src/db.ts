@@ -3,6 +3,8 @@ import pg from 'pg';
 
 /* ── Types ── */
 
+export type RecordType = 'link' | 'note';
+
 export interface UserRecord {
   id?: number;
   telegram_id: number;
@@ -21,10 +23,15 @@ export interface InviteRecord {
   created_at?: string;
 }
 
-export interface LinkRecord {
+export interface RecordEntry {
   id?: number;
   user_id: number;
-  url: string;
+  type: RecordType;
+  url?: string;
+  content?: string;
+  source_url?: string;
+  user_note?: string;
+  added_by_user: boolean;
   og_title?: string;
   og_description?: string;
   og_image?: string;
@@ -40,6 +47,8 @@ export interface LinkRecord {
   summary_embedding?: string; // PostgreSQL vector string format: [0.1,0.2,...] - embedding of summary only
   status: 'enqueued' | 'pending' | 'scraped' | 'analyzed' | 'error' | 'waiting_probe';
   error_message?: string;
+  telegram_message_id?: number;
+  telegram_chat_id?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -96,10 +105,15 @@ interface UsersTable {
   created_at: Generated<Date>;
 }
 
-interface LinksTable {
+interface RecordsTable {
   id: Generated<number>;
   user_id: number;
-  url: string;
+  type: string;
+  url: string | null;
+  content: string | null;
+  source_url: string | null;
+  user_note: string | null;
+  added_by_user: boolean;
   og_title: string | null;
   og_description: string | null;
   og_image: string | null;
@@ -115,15 +129,23 @@ interface LinksTable {
   summary_embedding: string | null;
   status: string;
   error_message: string | null;
+  telegram_message_id: number | null;
+  telegram_chat_id: number | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
 
-interface LinkRelationsTable {
+interface RecordRelationsTable {
   id: Generated<number>;
-  link_id: number;
-  related_link_id: number;
+  record_id: number;
+  related_record_id: number;
   score: number;
+  created_at: Generated<Date>;
+}
+
+interface RecordDerivationsTable {
+  source_record_id: number;
+  derived_record_id: number;
   created_at: Generated<Date>;
 }
 
@@ -162,8 +184,9 @@ interface DeviceAuthRequestsTable {
 interface Database {
   invites: InvitesTable;
   users: UsersTable;
-  links: LinksTable;
-  link_relations: LinkRelationsTable;
+  records: RecordsTable;
+  record_relations: RecordRelationsTable;
+  record_derivations: RecordDerivationsTable;
   probe_devices: ProbeDevicesTable;
   probe_events: ProbeEventsTable;
   device_auth_requests: DeviceAuthRequestsTable;
@@ -192,10 +215,16 @@ export function getDb(): Kysely<Database> {
 
 /* ── Helpers ── */
 
-/** Convert a DB row to LinkRecord (dates to ISO strings, nulls to undefined) */
-function toLinkRecord(row: any): LinkRecord {
+/** Convert a DB row to RecordEntry (dates to ISO strings, nulls to undefined) */
+function toRecordEntry(row: any): RecordEntry {
   return {
     ...row,
+    type: row.type || 'link',
+    url: row.url ?? undefined,
+    content: row.content ?? undefined,
+    source_url: row.source_url ?? undefined,
+    user_note: row.user_note ?? undefined,
+    added_by_user: row.added_by_user ?? true,
     related_notes:
       row.related_notes != null
         ? typeof row.related_notes === 'string'
@@ -221,6 +250,8 @@ function toLinkRecord(row: any): LinkRecord {
     insight: row.insight ?? undefined,
     images: row.images ?? undefined,
     error_message: row.error_message ?? undefined,
+    telegram_message_id: row.telegram_message_id ?? undefined,
+    telegram_chat_id: row.telegram_chat_id ?? undefined,
   };
 }
 
@@ -321,37 +352,89 @@ export async function getUserByTelegramId(telegramId: number): Promise<UserRecor
   return row ? toUserRecord(row) : undefined;
 }
 
-/* ── Links CRUD ── */
+/* ── Records CRUD ── */
 
-export async function insertLink(userId: number, url: string): Promise<number> {
+export async function insertRecord(
+  userId: number,
+  data: {
+    type?: RecordType;
+    url?: string;
+    content?: string;
+    source_url?: string;
+    user_note?: string;
+    added_by_user?: boolean;
+    telegram_message_id?: number;
+    telegram_chat_id?: number;
+    status?: RecordEntry['status'];
+  },
+): Promise<number> {
   const result = await getDb()
-    .insertInto('links')
-    .values({ user_id: userId, url, status: 'pending' })
+    .insertInto('records')
+    .values({
+      user_id: userId,
+      type: data.type || 'link',
+      url: data.url || null,
+      content: data.content || null,
+      source_url: data.source_url || null,
+      user_note: data.user_note || null,
+      added_by_user: data.added_by_user ?? true,
+      telegram_message_id: data.telegram_message_id || null,
+      telegram_chat_id: data.telegram_chat_id || null,
+      status: data.status || 'pending',
+    })
     .returning('id')
     .executeTakeFirstOrThrow();
   return result.id;
 }
 
-export async function insertLinkWithCreatedAt(
+export async function insertRecordWithCreatedAt(
   userId: number,
   url: string,
   createdAt: string,
-  status: LinkRecord['status'] = 'pending',
+  status: RecordEntry['status'] = 'pending',
 ): Promise<number> {
   const result = await getDb()
-    .insertInto('links')
-    .values({ user_id: userId, url, status, created_at: sql`${createdAt}::timestamptz` })
+    .insertInto('records')
+    .values({
+      user_id: userId,
+      type: 'link',
+      url,
+      added_by_user: true,
+      status,
+      created_at: sql`${createdAt}::timestamptz`,
+    })
     .returning('id')
     .executeTakeFirstOrThrow();
   return result.id;
 }
 
 /**
- * Get enqueued links grouped by user, up to `perUser` per user, ordered by created_at asc.
+ * Insert a note record (convenience function).
  */
-export async function getEnqueuedLinks(perUser: number): Promise<LinkRecord[]> {
+export async function insertNote(
+  userId: number,
+  content: string,
+  opts?: {
+    sourceUrl?: string;
+    telegramMessageId?: number;
+    telegramChatId?: number;
+  },
+): Promise<number> {
+  return insertRecord(userId, {
+    type: 'note',
+    content,
+    source_url: opts?.sourceUrl,
+    telegram_message_id: opts?.telegramMessageId,
+    telegram_chat_id: opts?.telegramChatId,
+  });
+}
+
+/**
+ * Get enqueued records grouped by user, up to `perUser` per user, ordered by created_at asc.
+ */
+export async function getEnqueuedRecords(perUser: number): Promise<RecordEntry[]> {
   const rows = await getDb()
-    .selectFrom('links')
+    .selectFrom('records')
     .selectAll()
     .where('status', '=', 'enqueued')
     .orderBy('created_at', 'asc')
@@ -367,65 +450,65 @@ export async function getEnqueuedLinks(perUser: number): Promise<LinkRecord[]> {
     }
   }
 
-  return Array.from(byUser.values()).flat().map(toLinkRecord);
+  return Array.from(byUser.values()).flat().map(toRecordEntry);
 }
 
-export async function getAllUserLinks(userId: number): Promise<LinkRecord[]> {
-  const rows = await getDb()
-    .selectFrom('links')
-    .selectAll()
-    .where('user_id', '=', userId)
-    .orderBy('created_at', 'desc')
-    .execute();
-  return rows.map(toLinkRecord);
+export async function getAllUserRecords(userId: number, type?: RecordType): Promise<RecordEntry[]> {
+  let query = getDb().selectFrom('records').selectAll().where('user_id', '=', userId);
+  if (type) {
+    query = query.where('type', '=', type);
+  }
+  const rows = await query.orderBy('created_at', 'desc').execute();
+  return rows.map(toRecordEntry);
 }
 
-export async function updateLink(id: number, data: Partial<LinkRecord>): Promise<void> {
+export async function updateRecord(id: number, data: Partial<RecordEntry>): Promise<void> {
   const { id: _id, user_id: _uid, created_at: _ca, ...rest } = data as any;
   await getDb()
-    .updateTable('links')
+    .updateTable('records')
     .set({ ...rest, updated_at: sql`NOW()` })
     .where('id', '=', id)
     .execute();
 }
 
-export async function getLink(id: number): Promise<LinkRecord | undefined> {
-  const row = await getDb().selectFrom('links').selectAll().where('id', '=', id).executeTakeFirst();
-  return row ? toLinkRecord(row) : undefined;
+export async function getRecord(id: number): Promise<RecordEntry | undefined> {
+  const row = await getDb().selectFrom('records').selectAll().where('id', '=', id).executeTakeFirst();
+  return row ? toRecordEntry(row) : undefined;
 }
 
-export async function getLinkByUrl(userId: number, url: string): Promise<LinkRecord | undefined> {
+export async function getRecordByUrl(userId: number, url: string): Promise<RecordEntry | undefined> {
   const row = await getDb()
-    .selectFrom('links')
+    .selectFrom('records')
     .selectAll()
     .where('user_id', '=', userId)
     .where('url', '=', url)
     .orderBy('id', 'desc')
     .limit(1)
     .executeTakeFirst();
-  return row ? toLinkRecord(row) : undefined;
+  return row ? toRecordEntry(row) : undefined;
 }
 
-export async function getRecentLinks(userId: number, limit: number = 20): Promise<LinkRecord[]> {
+export async function getRecentRecords(userId: number, limit: number = 20): Promise<RecordEntry[]> {
   const rows = await getDb()
-    .selectFrom('links')
+    .selectFrom('records')
     .selectAll()
     .where('user_id', '=', userId)
     .orderBy('id', 'desc')
     .limit(limit)
     .execute();
-  return rows.map(toLinkRecord);
+  return rows.map(toRecordEntry);
 }
 
-export async function getPaginatedLinks(
+export async function getPaginatedRecords(
   userId: number,
   page: number = 1,
   perPage: number = 50,
-): Promise<{ links: LinkRecord[]; total: number; page: number; totalPages: number }> {
+): Promise<{ records: RecordEntry[]; total: number; page: number; totalPages: number }> {
   const { count } = await getDb()
-    .selectFrom('links')
+    .selectFrom('records')
     .select(sql<number>`count(*)::int`.as('count'))
     .where('user_id', '=', userId)
+    .where('added_by_user', '=', true)
     .executeTakeFirstOrThrow();
 
   const total = count;
@@ -434,63 +517,63 @@ export async function getPaginatedLinks(
   const offset = (safePage - 1) * perPage;
 
   const rows = await getDb()
-    .selectFrom('links')
+    .selectFrom('records')
     .selectAll()
     .where('user_id', '=', userId)
+    .where('added_by_user', '=', true)
     .orderBy('created_at', 'desc')
     .orderBy('id', 'desc')
     .limit(perPage)
     .offset(offset)
     .execute();
 
-  return { links: rows.map(toLinkRecord), total, page: safePage, totalPages };
+  return { records: rows.map(toRecordEntry), total, page: safePage, totalPages };
 }
 
-export async function getAllAnalyzedLinks(userId?: number): Promise<LinkRecord[]> {
-  let query = getDb().selectFrom('links').selectAll().where('status', '=', 'analyzed');
+export async function getAllAnalyzedRecords(userId?: number): Promise<RecordEntry[]> {
+  let query = getDb().selectFrom('records').selectAll().where('status', '=', 'analyzed');
   if (userId != null) {
     query = query.where('user_id', '=', userId);
   }
   const rows = await query.orderBy('id', 'asc').execute();
-  return rows.map(toLinkRecord);
+  return rows.map(toRecordEntry);
 }
 
-export async function getFailedLinks(userId?: number): Promise<LinkRecord[]> {
-  let query = getDb().selectFrom('links').selectAll().where('status', '=', 'error');
+export async function getFailedRecords(userId?: number): Promise<RecordEntry[]> {
+  let query = getDb().selectFrom('records').selectAll().where('status', '=', 'error');
   if (userId != null) {
     query = query.where('user_id', '=', userId);
   }
   const rows = await query.orderBy('id', 'desc').execute();
-  return rows.map(toLinkRecord);
+  return rows.map(toRecordEntry);
 }
 
-export async function deleteLink(id: number): Promise<void> {
-  await getDb().deleteFrom('links').where('id', '=', id).execute();
+export async function deleteRecord(id: number): Promise<void> {
+  await getDb().deleteFrom('records').where('id', '=', id).execute();
 }
 
 /**
- * Remove a deleted linkId from all other links' related_links JSON arrays.
+ * Remove a deleted recordId from all other records' related_links JSON arrays.
  */
-export async function removeFromRelatedLinks(deletedLinkId: number): Promise<number> {
-  const links = await getDb()
-    .selectFrom('links')
+export async function removeFromRelatedRecords(deletedRecordId: number): Promise<number> {
+  const records = await getDb()
+    .selectFrom('records')
     .select(['id', 'related_links'])
     .where('status', '=', 'analyzed')
     .where('related_links', 'is not', null)
     .execute();
 
   let updated = 0;
-  for (const link of links) {
+  for (const record of records) {
     const related: number[] = JSON.parse(
-      typeof link.related_links === 'string' ? link.related_links : JSON.stringify(link.related_links || []),
+      typeof record.related_links === 'string' ? record.related_links : JSON.stringify(record.related_links || []),
     );
-    // related_links is now an array of IDs: [42, 37, 15, ...]
-    const filtered = related.filter((id: number) => id !== deletedLinkId);
+    const filtered = related.filter((id: number) => id !== deletedRecordId);
     if (filtered.length !== related.length) {
       await getDb()
-        .updateTable('links')
+        .updateTable('records')
         .set({ related_links: JSON.stringify(filtered), updated_at: sql`NOW()` })
-        .where('id', '=', link.id)
+        .where('id', '=', record.id)
         .execute();
       updated++;
     }
@@ -498,9 +581,9 @@ export async function removeFromRelatedLinks(deletedLinkId: number): Promise<num
   return updated;
 }
 
-export async function searchLinks(query: string, limit: number = 10, userId?: number): Promise<LinkRecord[]> {
+export async function searchRecords(query: string, limit: number = 10, userId?: number): Promise<RecordEntry[]> {
   const pattern = `%${query}%`;
-  let q = getDb().selectFrom('links').selectAll().where('status', '=', 'analyzed');
+  let q = getDb().selectFrom('records').selectAll().where('status', '=', 'analyzed');
   if (userId != null) {
     q = q.where('user_id', '=', userId);
   }
@@ -511,47 +594,73 @@ export async function searchLinks(query: string, limit: number = 10, userId?: nu
         eb('og_description', 'ilike', pattern),
         eb('summary', 'ilike', pattern),
         eb('markdown', 'ilike', pattern),
+        eb('content', 'ilike', pattern),
       ]),
     )
     .orderBy('id', 'desc')
     .limit(limit)
     .execute();
-  return rows.map(toLinkRecord);
+  return rows.map(toRecordEntry);
 }
 
-/* ── Link Relations ── */
+/**
+ * Find a record by its associated Telegram message (bot reply message_id).
+ */
+export async function getRecordByTelegramMessage(chatId: number, messageId: number): Promise<RecordEntry | undefined> {
+  const row = await getDb()
+    .selectFrom('records')
+    .selectAll()
+    .where('telegram_chat_id', '=', chatId)
+    .where('telegram_message_id', '=', messageId)
+    .executeTakeFirst();
+  return row ? toRecordEntry(row) : undefined;
+}
 
-export interface LinkRelation {
+/**
+ * Append text to a record's user_note field.
+ * If user_note already has content, appends with newline separator.
+ */
+export async function appendUserNote(recordId: number, note: string): Promise<void> {
+  const record = await getRecord(recordId);
+  if (!record) return;
+
+  const existingNote = record.user_note || '';
+  const newNote = existingNote ? `${existingNote}\n\n${note}` : note;
+
+  await updateRecord(recordId, { user_note: newNote });
+}
+
+/* ── Record Relations ── */
+
+export interface RecordRelation {
   id?: number;
-  link_id: number;
-  related_link_id: number;
+  record_id: number;
+  related_record_id: number;
   score: number;
   created_at?: string;
 }
 
 /**
- * Save related links for a given link.
- * Replaces existing relations for link_id.
- * @param linkId - The source link
- * @param relations - Array of {relatedLinkId, score}
+ * Save related records for a given record.
+ * Replaces existing relations for record_id.
  */
-export async function saveRelatedLinks(
-  linkId: number,
-  relations: { relatedLinkId: number; score: number }[],
+export async function saveRelatedRecords(
+  recordId: number,
+  relations: { relatedRecordId: number; score: number }[],
 ): Promise<void> {
   const db = getDb();
 
-  // Delete existing relations for this link
-  await db.deleteFrom('link_relations').where('link_id', '=', linkId).execute();
+  // Delete existing relations for this record
+  await db.deleteFrom('record_relations').where('record_id', '=', recordId).execute();
 
   // Insert new relations
   if (relations.length > 0) {
     await db
-      .insertInto('link_relations')
+      .insertInto('record_relations')
       .values(
         relations.map((r) => ({
-          link_id: linkId,
-          related_link_id: r.relatedLinkId,
+          record_id: recordId,
+          related_record_id: r.relatedRecordId,
           score: r.score,
         })),
       )
@@ -560,25 +669,25 @@ export async function saveRelatedLinks(
 }
 
 /**
- * Get related links for a given link (bidirectional).
- * Queries both directions: links I found related + links that found me related.
+ * Get related records for a given record (bidirectional).
+ * Queries both directions: records I found related + records that found me related.
  * Returns deduplicated results ordered by score, max 5.
  */
-export async function getRelatedLinks(linkId: number): Promise<{ relatedLinkId: number; score: number }[]> {
+export async function getRelatedRecords(recordId: number): Promise<{ relatedRecordId: number; score: number }[]> {
   const db = getDb();
 
-  // Query 1: links I found related (link_id = me)
+  // Query 1: records I found related (record_id = me)
   const outgoing = await db
-    .selectFrom('link_relations')
-    .select(['related_link_id as other_id', 'score'])
-    .where('link_id', '=', linkId)
+    .selectFrom('record_relations')
+    .select(['related_record_id as other_id', 'score'])
+    .where('record_id', '=', recordId)
     .execute();
 
-  // Query 2: links that found me related (related_link_id = me)
+  // Query 2: records that found me related (related_record_id = me)
   const incoming = await db
-    .selectFrom('link_relations')
-    .select(['link_id as other_id', 'score'])
-    .where('related_link_id', '=', linkId)
+    .selectFrom('record_relations')
+    .select(['record_id as other_id', 'score'])
+    .where('related_record_id', '=', recordId)
     .execute();
 
   // Merge and dedupe (keep highest score if duplicate)
@@ -593,11 +702,48 @@ export async function getRelatedLinks(linkId: number): Promise<{ relatedLinkId: 
 
   // Sort by score desc, take top 5
   const results = Array.from(scoreMap.entries())
-    .map(([relatedLinkId, score]) => ({ relatedLinkId, score }))
+    .map(([relatedRecordId, score]) => ({ relatedRecordId, score }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
 
   return results;
+}
+
+/* ── Record Derivations ── */
+
+/**
+ * Record a derivation relationship (source → derived).
+ */
+export async function addDerivation(sourceRecordId: number, derivedRecordId: number): Promise<void> {
+  await getDb()
+    .insertInto('record_derivations')
+    .values({ source_record_id: sourceRecordId, derived_record_id: derivedRecordId })
+    .onConflict((oc) => oc.columns(['source_record_id', 'derived_record_id']).doNothing())
+    .execute();
+}
+
+/**
+ * Get all source records that derived this record.
+ */
+export async function getDerivationSources(recordId: number): Promise<number[]> {
+  const rows = await getDb()
+    .selectFrom('record_derivations')
+    .select('source_record_id')
+    .where('derived_record_id', '=', recordId)
+    .execute();
+  return rows.map((r) => r.source_record_id);
+}
+
+/**
+ * Get all records derived from this record.
+ */
+export async function getDerivedRecords(recordId: number): Promise<number[]> {
+  const rows = await getDb()
+    .selectFrom('record_derivations')
+    .select('derived_record_id')
+    .where('source_record_id', '=', recordId)
+    .execute();
+  return rows.map((r) => r.derived_record_id);
 }
 
 /* ── Probe Devices CRUD ── */

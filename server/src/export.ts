@@ -3,14 +3,14 @@
  * File export is currently disabled; renderMarkdown is kept for future use.
  */
 
-import type { LinkRecord } from './db.js';
+import type { RecordEntry } from './db.js';
 
 /**
- * Render a link record as a Markdown document.
+ * Render a record as a Markdown document.
  * Only includes metadata + summary + full original content.
  * Excludes related content (notes/links/insight) to avoid polluting search results.
  */
-export function renderMarkdown(link: LinkRecord): string {
+export function renderMarkdown(link: RecordEntry): string {
   const lines: string[] = [];
 
   // YAML front matter

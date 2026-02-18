@@ -17,14 +17,16 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(linkId ? `Refreshing related content for link #${linkId}...` : 'Refreshing related content for all links...');
+  console.log(
+    linkId ? `Refreshing related content for link #${linkId}...` : 'Refreshing related content for all links...',
+  );
 
   const results = await refreshRelated(linkId);
 
   console.log('\n── Results ──');
   for (const r of results) {
-    const status = r.error ? `❌ ${r.error}` : `✅ ${r.relatedLinks} related links`;
-    console.log(`  #${r.linkId} ${r.title.slice(0, 60)} → ${status}`);
+    const status = r.error ? `❌ ${r.error}` : `✅ ${r.relatedRecords} related records`;
+    console.log(`  #${r.recordId} ${r.title.slice(0, 60)} → ${status}`);
   }
 
   const ok = results.filter((r) => !r.error).length;

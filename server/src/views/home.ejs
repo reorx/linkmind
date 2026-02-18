@@ -123,6 +123,10 @@
     background: var(--badge-scraped-bg);
     color: var(--badge-scraped-text);
   }
+  .status-badge.note {
+    background: var(--border);
+    color: var(--dim);
+  }
   /* Card with thumbnail */
   .link-card-inner {
     display: flex;
@@ -155,7 +159,7 @@
 </style>
 
 <% if (links.length === 0) { %>
-<div class="empty-state">还没有收藏任何链接</div>
+<div class="empty-state">还没有收藏任何内容</div>
 <% } else { %>
 <div class="timeline">
   <% let currentDay = ''; %>
@@ -168,7 +172,10 @@
       <div class="link-card-inner">
         <div class="link-card-content">
           <h3>
-            <a href="/link/<%= item.id %>"><%= item.og_title || item.url %></a>
+            <a href="/link/<%= item.id %>"><%= item.type === 'note' ? (item.content || '').slice(0, 60) || 'Untitled Note' : (item.og_title || item.url) %></a>
+            <% if (item.type === 'note') { %>
+            <span class="status-badge note">笔记</span>
+            <% } %>
             <% if (item.status === 'error') { %>
             <span class="status-badge error">失败</span>
             <% } else if (item.status === 'pending') { %>
@@ -178,9 +185,14 @@
             <% } %>
           </h3>
           <div class="card-meta">
-            <a href="<%= item.url %>" target="_blank"><%= item.url.length > 80 ? item.url.slice(0, 80) + '...' : item.url %></a>
-            <% if (item.og_site_name) { %> · <%= item.og_site_name %><% } %>
-            <% if (item.created_at) { %> · <%= item.created_at.slice(11, 16) %><% } %>
+            <% if (item.type === 'note') { %>
+              <% if (item.source_url) { %><a href="<%= item.source_url %>" target="_blank">来源</a> · <% } %>
+              <% if (item.created_at) { %><%= item.created_at.slice(11, 16) %><% } %>
+            <% } else { %>
+              <a href="<%= item.url %>" target="_blank"><%= item.url.length > 80 ? item.url.slice(0, 80) + '...' : item.url %></a>
+              <% if (item.og_site_name) { %> · <%= item.og_site_name %><% } %>
+              <% if (item.created_at) { %> · <%= item.created_at.slice(11, 16) %><% } %>
+            <% } %>
           </div>
           <% if (item.summary) { %>
           <details>

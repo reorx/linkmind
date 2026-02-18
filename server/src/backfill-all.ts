@@ -8,7 +8,7 @@
  */
 import 'dotenv/config';
 import { Pool } from 'pg';
-import { getAllAnalyzedLinks } from './db.js';
+import { getAllAnalyzedRecords } from './db.js';
 import { registerTasks, spawnProcessLink } from './pipeline.js';
 import { initLogger } from './logger.js';
 
@@ -78,7 +78,7 @@ async function waitForTasks(tasks: TaskInfo[]): Promise<void> {
 
 async function main() {
   console.log('📦 Fetching all analyzed links...');
-  const links = await getAllAnalyzedLinks();
+  const links = await getAllAnalyzedRecords();
   console.log(`Found ${links.length} links to backfill (concurrency: ${concurrency})\n`);
 
   if (dryRun) {
@@ -103,10 +103,10 @@ async function main() {
     // Spawn tasks for this batch
     const tasks: TaskInfo[] = [];
     for (const link of batch) {
-      const title = link.og_title || link.url;
+      const title = link.og_title || link.url || '';
       try {
         // Spawn the task (pipeline will reset status to pending)
-        const { taskId } = await spawnProcessLink(link.user_id, link.url, link.id);
+        const { taskId } = await spawnProcessLink(link.user_id, link.url!, link.id);
         tasks.push({ linkId: link.id!, title, taskId });
         console.log(`  ⏳ #${link.id} ${title.slice(0, 40)} → spawned`);
       } catch (err) {

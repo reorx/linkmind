@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@linkmind/core": "workspace:*",
+    "@sentry/node": "^10.38.0",
     "@types/multer": "^2.0.0",
     "absurd-sdk": "^0.0.7",
     "cookie-parser": "^1.4.7",

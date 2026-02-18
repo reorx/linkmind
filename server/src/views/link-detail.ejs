@@ -190,12 +190,53 @@
 
 <div class="detail-layout">
   <div class="detail-main">
+    <% if (link.type === 'note') { %>
+    <h1>笔记</h1>
+    <div class="meta">
+      <% if (link.source_url) { %><a href="<%= link.source_url %>" target="_blank">来源链接</a> · <% } %>
+      <%= link.created_at || '' %>
+    </div>
+
+    <div class="section">
+      <div class="section-title">内容</div>
+      <div class="content"><%= link.content %></div>
+    </div>
+
+    <% if (link.user_note) { %>
+    <div class="section">
+      <div class="section-title">备注</div>
+      <div class="content"><%= link.user_note %></div>
+    </div>
+    <% } %>
+
+    <% if (link.summary && link.summary !== link.content) { %>
+    <div class="section">
+      <div class="section-title">摘要</div>
+      <div><%= link.summary %></div>
+    </div>
+    <% } %>
+
+    <% if (link.insight) { %>
+    <div class="section">
+      <div class="section-title">Insight</div>
+      <div class="insight"><%= link.insight %></div>
+    </div>
+    <% } %>
+
+    <% } else { %>
     <h1><%= link.og_title || 'Untitled' %></h1>
     <div class="meta">
       <a href="<%= link.url %>" target="_blank"><%= link.url %></a>
       <% if (link.og_site_name) { %>· <%= link.og_site_name %><% } %>
       · <%= link.created_at || '' %>
     </div>
+
+    <% if (link.user_note) { %>
+    <div class="section">
+      <div class="section-title">备注</div>
+      <div class="content"><%= link.user_note %></div>
+    </div>
+    <% } %>
 
     <% if (link.summary) { %>
     <div class="section">
@@ -234,6 +275,7 @@
       <div class="section-title">原文内容</div>
       <div class="content"><%= link.markdown %></div>
     </div>
+    <% } %>
     <% } %>
   </div>
 

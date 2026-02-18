@@ -1,0 +1,71 @@
+# LinkMind 项目状态 — 2026-02-18
+
+## 项目概要
+Telegram Bot 驱动的智能链接收藏分析工具。用户发链接给 Bot → 自动抓取、中文摘要、向量搜索相关内容、生成 insight。附带 Web 界面。
+
+## 架构
+pnpm monorepo: core（共享类型）+ server（Bot/Pipeline/Web）+ probe（本地抓取 daemon）
+Tech: Node.js 22, TypeScript, Grammy, Express+EJS, PostgreSQL(Neon)+pgvector, Playwright+Defuddle
+
+## 部署方式
+macOS launchd user agent（本地 Mac Mini 运行）
+
+## Git 状态
+- 分支: master（唯一分支）
+- 本地领先 origin/master 7 个 commit（未 push）
+- 18 个文件有未暂存修改（大量改动，+1850/-519 行）
+- 1 个未跟踪文件: server/migrations/004_unified_records.sql
+- typecheck 通过 ✅
+- 无 stash
+
+## 未 push 的 7 个 commit（已提交）
+1. 3d6f806 feat: support Voyage AI as embedding provider
+2. 0eb6d02 remove nvmrc
+3. 4b7a8ed docs: finalize unified record model plan
+4. 849a723 feat: integrate Sentry/GlitchTip error tracking
+5. 60092da docs: update sentry plan
+6. 3ad4f83 feat: enqueued status + cron job for rate-limited import
+7. ee4c256 feat: settings page with CSV export/import
+
+## 未提交的大改动（工作区 diff）
+核心内容: **统一 Record 模型重构**（links → records，支持 link/note/image 三种类型）
+
+受影响模块:
+- db.ts: 接口/函数重命名，新增 note 相关函数（+338/-大量）
+- pipeline.ts: 适配新 Record 类型（+502/-大量）
+- bot.ts: 重构消息处理，新增笔记支持（+396/-大量）
+- agent.ts: 新增 note 相关 prompt
+- prompts.ts: 新增 prompt 模板
+- web.ts/views: 适配新数据模型
+- 其他: search/export/backfill/enqueue-cron 等适配性改动
+
+migration 文件已准备: server/migrations/004_unified_records.sql（未跟踪）
+
+## 已完成的功能
+- ✅ Telegram Bot 基础收发 + 链接处理
+- ✅ Pipeline: scrape → summarize → embed → related → insight
+- ✅ Web 界面（首页、详情页）
+- ✅ Probe daemon（本地抓取 Twitter 等）
+- ✅ 向量搜索（pgvector）+ 相关链接
+- ✅ CSV 导入导出
+- ✅ Sentry/GlitchTip 错误追踪
+- ✅ 邀请码系统
+- ✅ Voyage AI embedding 支持
+- ✅ Rate-limited enqueue cron
+
+## 进行中 / 未完成
+- 🔧 统一 Record 模型重构（大量代码已改但未提交）
+  - migration SQL 已写好，代码已适配，但还没跑 migration
+  - 需要验证整个流程是否正常
+- 🔧 7 个 commit 未 push 到远程
+
+## 待解决问题
+1. **未提交的重构代码**：工作区有大量 Record 模型重构改动，需要决定是提交还是继续完善
+2. **Migration 未执行**：004_unified_records.sql 还没跑
+3. **未 push**：本地领先 7 个 commit + 大量未提交改动
+4. **测试覆盖**：vitest 配置存在但未确认测试是否通过
+5. **FEEDBACK.md 的产品想法**：相关链接需要更详细分析、未读状态提示
+
+## 用户反馈记录 (FEEDBACK.md)
+- 相关链接应该生成能引起兴趣的 pitch/摘要
+- 未读链接需要提示用户，增加发现感

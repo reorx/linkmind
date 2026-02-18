@@ -4,7 +4,7 @@
  */
 
 import { sql } from 'kysely';
-import { getDb, type LinkRecord } from './db.js';
+import { getDb } from './db.js';
 import { createEmbedding } from './llm.js';
 import { logger as log } from './logger.js';
 
@@ -114,7 +114,7 @@ async function searchBM25(query: string, userId: number, limit: number): Promise
   try {
     // Use pg_search's score_bm25 for ranking
     const results = await db
-      .selectFrom('links')
+      .selectFrom('records')
       .select(['id', 'url', 'og_title', 'summary'])
       .select(sql<number>`paradedb.score(id)`.as('score'))
       .where('user_id', '=', userId)
@@ -126,7 +126,7 @@ async function searchBM25(query: string, userId: number, limit: number): Promise
 
     return results.map((r, i) => ({
       id: r.id!,
-      url: r.url,
+      url: r.url || '',
       og_title: r.og_title ?? null,
       summary: r.summary ?? null,
       rank: i + 1,
@@ -150,7 +150,7 @@ async function searchVector(query: string, userId: number, limit: number): Promi
 
     // Cosine distance search (lower distance = more similar)
     const results = await db
-      .selectFrom('links')
+      .selectFrom('records')
       .select(['id', 'url', 'og_title', 'summary'])
       .select(sql<number>`summary_embedding <=> ${vectorStr}::vector`.as('distance'))
       .where('user_id', '=', userId)
@@ -162,7 +162,7 @@ async function searchVector(query: string, userId: number, limit: number): Promi
 
     return results.map((r, i) => ({
       id: r.id!,
-      url: r.url,
+      url: r.url || '',
       og_title: r.og_title ?? null,
       summary: r.summary ?? null,
       rank: i + 1,
@@ -174,49 +174,49 @@ async function searchVector(query: string, userId: number, limit: number): Promi
 }
 
 /**
- * Search for related links based on summary embedding similarity.
- * @param summaryEmbedding - The embedding vector of the current link's summary
+ * Search for related records based on summary embedding similarity.
+ * @param summaryEmbedding - The embedding vector of the current record's summary
  * @param userId - User ID to scope search
- * @param excludeLinkId - Link ID to exclude from results (the current link)
+ * @param excludeRecordId - Record ID to exclude from results (the current record)
  * @param limit - Maximum number of results to return (default 5)
- * @returns Array of related link IDs, sorted by similarity
+ * @returns Array of related record IDs, sorted by similarity
  */
-export interface RelatedLinkResult {
+export interface RelatedRecordResult {
   id: number;
   score: number; // Similarity score (0-1, higher is more similar)
 }
 
-export async function searchRelatedLinks(
+export async function searchRelatedRecords(
   summaryEmbedding: number[],
   userId: number,
-  excludeLinkId: number,
+  excludeRecordId: number,
   limit: number = 5,
-): Promise<RelatedLinkResult[]> {
+): Promise<RelatedRecordResult[]> {
   const db = getDb();
   const vectorStr = `[${summaryEmbedding.join(',')}]`;
 
   try {
     const results = await db
-      .selectFrom('links')
+      .selectFrom('records')
       .select(['id'])
       .select(sql<number>`summary_embedding <=> ${vectorStr}::vector`.as('distance'))
       .where('user_id', '=', userId)
       .where('status', '=', 'analyzed')
-      .where('id', '!=', excludeLinkId)
+      .where('id', '!=', excludeRecordId)
       .where(sql<boolean>`summary_embedding IS NOT NULL`)
       .orderBy(sql`summary_embedding <=> ${vectorStr}::vector`)
       .limit(limit)
       .execute();
 
     // Convert distance to similarity score (1 / (1 + distance))
-    const relatedLinks = results.map((r) => ({
+    const relatedRecords = results.map((r) => ({
       id: r.id,
       score: Math.round((1 / (1 + (r as any).distance)) * 100) / 100,
     }));
-    log.info({ excludeLinkId, resultCount: relatedLinks.length }, '[search] Related links search complete');
-    return relatedLinks;
+    log.info({ excludeRecordId, resultCount: relatedRecords.length }, '[search] Related records search complete');
+    return relatedRecords;
   } catch (err) {
-    log.warn({ err, excludeLinkId }, '[search] Related links search failed, returning empty');
+    log.warn({ err, excludeRecordId }, '[search] Related records search failed, returning empty');
     return [];
   }
 }

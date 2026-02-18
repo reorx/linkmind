@@ -3,7 +3,7 @@
  * Usage: npx tsx src/backfill-one.ts <linkId>
  */
 import 'dotenv/config';
-import { getLink } from './db.js';
+import { getRecord } from './db.js';
 import { registerTasks, spawnProcessLink } from './pipeline.js';
 import { initLogger } from './logger.js';
 
@@ -17,7 +17,7 @@ if (!linkId || isNaN(linkId)) {
 }
 
 async function main() {
-  const link = await getLink(linkId);
+  const link = await getRecord(linkId);
   if (!link) {
     console.error(`Link #${linkId} not found`);
     process.exit(1);
@@ -26,7 +26,7 @@ async function main() {
   console.log(`📦 Backfilling link #${linkId}: ${link.og_title || link.url}`);
 
   // Spawn task (pipeline will reset status to pending)
-  const { taskId } = await spawnProcessLink(link.user_id, link.url, linkId);
+  const { taskId } = await spawnProcessLink(link.user_id, link.url!, linkId);
   console.log(`✅ Spawned task: ${taskId}`);
   console.log(`\n🔗 View result at: https://linkmind.reorx.com/link/${linkId}`);
 }

@@ -15,15 +15,15 @@ import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import jwt from 'jsonwebtoken';
 import {
-  getLink,
-  getRecentLinks,
-  getPaginatedLinks,
-  getFailedLinks,
+  getRecord,
+  getRecentRecords,
+  getPaginatedRecords,
+  getFailedRecords,
   getUserById,
-  getRelatedLinks,
-  getAllUserLinks,
-  getLinkByUrl,
-  insertLinkWithCreatedAt,
+  getRelatedRecords,
+  getAllUserRecords,
+  getRecordByUrl,
+  insertRecordWithCreatedAt,
   getProbeDeviceByToken,
   updateProbeDeviceLastSeen,
   createProbeDevice,
@@ -37,7 +37,7 @@ import {
   updateProbeEventStatus,
   getPendingProbeEvents,
 } from './db.js';
-import { retryLink, deleteLinkFull, spawnProcessLink, handleProbeResult } from './pipeline.js';
+import { retryRecord, deleteRecordFull, spawnProcessLink, handleProbeResult } from './pipeline.js';
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 
@@ -402,9 +402,9 @@ export function startWebServer(port: number): void {
   // GET /api/links — list recent links
   app.get('/api/links', requireAuth, async (req: AuthRequest, res) => {
     const limit = parseInt(req.query.limit as string, 10) || 20;
-    const links = await getRecentLinks(req.userId!, limit);
+    const records = await getRecentRecords(req.userId!, limit);
     res.json(
-      links.map((l) => ({
+      records.map((l) => ({
         id: l.id,
         url: l.url,
         title: l.og_title,
@@ -422,16 +422,16 @@ export function startWebServer(port: number): void {
       res.status(400).json({ error: 'Invalid ID' });
       return;
     }
-    const link = await getLink(id);
-    if (!link || link.user_id !== req.userId) {
+    const record = await getRecord(id);
+    if (!record || record.user_id !== req.userId) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
     res.json({
-      ...link,
-      tags: safeParseJson(link.tags),
-      related_notes: safeParseJson(link.related_notes),
-      related_links: safeParseJson(link.related_links),
+      ...record,
+      tags: safeParseJson(record.tags),
+      related_notes: safeParseJson(record.related_notes),
+      related_links: safeParseJson(record.related_links),
     });
   });
 
@@ -442,14 +442,17 @@ export function startWebServer(port: number): void {
       res.status(400).json({ error: 'Invalid ID' });
       return;
     }
-    const link = await getLink(id);
-    if (!link || link.user_id !== req.userId) {
+    const record = await getRecord(id);
+    if (!record || record.user_id !== req.userId) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
 
-    const result = await deleteLinkFull(id);
-    log.info({ linkId: id, url: result.url, relatedLinksUpdated: result.relatedLinksUpdated }, 'Link deleted via API');
+    const result = await deleteRecordFull(id);
+    log.info(
+      { linkId: id, url: result.url, relatedRecordsUpdated: result.relatedRecordsUpdated },
+      'Link deleted via API',
+    );
     res.json({
       message: 'Link deleted',
       ...result,
@@ -458,7 +461,7 @@ export function startWebServer(port: number): void {
 
   // POST /api/retry — retry all failed links
   app.post('/api/retry', requireAuth, async (req: AuthRequest, res) => {
-    const failed = await getFailedLinks(req.userId!);
+    const failed = await getFailedRecords(req.userId!);
     if (failed.length === 0) {
       res.json({ message: 'No failed links to retry', retried: 0 });
       return;
@@ -471,7 +474,7 @@ export function startWebServer(port: number): void {
 
     for (const id of ids) {
       try {
-        await retryLink(id);
+        await retryRecord(id);
       } catch (err) {
         log.error({ linkId: id, err: err instanceof Error ? err.message : String(err) }, 'Retry failed');
       }
@@ -486,14 +489,14 @@ export function startWebServer(port: number): void {
       return;
     }
 
-    const link = await getLink(id);
-    if (!link || link.user_id !== req.userId) {
+    const record = await getRecord(id);
+    if (!record || record.user_id !== req.userId) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
 
-    log.info({ linkId: id, url: link.url }, 'Retrying single link');
-    const { taskId } = await retryLink(id);
+    log.info({ linkId: id, url: record.url }, 'Retrying single link');
+    const { taskId } = await retryRecord(id);
     res.json({ taskId, linkId: id, status: 'queued', message: 'Link queued for retry' });
   });
 
@@ -629,9 +632,9 @@ export function startWebServer(port: number): void {
   app.get('/', requireAuth, async (req: AuthRequest, res) => {
     try {
       const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-      const { links, total, page: safePage, totalPages } = await getPaginatedLinks(req.userId!, page, 50);
+      const { records, total, page: safePage, totalPages } = await getPaginatedRecords(req.userId!, page, 50);
 
-      const linksWithDay = links.map((l) => ({
+      const linksWithDay = records.map((l) => ({
         ...l,
         _dayLabel: getDayLabel(l.created_at),
         _images: safeParseJson(l.images),
@@ -660,21 +663,21 @@ export function startWebServer(port: number): void {
       return;
     }
 
-    const link = await getLink(id);
-    if (!link || link.user_id !== req.userId) {
+    const record = await getRecord(id);
+    if (!record || record.user_id !== req.userId) {
       res.status(404).send('Not found');
       return;
     }
 
-    const tags = safeParseJson(link.tags);
-    const images = safeParseJson(link.images);
-    const rawNotes = safeParseJson(link.related_notes);
+    const tags = safeParseJson(record.tags);
+    const images = safeParseJson(record.images);
+    const rawNotes = safeParseJson(record.related_notes);
     const relatedNotes = rawNotes.map((n: any) => ({
       ...n,
       noteUrl: n.path ? `/note?path=${encodeURIComponent(n.path)}` : undefined,
     }));
     // Get related links from link_relations table
-    const relatedLinkData = await getRelatedLinks(link.id!);
+    const relatedLinkData = await getRelatedRecords(record.id!);
     const relatedLinks: {
       linkId: number;
       title: string;
@@ -684,23 +687,24 @@ export function startWebServer(port: number): void {
       score: number;
     }[] = [];
     for (const item of relatedLinkData) {
-      const relatedLink = await getLink(item.relatedLinkId);
-      if (relatedLink) {
+      const relatedRecord = await getRecord(item.relatedRecordId);
+      if (relatedRecord) {
         relatedLinks.push({
-          linkId: item.relatedLinkId,
-          title: relatedLink.og_title || relatedLink.url,
-          url: `/link/${item.relatedLinkId}`,
-          sourceUrl: relatedLink.url,
-          tags: safeParseJson(relatedLink.tags),
+          linkId: item.relatedRecordId,
+          title: relatedRecord.og_title || relatedRecord.url || '',
+          url: `/link/${item.relatedRecordId}`,
+          sourceUrl: relatedRecord.url || '',
+          tags: safeParseJson(relatedRecord.tags),
           score: item.score,
         });
       }
     }
 
     try {
+      const detailTitle = record.type === 'note' ? `笔记 — LinkMind` : `${record.og_title || record.url} — LinkMind`;
       const html = await renderPage('link-detail', {
-        pageTitle: `${link.og_title || link.url} — LinkMind`,
-        link,
+        pageTitle: detailTitle,
+        link: record,
         tags,
         images,
         relatedNotes,
@@ -767,16 +771,16 @@ export function startWebServer(port: number): void {
 
   app.get('/api/settings/export', requireAuth, async (req: AuthRequest, res) => {
     try {
-      const links = await getAllUserLinks(req.userId!);
+      const records = await getAllUserRecords(req.userId!);
       const today = new Date().toISOString().slice(0, 10);
       const filename = `linkmind-export-${today}.csv`;
 
       // Build CSV
       const csvRows = ['url,title,created_at'];
-      for (const link of links) {
-        const url = csvEscape(link.url);
-        const title = csvEscape(link.og_title || '');
-        const createdAt = link.created_at || '';
+      for (const record of records) {
+        const url = csvEscape(record.url || '');
+        const title = csvEscape(record.og_title || '');
+        const createdAt = record.created_at || '';
         csvRows.push(`${url},${title},${createdAt}`);
       }
 
@@ -836,7 +840,7 @@ export function startWebServer(port: number): void {
         }
 
         // Skip existing
-        const existing = await getLinkByUrl(req.userId!, url);
+        const existing = await getRecordByUrl(req.userId!, url);
         if (existing) {
           skipped++;
           continue;
@@ -844,7 +848,7 @@ export function startWebServer(port: number): void {
 
         // Insert as enqueued (cron job will pick them up)
         try {
-          await insertLinkWithCreatedAt(req.userId!, url, createdAt, 'enqueued');
+          await insertRecordWithCreatedAt(req.userId!, url, createdAt, 'enqueued');
           imported++;
         } catch (err) {
           errors.push(`Line ${i + 1}: ${err instanceof Error ? err.message : String(err)}`);

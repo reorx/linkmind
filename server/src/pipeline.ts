@@ -6,32 +6,38 @@
  * Contains:
  *   - Step functions: scrapeStep / summarizeStep / embedStep / relatedStep / insightStep / exportStep
  *   - Absurd durable execution: task registration, worker lifecycle
- *   - Public API: processUrl, retryLink, spawnProcessLink, spawnRefreshRelated, startWorker
- *   - Utilities: deleteLinkFull, refreshRelated
+ *   - Public API: processUrl, retryRecord, spawnProcessLink, spawnRefreshRelated, startWorker
+ *   - Utilities: deleteRecordFull, refreshRelated
  */
 
 import crypto from 'crypto';
 import { Absurd } from 'absurd-sdk';
 import {
-  insertLink,
-  updateLink,
-  getLink,
-  getLinkByUrl,
-  getAllAnalyzedLinks,
-  deleteLink,
-  removeFromRelatedLinks,
-  saveRelatedLinks,
+  insertRecord,
+  updateRecord,
+  getRecord,
+  getRecordByUrl,
+  getAllAnalyzedRecords,
+  deleteRecord,
+  removeFromRelatedRecords,
+  saveRelatedRecords,
   createProbeEvent,
   getProbeEventById,
   updateProbeEventStatus,
-  type LinkRecord,
+  type RecordEntry,
 } from './db.js';
 import type { ScrapeData } from '@linkmind/core';
 import { scrapeUrl, isTwitterUrl } from './scraper.js';
 import { processTwitterImages } from './image-handler.js';
-import { generateSummary, generateInsight } from './agent.js';
+import {
+  generateSummary,
+  generateInsight,
+  generateNoteSummary,
+  generateNoteTags,
+  generateNoteInsight,
+} from './agent.js';
 import { createEmbedding } from './llm.js';
-import { searchRelatedLinks, type RelatedLinkResult } from './search.js';
+import { searchRelatedRecords, type RelatedRecordResult } from './search.js';
 // File export disabled for cloud deployment; renderMarkdown kept in export.ts for future use
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
@@ -67,17 +73,22 @@ export type { ScrapeData } from '@linkmind/core';
 interface ProcessLinkParams {
   userId: number;
   url: string;
-  linkId?: number; // set if re-processing existing link
+  recordId?: number; // set if re-processing existing record
   scrapeData?: ScrapeData; // provided by probe device
 }
 
+interface ProcessNoteParams {
+  userId: number;
+  recordId: number;
+}
+
 interface RefreshRelatedParams {
-  linkId: number;
+  recordId: number;
 }
 
 export interface SpawnProcessResult {
   taskId: string;
-  linkId?: number;
+  recordId?: number;
 }
 
 /* ── Step functions (core business logic) ── */
@@ -93,11 +104,11 @@ interface ScrapeStepResult {
 /**
  * Step 1: Scrape a URL - fetch content via Playwright/Defuddle, process Twitter images + OCR.
  */
-async function scrapeStep(linkId: number, url: string): Promise<ScrapeStepResult> {
-  log.info({ linkId, url }, '[scrape] Starting');
+async function scrapeStep(recordId: number, url: string): Promise<ScrapeStepResult> {
+  log.info({ recordId, url }, '[scrape] Starting');
   const result = await scrapeUrl(url);
 
-  await updateLink(linkId, {
+  await updateRecord(recordId, {
     og_title: result.og.title,
     og_description: result.og.description,
     og_image: result.og.image,
@@ -107,31 +118,31 @@ async function scrapeStep(linkId: number, url: string): Promise<ScrapeStepResult
     status: 'scraped',
   });
 
-  log.info({ linkId, title: result.og.title, chars: result.markdown.length }, '[scrape] OK');
+  log.info({ recordId, title: result.og.title, chars: result.markdown.length }, '[scrape] OK');
 
   // Process Twitter images + OCR
   let ocrTexts: string[] = [];
   if (isTwitterUrl(url) && result.rawMedia?.length) {
     try {
-      const images = await processTwitterImages(linkId, result.rawMedia);
+      const images = await processTwitterImages(recordId, result.rawMedia);
       if (images.length > 0) {
-        await updateLink(linkId, { images: JSON.stringify(images) });
-        log.info({ linkId, count: images.length }, '[images] Downloaded and processed');
+        await updateRecord(recordId, { images: JSON.stringify(images) });
+        log.info({ recordId, count: images.length }, '[images] Downloaded and processed');
 
         ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
         if (ocrTexts.length > 0) {
-          log.info({ linkId, ocrCount: ocrTexts.length }, '[ocr] Extracted text from images');
+          log.info({ recordId, ocrCount: ocrTexts.length }, '[ocr] Extracted text from images');
         }
       }
     } catch (imgErr) {
       log.warn(
-        { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
+        { recordId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
         '[images] Failed (non-fatal)',
       );
       Sentry.captureException(imgErr, {
         level: 'warning',
         tags: { step: 'scrape', sub: 'twitter-images' },
-        extra: { linkId },
+        extra: { recordId },
       });
     }
   }
@@ -153,14 +164,18 @@ interface SummarizeStepResult {
 /**
  * Step 2: Summarize - generate summary and tags via LLM.
  */
-async function summarizeStep(linkId: number, url: string, scrapeData: ScrapeStepResult): Promise<SummarizeStepResult> {
-  const link = await getLink(linkId);
-  if (!link?.markdown) throw new Error('Link markdown not found after scrape');
+async function summarizeStep(
+  recordId: number,
+  url: string,
+  scrapeData: ScrapeStepResult,
+): Promise<SummarizeStepResult> {
+  const record = await getRecord(recordId);
+  if (!record?.markdown) throw new Error('Record markdown not found after scrape');
 
-  log.info({ linkId, title: scrapeData.title }, '[summarize] Starting');
+  log.info({ recordId, title: scrapeData.title }, '[summarize] Starting');
 
   // Append OCR text to markdown for LLM context
-  let markdownForSummary = link.markdown;
+  let markdownForSummary = record.markdown;
   if (scrapeData.ocrTexts.length > 0) {
     markdownForSummary += '\n\n---\n**图片文字 (OCR):**\n' + scrapeData.ocrTexts.join('\n\n');
   }
@@ -172,31 +187,31 @@ async function summarizeStep(linkId: number, url: string, scrapeData: ScrapeStep
     markdown: markdownForSummary,
   });
 
-  await updateLink(linkId, {
+  await updateRecord(recordId, {
     summary: result.summary,
     tags: JSON.stringify(result.tags),
   });
 
-  log.info({ linkId, tags: result.tags.length }, '[summarize] OK');
+  log.info({ recordId, tags: result.tags.length }, '[summarize] OK');
   return result;
 }
 
 /**
  * Step 3: Embed - generate embedding vector for summary only.
  */
-async function embedStep(linkId: number): Promise<number[]> {
-  const link = await getLink(linkId);
-  if (!link?.summary) throw new Error('Link summary not found for embedding');
+async function embedStep(recordId: number): Promise<number[]> {
+  const record = await getRecord(recordId);
+  if (!record?.summary) throw new Error('Record summary not found for embedding');
 
-  log.info({ linkId, title: link.og_title }, '[embed] Starting');
+  log.info({ recordId, title: record.og_title }, '[embed] Starting');
 
-  const embedding = await createEmbedding(link.summary);
+  const embedding = await createEmbedding(record.summary);
 
   // Store embedding as PostgreSQL vector format
   const vectorStr = `[${embedding.join(',')}]`;
-  await updateLink(linkId, { summary_embedding: vectorStr } as any);
+  await updateRecord(recordId, { summary_embedding: vectorStr } as any);
 
-  log.info({ linkId, dimensions: embedding.length }, '[embed] OK');
+  log.info({ recordId, dimensions: embedding.length }, '[embed] OK');
   return embedding;
 }
 
@@ -207,61 +222,61 @@ const RELATED_MAX_COUNT = 5; // Maximum related links to save
  * Step 4: Related - search for related links based on summary embedding.
  * Filters by score threshold and saves to link_relations table.
  */
-async function relatedStep(linkId: number, userId: number, embedding: number[]): Promise<RelatedLinkResult[]> {
-  log.info({ linkId }, '[related] Starting');
+async function relatedStep(recordId: number, userId: number, embedding: number[]): Promise<RelatedRecordResult[]> {
+  log.info({ recordId }, '[related] Starting');
 
   // Search more than we need, then filter by threshold
-  const searchResults = await searchRelatedLinks(embedding, userId, linkId, 10);
+  const searchResults = await searchRelatedRecords(embedding, userId, recordId, 10);
 
   // Filter by threshold and take top N
-  const relatedLinks = searchResults.filter((r) => r.score >= RELATED_SCORE_THRESHOLD).slice(0, RELATED_MAX_COUNT);
+  const relatedRecords = searchResults.filter((r) => r.score >= RELATED_SCORE_THRESHOLD).slice(0, RELATED_MAX_COUNT);
 
   // Save to link_relations table
-  await saveRelatedLinks(
-    linkId,
-    relatedLinks.map((r) => ({ relatedLinkId: r.id, score: r.score })),
+  await saveRelatedRecords(
+    recordId,
+    relatedRecords.map((r) => ({ relatedRecordId: r.id, score: r.score })),
   );
 
   // Also update JSON field for backward compat (can remove later)
-  await updateLink(linkId, {
-    related_links: JSON.stringify(relatedLinks),
+  await updateRecord(recordId, {
+    related_links: JSON.stringify(relatedRecords),
     related_notes: JSON.stringify([]),
   });
 
   log.info(
-    { linkId, searched: searchResults.length, saved: relatedLinks.length, threshold: RELATED_SCORE_THRESHOLD },
+    { recordId, searched: searchResults.length, saved: relatedRecords.length, threshold: RELATED_SCORE_THRESHOLD },
     '[related] OK',
   );
-  return relatedLinks;
+  return relatedRecords;
 }
 
 /**
  * Step 5: Insight - generate insight with related links context.
  */
 async function insightStep(
-  linkId: number,
+  recordId: number,
   url: string,
   title: string | undefined,
   summary: string,
   relatedIds: number[],
 ): Promise<void> {
-  log.info({ linkId, relatedCount: relatedIds.length }, '[insight] Starting');
+  log.info({ recordId, relatedCount: relatedIds.length }, '[insight] Starting');
 
   const insight = await generateInsight({ url, title }, summary, relatedIds);
 
-  await updateLink(linkId, {
+  await updateRecord(recordId, {
     insight,
     status: 'analyzed',
   });
 
-  log.info({ linkId }, '[insight] OK');
+  log.info({ recordId }, '[insight] OK');
 }
 
 /**
  * Step 6: Export - export link to markdown file + trigger QMD re-index.
  * Currently disabled for cloud deployment.
  */
-async function exportStep(_linkId: number): Promise<void> {
+async function exportStep(_recordId: number): Promise<void> {
   // File export disabled; renderMarkdown kept in export.ts for future use
 }
 
@@ -273,32 +288,32 @@ export function registerTasks(): void {
   app.registerTask({ name: 'process-link' }, async (params: ProcessLinkParams, ctx) => {
     const { userId, url } = params;
 
-    // Resolve or create linkId, and reset status to pending
-    let linkId = params.linkId;
-    if (linkId) {
-      // Existing link passed directly - reset status
-      await updateLink(linkId, { status: 'pending', error_message: undefined });
+    // Resolve or create recordId, and reset status to pending
+    let recordId = params.recordId;
+    if (recordId) {
+      // Existing record passed directly - reset status
+      await updateRecord(recordId, { status: 'pending', error_message: undefined });
     } else {
-      const existing = await getLinkByUrl(userId, url);
+      const existing = await getRecordByUrl(userId, url);
       if (existing?.id) {
-        linkId = existing.id;
-        await updateLink(linkId, { status: 'pending', error_message: undefined });
+        recordId = existing.id;
+        await updateRecord(recordId, { status: 'pending', error_message: undefined });
       } else {
-        linkId = await insertLink(userId, url);
+        recordId = await insertRecord(userId, { url });
       }
     }
 
-    log.info({ linkId, url, taskId: ctx.taskID }, '[process-link] Starting');
+    log.info({ recordId, url, taskId: ctx.taskID }, '[process-link] Starting');
 
     try {
       // Step 1: Scrape (or use probe data, or defer to probe)
       let scrapeData: ScrapeStepResult;
 
       if (params.scrapeData) {
-        // Probe provided scrape data — populate link directly
+        // Probe provided scrape data — populate record directly
         scrapeData = await ctx.step('scrape', async () => {
           const sd = params.scrapeData!;
-          await updateLink(linkId!, {
+          await updateRecord(recordId!, {
             og_title: sd.og_title,
             og_description: sd.og_description,
             og_image: sd.og_image,
@@ -308,26 +323,26 @@ export function registerTasks(): void {
             status: 'scraped',
           });
 
-          log.info({ linkId, title: sd.og_title, chars: sd.markdown.length }, '[scrape] OK (from probe)');
+          log.info({ recordId, title: sd.og_title, chars: sd.markdown.length }, '[scrape] OK (from probe)');
 
           // Process images if provided
           let ocrTexts: string[] = [];
           if (isTwitterUrl(url) && sd.raw_media?.length) {
             try {
-              const images = await processTwitterImages(linkId!, sd.raw_media);
+              const images = await processTwitterImages(recordId!, sd.raw_media);
               if (images.length > 0) {
-                await updateLink(linkId!, { images: JSON.stringify(images) });
+                await updateRecord(recordId!, { images: JSON.stringify(images) });
                 ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
               }
             } catch (imgErr) {
               log.warn(
-                { linkId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
+                { recordId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
                 '[images] Failed (non-fatal)',
               );
               Sentry.captureException(imgErr, {
                 level: 'warning',
                 tags: { step: 'scrape', sub: 'twitter-images' },
-                extra: { linkId },
+                extra: { recordId },
               });
             }
           }
@@ -344,58 +359,65 @@ export function registerTasks(): void {
         // Twitter URL without probe data — create probe event and wait
         const { pushEventToProbe } = await import('./web.js');
         const eventId = crypto.randomBytes(8).toString('hex');
-        await createProbeEvent(eventId, userId, linkId!, url, 'twitter');
-        await updateLink(linkId!, { status: 'waiting_probe' });
+        await createProbeEvent(eventId, userId, recordId!, url, 'twitter');
+        await updateRecord(recordId!, { status: 'waiting_probe' });
 
         pushEventToProbe(userId, 'scrape_request', {
           event_id: eventId,
           url,
           url_type: 'twitter',
-          link_id: linkId,
+          link_id: recordId,
         });
 
-        log.info({ linkId, url, eventId }, '[process-link] Waiting for probe, returning early');
-        return { linkId, title: undefined, status: 'waiting_probe' };
+        log.info({ recordId, url, eventId }, '[process-link] Waiting for probe, returning early');
+        return { recordId, title: undefined, status: 'waiting_probe' };
       } else {
         // Normal scrape
         scrapeData = await ctx.step('scrape', async () => {
-          return await scrapeStep(linkId!, url);
+          return await scrapeStep(recordId!, url);
         });
+      }
+
+      // Check if this is a derived link (added_by_user=false) — stop at scraped
+      const currentRecord = await getRecord(recordId!);
+      if (currentRecord && !currentRecord.added_by_user) {
+        log.info({ recordId, url }, '[process-link] Derived link, stopping at scraped');
+        return { recordId, title: scrapeData.title, status: 'scraped' };
       }
 
       // Step 2: Summarize
       const summaryData = await ctx.step('summarize', async () => {
-        return await summarizeStep(linkId!, url, scrapeData);
+        return await summarizeStep(recordId!, url, scrapeData);
       });
 
       // Step 3: Embed (summary only)
       const embedding = await ctx.step('embed', async () => {
-        return await embedStep(linkId!);
+        return await embedStep(recordId!);
       });
 
-      // Step 4: Related links
-      const relatedLinks = await ctx.step('related', async () => {
-        return await relatedStep(linkId!, userId, embedding);
+      // Step 4: Related records
+      const relatedRecords = await ctx.step('related', async () => {
+        return await relatedStep(recordId!, userId, embedding);
       });
 
       // Step 5: Insight
       await ctx.step('insight', async () => {
-        const relatedIds = relatedLinks.map((r) => r.id);
-        await insightStep(linkId!, url, scrapeData.title, summaryData.summary, relatedIds);
+        const relatedIds = relatedRecords.map((r) => r.id);
+        await insightStep(recordId!, url, scrapeData.title, summaryData.summary, relatedIds);
       });
 
       // Step 6: Export
       await ctx.step('export', async () => {
-        await exportStep(linkId!);
+        await exportStep(recordId!);
       });
 
-      log.info({ linkId, url, title: scrapeData.title }, '[process-link] Complete');
-      return { linkId, title: scrapeData.title, status: 'analyzed' };
+      log.info({ recordId, url, title: scrapeData.title }, '[process-link] Complete');
+      return { recordId, title: scrapeData.title, status: 'analyzed' };
     } catch (err) {
-      // Update link status to error with error message
+      // Update record status to error with error message
       const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error({ linkId, url, err: errorMessage }, '[process-link] Failed');
-      await updateLink(linkId!, { status: 'error', error_message: errorMessage.slice(0, 1000) });
+      log.error({ recordId, url, err: errorMessage }, '[process-link] Failed');
+      await updateRecord(recordId!, { status: 'error', error_message: errorMessage.slice(0, 1000) });
 
       // Check if this is a permanent error that should not be retried
       const permanentErrors = [
@@ -411,14 +433,14 @@ export function registerTasks(): void {
       if (isPermanent || isLastAttempt) {
         Sentry.captureException(err, {
           tags: { task: 'process-link' },
-          extra: { linkId, url, userId, attempt: task?.attempt, maxAttempts: task?.max_attempts },
+          extra: { recordId, url, userId, attempt: task?.attempt, maxAttempts: task?.max_attempts },
         });
       }
 
       if (isPermanent) {
-        log.info({ linkId, url }, '[process-link] Permanent error, not retrying');
+        log.info({ recordId, url }, '[process-link] Permanent error, not retrying');
         // Return without throwing to prevent Absurd from retrying
-        return { linkId, title: undefined, status: 'error' };
+        return { recordId, title: undefined, status: 'error' };
       }
 
       // Re-throw to let Absurd handle retry logic for transient errors
@@ -429,55 +451,161 @@ export function registerTasks(): void {
   /* ── Task: refresh-related ── */
 
   app.registerTask({ name: 'refresh-related' }, async (params: RefreshRelatedParams, ctx) => {
-    const { linkId } = params;
-    const link = await getLink(linkId);
-    if (!link) throw new Error(`Link ${linkId} not found`);
-    if (!link.summary) throw new Error(`Link ${linkId} missing summary`);
+    const { recordId } = params;
+    const record = await getRecord(recordId);
+    if (!record) throw new Error(`Record ${recordId} not found`);
+    if (!record.summary) throw new Error(`Record ${recordId} missing summary`);
 
-    const title = link.og_title || link.url;
-    log.info({ linkId, title }, '[refresh-related] Starting');
+    const title = record.og_title || record.url;
+    log.info({ recordId, title }, '[refresh-related] Starting');
 
     try {
       // Re-embed if needed
       let embedding: number[];
-      if (link.summary_embedding) {
-        embedding = JSON.parse(link.summary_embedding);
+      if (record.summary_embedding) {
+        embedding = JSON.parse(record.summary_embedding);
       } else {
         embedding = await ctx.step('embed', async () => {
-          return await embedStep(linkId);
+          return await embedStep(recordId);
         });
       }
 
       // Search related
-      const relatedLinks = await ctx.step('related', async () => {
-        return await relatedStep(linkId, link.user_id, embedding);
+      const relatedRecords = await ctx.step('related', async () => {
+        return await relatedStep(recordId, record.user_id, embedding);
       });
 
       // Regenerate insight
       await ctx.step('insight', async () => {
-        const relatedIds = relatedLinks.map((r) => r.id);
-        await insightStep(linkId, link.url, link.og_title, link.summary!, relatedIds);
+        const relatedIds = relatedRecords.map((r) => r.id);
+        await insightStep(recordId, record.url!, record.og_title, record.summary!, relatedIds);
       });
 
       // Re-export
       await ctx.step('export', async () => {
-        await exportStep(linkId);
+        await exportStep(recordId);
       });
 
-      log.info({ linkId, title, relatedCount: relatedLinks.length }, '[refresh-related] Complete');
-      return { linkId, relatedLinks: relatedLinks.length };
+      log.info({ recordId, title, relatedCount: relatedRecords.length }, '[refresh-related] Complete');
+      return { recordId, relatedRecords: relatedRecords.length };
     } catch (err) {
       const task = (ctx as any).task;
       const isLastAttempt = task && task.attempt >= (task.max_attempts || 2);
       if (isLastAttempt) {
         Sentry.captureException(err, {
           tags: { task: 'refresh-related' },
-          extra: { linkId, attempt: task?.attempt },
+          extra: { recordId, attempt: task?.attempt },
         });
       }
       throw err;
     }
   });
+
+  /* ── Task: process-note ── */
+
+  app.registerTask({ name: 'process-note' }, async (params: ProcessNoteParams, ctx) => {
+    const { userId, recordId } = params;
+    const record = await getRecord(recordId);
+    if (!record?.content) throw new Error(`Note ${recordId} content not found`);
+
+    log.info({ recordId, contentLength: record.content.length, taskId: ctx.taskID }, '[process-note] Starting');
+
+    try {
+      // Step 1: Summarize (conditional on content length)
+      const summaryData = await ctx.step('summarize', async () => {
+        return await noteSummarizeStep(recordId, record.content!);
+      });
+
+      // Step 2: Embed (summary only)
+      const embedding = await ctx.step('embed', async () => {
+        return await embedStep(recordId);
+      });
+
+      // Step 3: Related records
+      const relatedRecords = await ctx.step('related', async () => {
+        return await relatedStep(recordId, userId, embedding);
+      });
+
+      // Step 4: Insight
+      await ctx.step('insight', async () => {
+        const relatedIds = relatedRecords.map((r) => r.id);
+        await noteInsightStep(recordId, record.content!, summaryData.summary, relatedIds);
+      });
+
+      await updateRecord(recordId, { status: 'analyzed' });
+
+      log.info({ recordId }, '[process-note] Complete');
+      return { recordId, status: 'analyzed' };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error({ recordId, err: errorMessage }, '[process-note] Failed');
+      await updateRecord(recordId, { status: 'error', error_message: errorMessage.slice(0, 1000) });
+
+      const task = (ctx as any).task;
+      const isLastAttempt = task && task.attempt >= (task.max_attempts || 3);
+      if (isLastAttempt) {
+        Sentry.captureException(err, {
+          tags: { task: 'process-note' },
+          extra: { recordId, userId, attempt: task?.attempt },
+        });
+      }
+
+      throw err;
+    }
+  });
+}
+
+/* ── Note step functions ── */
+
+interface NoteSummarizeResult {
+  summary: string;
+  tags: string[];
+}
+
+/**
+ * Summarize a note: if content > 200 chars, generate full summary + tags via LLM.
+ * Otherwise, copy content as summary and only generate tags.
+ */
+async function noteSummarizeStep(recordId: number, content: string): Promise<NoteSummarizeResult> {
+  log.info({ recordId, contentLength: content.length }, '[note-summarize] Starting');
+
+  if (content.length > 200) {
+    // Long note: full summarize + tags via LLM
+    const result = await generateNoteSummary(content);
+    await updateRecord(recordId, {
+      summary: result.summary,
+      tags: JSON.stringify(result.tags),
+    });
+    log.info({ recordId, tags: result.tags.length }, '[note-summarize] OK (full)');
+    return result;
+  } else {
+    // Short note: content IS the summary, only generate tags
+    const tags = await generateNoteTags(content);
+    await updateRecord(recordId, {
+      summary: content,
+      tags: JSON.stringify(tags),
+    });
+    log.info({ recordId, tags: tags.length }, '[note-summarize] OK (short, tags only)');
+    return { summary: content, tags };
+  }
+}
+
+/**
+ * Generate insight for a note based on its content and related records.
+ */
+async function noteInsightStep(
+  recordId: number,
+  content: string,
+  summary: string,
+  relatedIds: number[],
+): Promise<void> {
+  log.info({ recordId, relatedCount: relatedIds.length }, '[note-insight] Starting');
+
+  const insight = await generateNoteInsight(content, summary, relatedIds);
+
+  await updateRecord(recordId, { insight });
+
+  log.info({ recordId }, '[note-insight] OK');
 }
 
 /* ── Public API: spawn tasks ── */
@@ -489,30 +617,42 @@ export function registerTasks(): void {
 export async function spawnProcessLink(
   userId: number,
   url: string,
-  linkId?: number,
+  recordId?: number,
   scrapeData?: ScrapeData,
 ): Promise<SpawnProcessResult> {
   const result = await getAbsurd().spawn(
     'process-link',
-    { userId, url, linkId, scrapeData } satisfies ProcessLinkParams,
+    { userId, url, recordId, scrapeData } satisfies ProcessLinkParams,
     {
       maxAttempts: 3,
       retryStrategy: { kind: 'exponential', baseSeconds: 10, factor: 2, maxSeconds: 300 },
     },
   );
   log.info({ taskId: result.taskID, url, userId }, 'Spawned process-link task');
-  return { taskId: result.taskID, linkId };
+  return { taskId: result.taskID, recordId };
+}
+
+/**
+ * Spawn a process-note task via Absurd.
+ */
+export async function spawnProcessNote(userId: number, recordId: number): Promise<SpawnProcessResult> {
+  const result = await getAbsurd().spawn('process-note', { userId, recordId } satisfies ProcessNoteParams, {
+    maxAttempts: 3,
+    retryStrategy: { kind: 'exponential', baseSeconds: 10, factor: 2, maxSeconds: 300 },
+  });
+  log.info({ taskId: result.taskID, recordId, userId }, 'Spawned process-note task');
+  return { taskId: result.taskID, recordId };
 }
 
 /**
  * Spawn a refresh-related task via Absurd.
  */
-export async function spawnRefreshRelated(linkId: number): Promise<string> {
-  const result = await getAbsurd().spawn('refresh-related', { linkId } satisfies RefreshRelatedParams, {
+export async function spawnRefreshRelated(recordId: number): Promise<string> {
+  const result = await getAbsurd().spawn('refresh-related', { recordId } satisfies RefreshRelatedParams, {
     maxAttempts: 2,
     retryStrategy: { kind: 'fixed', baseSeconds: 30 },
   });
-  log.info({ taskId: result.taskID, linkId }, 'Spawned refresh-related task');
+  log.info({ taskId: result.taskID, recordId }, 'Spawned refresh-related task');
   return result.taskID;
 }
 
@@ -544,131 +684,133 @@ export async function startWorker(): Promise<void> {
   process.on('SIGINT', shutdown);
 }
 
-/* ── Public API: processUrl / retryLink ── */
+/* ── Public API: processUrl / retryRecord ── */
 
 /**
- * Process a URL: upsert link record, then spawn the durable task.
+ * Process a URL: upsert record, then spawn the durable task.
  * Returns spawn result (taskId). Callers poll the DB for completion.
  */
 export async function processUrl(userId: number, url: string): Promise<SpawnProcessResult> {
-  const existing = await getLinkByUrl(userId, url);
+  const existing = await getRecordByUrl(userId, url);
   if (existing && existing.id) {
-    log.info({ url, linkId: existing.id }, '[start] URL already exists, re-processing');
+    log.info({ url, recordId: existing.id }, '[start] URL already exists, re-processing');
     // Status reset happens inside task handler
     return spawnProcessLink(userId, url, existing.id);
   }
 
-  const linkId = await insertLink(userId, url);
-  log.info({ url, linkId }, '[start] Processing URL');
-  return spawnProcessLink(userId, url, linkId);
+  const recordId = await insertRecord(userId, { url });
+  log.info({ url, recordId }, '[start] Processing URL');
+  return spawnProcessLink(userId, url, recordId);
 }
 
 /**
- * Retry a link: reset status and spawn a new process-link task.
+ * Retry a record: reset status and spawn a new process-link task.
  * Returns spawn result (taskId). Async — does not wait for completion.
  */
-export async function retryLink(linkId: number): Promise<SpawnProcessResult> {
-  const link = await getLink(linkId);
-  if (!link) {
-    throw new Error(`Link ${linkId} not found`);
+export async function retryRecord(recordId: number): Promise<SpawnProcessResult> {
+  const record = await getRecord(recordId);
+  if (!record) {
+    throw new Error(`Record ${recordId} not found`);
   }
 
-  log.info({ url: link.url, linkId, prevStatus: link.status }, '[retry] Retrying link');
+  log.info({ url: record.url, recordId, prevStatus: record.status }, '[retry] Retrying record');
   // Status reset happens inside task handler
-  return spawnProcessLink(link.user_id, link.url, linkId);
+  return spawnProcessLink(record.user_id, record.url!, recordId);
 }
 
 /* ── Delete ── */
 
 export interface DeleteResult {
-  linkId: number;
+  recordId: number;
   url: string;
-  relatedLinksUpdated: number;
+  relatedRecordsUpdated: number;
 }
 
 /**
- * Delete a link and clean up all references:
- * 1. Remove from other links' related_links
+ * Delete a record and clean up all references:
+ * 1. Remove from other records' related_links
  * 2. Delete from database
  */
-export async function deleteLinkFull(linkId: number): Promise<DeleteResult> {
-  const link = await getLink(linkId);
-  if (!link) {
-    throw new Error(`Link ${linkId} not found`);
+export async function deleteRecordFull(recordId: number): Promise<DeleteResult> {
+  const record = await getRecord(recordId);
+  if (!record) {
+    throw new Error(`Record ${recordId} not found`);
   }
 
-  log.info({ linkId, url: link.url }, '[delete] Starting');
+  log.info({ recordId, url: record.url }, '[delete] Starting');
 
-  // 1. Remove from other links' related_links
-  const relatedLinksUpdated = await removeFromRelatedLinks(linkId);
-  log.info({ linkId, relatedLinksUpdated }, '[delete] Cleaned up related_links references');
+  // 1. Remove from other records' related_links
+  const relatedRecordsUpdated = await removeFromRelatedRecords(recordId);
+  log.info({ recordId, relatedRecordsUpdated }, '[delete] Cleaned up related_links references');
 
   // 2. Delete from database
-  await deleteLink(linkId);
-  log.info({ linkId }, '[delete] Deleted from database');
+  await deleteRecord(recordId);
+  log.info({ recordId }, '[delete] Deleted from database');
 
-  return { linkId, url: link.url, relatedLinksUpdated };
+  return { recordId, url: record.url || '', relatedRecordsUpdated };
 }
 
 /* ── Refresh related ── */
 
 export interface RefreshResult {
-  linkId: number;
+  recordId: number;
   title: string;
-  relatedLinks: number;
+  relatedRecords: number;
   error?: string;
 }
 
 /**
- * Refresh related links + insight for a single link or all analyzed links.
+ * Refresh related records + insight for a single record or all analyzed records.
  * Does NOT re-scrape or re-summarize.
  */
-export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> {
-  const links = linkId ? ([await getLink(linkId)].filter(Boolean) as LinkRecord[]) : await getAllAnalyzedLinks();
+export async function refreshRelated(recordId?: number): Promise<RefreshResult[]> {
+  const records = recordId
+    ? ([await getRecord(recordId)].filter(Boolean) as RecordEntry[])
+    : await getAllAnalyzedRecords();
 
-  if (links.length === 0) {
-    log.warn({ linkId }, '[refresh] No links found');
+  if (records.length === 0) {
+    log.warn({ recordId }, '[refresh] No records found');
     return [];
   }
 
-  log.info({ count: links.length, linkId: linkId ?? 'all' }, '[refresh] Starting');
+  log.info({ count: records.length, recordId: recordId ?? 'all' }, '[refresh] Starting');
   const results: RefreshResult[] = [];
 
-  for (const link of links) {
-    const id = link.id!;
-    const title = link.og_title || link.url;
+  for (const record of records) {
+    const id = record.id!;
+    const title = record.og_title || record.url || '';
 
     try {
-      if (!link.summary) {
-        log.warn({ linkId: id, title }, '[refresh] Skipped (missing summary)');
-        results.push({ linkId: id, title, relatedLinks: 0, error: 'missing summary' });
+      if (!record.summary) {
+        log.warn({ recordId: id, title }, '[refresh] Skipped (missing summary)');
+        results.push({ recordId: id, title, relatedRecords: 0, error: 'missing summary' });
         continue;
       }
 
       // Get or create embedding
       let embedding: number[];
-      if (link.summary_embedding) {
-        embedding = JSON.parse(link.summary_embedding);
+      if (record.summary_embedding) {
+        embedding = JSON.parse(record.summary_embedding);
       } else {
-        log.info({ linkId: id, title }, '[refresh] Generating embedding...');
+        log.info({ recordId: id, title }, '[refresh] Generating embedding...');
         embedding = await embedStep(id);
       }
 
       // Search related
-      log.info({ linkId: id, title }, '[refresh] Searching related links...');
-      const relatedLinks = await relatedStep(id, link.user_id, embedding);
+      log.info({ recordId: id, title }, '[refresh] Searching related records...');
+      const relatedRecords = await relatedStep(id, record.user_id, embedding);
 
       // Regenerate insight
-      log.info({ linkId: id, title }, '[refresh] Generating insight...');
-      const relatedIds = relatedLinks.map((r) => r.id);
-      await insightStep(id, link.url, link.og_title, link.summary, relatedIds);
+      log.info({ recordId: id, title }, '[refresh] Generating insight...');
+      const relatedIds = relatedRecords.map((r) => r.id);
+      await insightStep(id, record.url!, record.og_title, record.summary, relatedIds);
 
-      log.info({ linkId: id, title, relatedCount: relatedLinks.length }, '[refresh] Done');
-      results.push({ linkId: id, title, relatedLinks: relatedLinks.length });
+      log.info({ recordId: id, title, relatedCount: relatedRecords.length }, '[refresh] Done');
+      results.push({ recordId: id, title, relatedRecords: relatedRecords.length });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      log.error({ linkId: id, title, err: errMsg }, '[refresh] Failed');
-      results.push({ linkId: id, title, relatedLinks: 0, error: errMsg });
+      log.error({ recordId: id, title, err: errMsg }, '[refresh] Failed');
+      results.push({ recordId: id, title, relatedRecords: 0, error: errMsg });
     }
   }
 
@@ -680,20 +822,20 @@ export async function refreshRelated(linkId?: number): Promise<RefreshResult[]> 
 
 /**
  * Handle a scrape result received from a probe device.
- * Looks up the probe event, finds the associated link, and resumes processing.
+ * Looks up the probe event, finds the associated record, and resumes processing.
  */
 export async function handleProbeResult(eventId: string, scrapeData: ScrapeData): Promise<void> {
   const event = await getProbeEventById(eventId);
   if (!event) throw new Error(`Probe event ${eventId} not found`);
 
-  const linkId = event.link_id;
-  if (!linkId) throw new Error(`Probe event ${eventId} has no link_id`);
+  const recordId = event.link_id;
+  if (!recordId) throw new Error(`Probe event ${eventId} has no link_id`);
 
-  const link = await getLink(linkId);
-  if (!link) throw new Error(`Link ${linkId} not found for probe event ${eventId}`);
+  const record = await getRecord(recordId);
+  if (!record) throw new Error(`Record ${recordId} not found for probe event ${eventId}`);
 
-  log.info({ eventId, linkId, url: event.url }, '[probe-result] Resuming pipeline with probe data');
+  log.info({ eventId, recordId, url: event.url }, '[probe-result] Resuming pipeline with probe data');
 
   // Spawn a new process-link task with the probe scrape data
-  await spawnProcessLink(link.user_id, event.url, linkId, scrapeData);
+  await spawnProcessLink(record.user_id, event.url, recordId, scrapeData);
 }

@@ -64,7 +64,7 @@ vi.mock('./llm.js', () => ({
 
 // ── Mock search (for related content) ──
 vi.mock('./search.js', () => ({
-  searchRelatedLinks: vi.fn().mockResolvedValue([]),
+  searchRelatedRecords: vi.fn().mockResolvedValue([]),
 }));
 
 // ── Mock export (file export disabled, renderMarkdown kept for future use) ──
@@ -133,9 +133,15 @@ async function createTestDatabase(): Promise<void> {
         invite_id INTEGER REFERENCES invites(id)
       );
 
-      CREATE TABLE IF NOT EXISTS links (
+      CREATE TABLE IF NOT EXISTS records (
         id SERIAL PRIMARY KEY,
-        url TEXT NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        type TEXT NOT NULL DEFAULT 'link',
+        url TEXT,
+        content TEXT,
+        source_url TEXT,
+        user_note TEXT,
+        added_by_user BOOLEAN NOT NULL DEFAULT TRUE,
         og_title TEXT,
         og_description TEXT,
         og_image TEXT,
@@ -149,25 +155,36 @@ async function createTestDatabase(): Promise<void> {
         tags JSONB DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'pending',
         error_message TEXT,
+        telegram_message_id BIGINT,
+        telegram_chat_id BIGINT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        user_id INTEGER NOT NULL REFERENCES users(id),
         images TEXT,
         summary_embedding vector(1536)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_links_url ON links(url);
-      CREATE INDEX IF NOT EXISTS idx_links_user_id ON links(user_id);
-      CREATE INDEX IF NOT EXISTS idx_links_status ON links(status);
-      CREATE INDEX IF NOT EXISTS idx_links_created_at ON links(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_records_url ON records(url);
+      CREATE INDEX IF NOT EXISTS idx_records_user_id ON records(user_id);
+      CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+      CREATE INDEX IF NOT EXISTS idx_records_created_at ON records(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_records_type ON records(type);
+      CREATE INDEX IF NOT EXISTS idx_records_added_by_user ON records(added_by_user);
+      CREATE INDEX IF NOT EXISTS idx_records_telegram_msg ON records(telegram_chat_id, telegram_message_id);
 
-      CREATE TABLE IF NOT EXISTS link_relations (
+      CREATE TABLE IF NOT EXISTS record_relations (
         id SERIAL PRIMARY KEY,
-        link_id INTEGER NOT NULL REFERENCES links(id) ON DELETE CASCADE,
-        related_link_id INTEGER NOT NULL REFERENCES links(id) ON DELETE CASCADE,
+        record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+        related_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
         score REAL NOT NULL,
         created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(link_id, related_link_id)
+        UNIQUE(record_id, related_record_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS record_derivations (
+        source_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+        derived_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (source_record_id, derived_record_id)
       );
 
       CREATE TABLE IF NOT EXISTS probe_devices (
@@ -182,7 +199,7 @@ async function createTestDatabase(): Promise<void> {
       CREATE TABLE IF NOT EXISTS probe_events (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
-        link_id INTEGER REFERENCES links(id),
+        link_id INTEGER REFERENCES records(id),
         url TEXT NOT NULL,
         url_type TEXT NOT NULL,
         status TEXT DEFAULT 'pending',
@@ -237,13 +254,13 @@ async function dropTestDatabase(): Promise<void> {
 
 // ── Helpers ──
 
-import { getLink, getLinkByUrl } from './db.js';
-import { startWorker, spawnProcessLink } from './pipeline.js';
+import { getRecord, getRecordByUrl, insertNote, insertRecord, appendUserNote, getRecordByTelegramMessage } from './db.js';
+import { startWorker, spawnProcessLink, spawnProcessNote } from './pipeline.js';
 
 async function waitForLink(userId: number, url: string, timeoutMs: number = 60_000): Promise<number> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const link = await getLinkByUrl(userId, url);
+    const link = await getRecordByUrl(userId, url);
     if (link?.id && link.status === 'analyzed') return link.id;
     if (link?.id && link.status === 'error') throw new Error(`Pipeline failed: ${link.error_message}`);
     await new Promise((r) => setTimeout(r, 500));
@@ -292,7 +309,7 @@ describe('Pipeline integration', () => {
     expect(taskId).toBeTruthy();
 
     const linkId = await waitForLink(testUserId, TEST_URL);
-    const link = await getLink(linkId);
+    const link = await getRecord(linkId);
 
     expect(link).toBeDefined();
     expect(link!.status).toBe('analyzed');
@@ -304,7 +321,7 @@ describe('Pipeline integration', () => {
 
   it('should upsert when processing the same URL again', async () => {
     // Get the existing link
-    const existingLink = await getLinkByUrl(testUserId, TEST_URL);
+    const existingLink = await getRecordByUrl(testUserId, TEST_URL);
     expect(existingLink).toBeDefined();
     const originalId = existingLink!.id!;
 
@@ -317,7 +334,7 @@ describe('Pipeline integration', () => {
     // Should be the same link ID (upsert, not duplicate)
     expect(linkId).toBe(originalId);
 
-    const link = await getLink(linkId);
+    const link = await getRecord(linkId);
     expect(link).toBeDefined();
     expect(link!.status).toBe('analyzed');
     expect(link!.og_title).toBe('What HotS Means to Me');
@@ -326,10 +343,110 @@ describe('Pipeline integration', () => {
   it('should have exactly one record for the test URL', async () => {
     const pool = new pg.Pool({ connectionString: TEST_DB_URL });
     try {
-      const res = await pool.query('SELECT COUNT(*) as count FROM links WHERE url = $1', [TEST_URL]);
+      const res = await pool.query('SELECT COUNT(*) as count FROM records WHERE url = $1', [TEST_URL]);
       expect(parseInt(res.rows[0].count)).toBe(1);
     } finally {
       await pool.end();
     }
+  });
+
+  // ── Note tests ──
+
+  it('should insert a note record and process it through note pipeline', async () => {
+    const noteContent =
+      '今天研究了 RAG 的几种实现方式，发现 naive chunking 效果很差，' +
+      'semantic chunking 配合 re-ranking 效果好很多。关键是 chunk size 的选择，' +
+      '太大会稀释语义，太小会丢失上下文。HyDE 也是个有趣的方向，用 LLM 生成假设性文档来做检索。' +
+      '另外 ColBERT 的 late interaction 模式在长文档检索上表现很好。';
+
+    const recordId = await insertNote(testUserId, noteContent, {
+      telegramMessageId: 12345,
+      telegramChatId: -100123,
+    });
+    expect(recordId).toBeGreaterThan(0);
+
+    // Verify the record was created correctly
+    const record = await getRecord(recordId);
+    expect(record).toBeDefined();
+    expect(record!.type).toBe('note');
+    expect(record!.content).toBe(noteContent);
+    expect(record!.url).toBeUndefined();
+    expect(record!.added_by_user).toBe(true);
+    expect(Number(record!.telegram_message_id)).toBe(12345);
+    expect(Number(record!.telegram_chat_id)).toBe(-100123);
+
+    // Process through note pipeline
+    const { taskId } = await spawnProcessNote(testUserId, recordId);
+    expect(taskId).toBeTruthy();
+
+    // Wait for processing
+    const start = Date.now();
+    while (Date.now() - start < 30_000) {
+      const r = await getRecord(recordId);
+      if (r?.status === 'analyzed') break;
+      if (r?.status === 'error') throw new Error(`Note pipeline failed: ${r.error_message}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    const processed = await getRecord(recordId);
+    expect(processed!.status).toBe('analyzed');
+    expect(processed!.summary).toBeTruthy();
+    expect(processed!.tags).toBeTruthy();
+    expect(processed!.insight).toBeTruthy();
+  });
+
+  it('should insert a link record with user_note', async () => {
+    const recordId = await insertRecord(testUserId, {
+      type: 'link',
+      url: 'https://example.com/test-note',
+      user_note: '这个链接很有意思',
+    });
+
+    const record = await getRecord(recordId);
+    expect(record).toBeDefined();
+    expect(record!.type).toBe('link');
+    expect(record!.url).toBe('https://example.com/test-note');
+    expect(record!.user_note).toBe('这个链接很有意思');
+    expect(record!.added_by_user).toBe(true);
+  });
+
+  it('should append user notes correctly', async () => {
+    const recordId = await insertNote(testUserId, 'Initial note content');
+
+    await appendUserNote(recordId, 'First comment');
+    let record = await getRecord(recordId);
+    expect(record!.user_note).toBe('First comment');
+
+    await appendUserNote(recordId, 'Second comment');
+    record = await getRecord(recordId);
+    expect(record!.user_note).toBe('First comment\n\nSecond comment');
+  });
+
+  it('should find record by telegram message', async () => {
+    const recordId = await insertNote(testUserId, 'Telegram linked note', {
+      telegramMessageId: 99999,
+      telegramChatId: -100999,
+    });
+
+    const found = await getRecordByTelegramMessage(-100999, 99999);
+    expect(found).toBeDefined();
+    expect(found!.id).toBe(recordId);
+    expect(found!.content).toBe('Telegram linked note');
+
+    // Should return undefined for non-existent message
+    const notFound = await getRecordByTelegramMessage(-100999, 88888);
+    expect(notFound).toBeUndefined();
+  });
+
+  it('should insert a derived record (added_by_user = false)', async () => {
+    const recordId = await insertRecord(testUserId, {
+      type: 'link',
+      url: 'https://example.com/derived',
+      added_by_user: false,
+    });
+
+    const record = await getRecord(recordId);
+    expect(record).toBeDefined();
+    expect(record!.added_by_user).toBe(false);
   });
 });

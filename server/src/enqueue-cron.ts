@@ -4,7 +4,7 @@
  * and spawns the pipeline for each.
  */
 
-import { getEnqueuedLinks, updateLink } from './db.js';
+import { getEnqueuedRecords, updateRecord } from './db.js';
 import { spawnProcessLink } from './pipeline.js';
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
@@ -23,21 +23,21 @@ export function startEnqueueCron(perUser?: number): void {
 
   timer = setInterval(async () => {
     try {
-      const links = await getEnqueuedLinks(limit);
-      if (links.length === 0) return;
+      const records = await getEnqueuedRecords(limit);
+      if (records.length === 0) return;
 
-      log.info({ count: links.length }, 'Processing enqueued links');
+      log.info({ count: records.length }, 'Processing enqueued records');
 
-      for (const link of links) {
+      for (const record of records) {
         try {
           // Update status to pending before spawning
-          await updateLink(link.id!, { status: 'pending' });
-          await spawnProcessLink(link.user_id, link.url, link.id!);
-          log.info({ linkId: link.id, url: link.url, userId: link.user_id }, 'Spawned enqueued link');
+          await updateRecord(record.id!, { status: 'pending' });
+          await spawnProcessLink(record.user_id, record.url!, record.id!);
+          log.info({ recordId: record.id, url: record.url, userId: record.user_id }, 'Spawned enqueued record');
         } catch (err) {
           log.error(
-            { linkId: link.id, err: err instanceof Error ? err.message : String(err) },
-            'Failed to spawn enqueued link',
+            { recordId: record.id, err: err instanceof Error ? err.message : String(err) },
+            'Failed to spawn enqueued record',
           );
         }
       }
