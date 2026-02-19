@@ -106,30 +106,70 @@ export async function hybridSearch(query: string, userId: number, limit: number 
 }
 
 /**
- * Build a ParadeDB BM25 query string targeting text columns.
- * Escapes special characters to prevent Tantivy query syntax injection.
+ * Detect pg_search major version. Cached after first call.
+ * - 0.21+: match() tokenizes CJK via lindera
+ * - 0.15: match() doesn't tokenize CJK, need regex()
  */
-function buildBM25Query(query: string): string {
-  // Escape Tantivy special characters: + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
-  const escaped = query.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, '\\$&');
-  return `og_title:${escaped} OR summary:${escaped} OR markdown:${escaped}`;
+let pgSearchVersion: string | null = null;
+async function getPgSearchVersion(): Promise<string> {
+  if (pgSearchVersion) return pgSearchVersion;
+  const result = await getDb()
+    .selectFrom(sql`pg_extension`.as('e'))
+    .select(sql<string>`extversion`.as('v'))
+    .where(sql`extname`, '=', 'pg_search')
+    .executeTakeFirst();
+  pgSearchVersion = result?.v ?? '0.0.0';
+  return pgSearchVersion;
+}
+
+function semverGte(version: string, target: string): boolean {
+  const [a1, a2] = version.split('.').map(Number);
+  const [b1, b2] = target.split('.').map(Number);
+  return a1 > b1 || (a1 === b1 && a2 >= b2);
 }
 
 /**
  * BM25 full-text search using pg_search.
+ * - pg_search >= 0.21: match() handles CJK via lindera tokenizer
+ * - pg_search < 0.21: regex() needed for CJK (default tokenizer doesn't split CJK)
+ * - Non-CJK: match() works on both versions
  */
 async function searchBM25(query: string, userId: number, limit: number): Promise<RankedResult[]> {
   const db = getDb();
 
   try {
-    // Use pg_search's score_bm25 for ranking
+    const version = await getPgSearchVersion();
+    const useMatch = semverGte(version, '0.21');
+
+    let bm25Predicate;
+    if (useMatch) {
+      // 0.21+: match() tokenizes CJK properly via lindera
+      bm25Predicate = sql<boolean>`id @@@ paradedb.boolean(
+        should => ARRAY[
+          paradedb.match('og_title', ${query}),
+          paradedb.match('summary', ${query}),
+          paradedb.match('markdown', ${query})
+        ]
+      )`;
+    } else {
+      // < 0.21: regex for CJK substring matching
+      const regexPattern = `.*${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*`;
+      bm25Predicate = sql<boolean>`id @@@ paradedb.boolean(
+        should => ARRAY[
+          paradedb.regex('og_title', ${regexPattern}),
+          paradedb.regex('summary', ${regexPattern}),
+          paradedb.regex('markdown', ${regexPattern})
+        ]
+      )`;
+    }
+
     const results = await db
       .selectFrom('records')
       .select(['id', 'url', 'og_title', 'summary'])
       .select(sql<number>`paradedb.score(id)`.as('score'))
       .where('user_id', '=', userId)
       .where('status', '=', 'analyzed')
-      .where(sql<boolean>`id @@@ paradedb.parse(${buildBM25Query(query)})`)
+      .where(bm25Predicate)
       .orderBy(sql`paradedb.score(id)`, 'desc')
       .limit(limit)
       .execute();
