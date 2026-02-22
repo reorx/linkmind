@@ -1,0 +1,13 @@
+node_modules
+*/node_modules
+.git
+data
+server/data
+server/data-export
+deploy
+notes
+server/notes
+probe
+*.md
+!core/package.json
+!server/package.json
