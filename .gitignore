@@ -3,3 +3,4 @@ dist/
 .env
 data/
 data-export/
+deploy/ansible/roles/caddy/files/origin-*.pem
