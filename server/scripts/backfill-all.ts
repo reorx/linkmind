@@ -8,9 +8,9 @@
  */
 import 'dotenv/config';
 import { Pool } from 'pg';
-import { getAllAnalyzedRecords } from './db.js';
-import { registerTasks, spawnProcessLink } from './pipeline.js';
-import { initLogger } from './logger.js';
+import { getAllAnalyzedRecords } from '../src/db/index.js';
+import { registerTasks, spawnProcessLink } from '../src/pipeline.js';
+import { initLogger } from '../src/logger.js';
 
 initLogger();
 registerTasks();

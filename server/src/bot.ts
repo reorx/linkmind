@@ -21,7 +21,7 @@ import {
   useInvite,
   getUserByTelegramId,
   getRelatedRecords,
-} from './db.js';
+} from './db/index.js';
 import { spawnProcessLink, spawnProcessNote } from './pipeline.js';
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';

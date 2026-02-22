@@ -20,7 +20,7 @@ import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'v
 import pg from 'pg';
 
 // ── Mock scraper ──
-vi.mock('./scraper.js', () => ({
+vi.mock('../scraper.js', () => ({
   scrapeUrl: vi.fn().mockResolvedValue({
     title: 'What HotS Means to Me',
     og: {
@@ -45,8 +45,8 @@ vi.mock('./scraper.js', () => ({
 }));
 
 // ── Mock LLM ──
-vi.mock('./llm.js', () => ({
-  createEmbedding: vi.fn().mockResolvedValue(new Array(1536).fill(0)),
+vi.mock('../llm.js', () => ({
+  createEmbedding: vi.fn().mockResolvedValue(new Array(1024).fill(0)),
   getLLM: vi.fn().mockReturnValue({
     name: 'mock-llm',
     chat: vi.fn().mockImplementation(async (messages: any[], opts?: any) => {
@@ -63,16 +63,16 @@ vi.mock('./llm.js', () => ({
 }));
 
 // ── Mock search (for related content) ──
-vi.mock('./search.js', () => ({
+vi.mock('../search.js', () => ({
   searchRelatedRecords: vi.fn().mockResolvedValue([]),
 }));
 
 // ── Mock export (file export disabled, renderMarkdown kept for future use) ──
-vi.mock('./export.js', () => ({
+vi.mock('../export.js', () => ({
   renderMarkdown: vi.fn().mockReturnValue('# Mock Markdown'),
 }));
 
-import { initLogger } from './logger.js';
+import { initLogger } from '../logger.js';
 initLogger();
 
 const TEST_URL = 'https://reorx.com/essays/2023/01/what-hots-means-to-me/';
@@ -160,7 +160,7 @@ async function createTestDatabase(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         images TEXT,
-        summary_embedding vector(1536)
+        summary_embedding vector(1024)
       );
 
       CREATE INDEX IF NOT EXISTS idx_records_url ON records(url);
@@ -223,7 +223,7 @@ async function createTestDatabase(): Promise<void> {
     // Create Absurd schema, functions, and queue
     const fs = await import('fs');
     const path = await import('path');
-    const absurdSql = fs.readFileSync(path.resolve(import.meta.dirname, '../sql/absurd.sql'), 'utf-8');
+    const absurdSql = fs.readFileSync(path.resolve(import.meta.dirname, '../../sql/absurd.sql'), 'utf-8');
     await testPool.query(absurdSql);
     await testPool.query("SELECT absurd.create_queue('linkmind')");
 
@@ -254,8 +254,8 @@ async function dropTestDatabase(): Promise<void> {
 
 // ── Helpers ──
 
-import { getRecord, getRecordByUrl, insertNote, insertRecord, appendUserNote, getRecordByTelegramMessage } from './db.js';
-import { startWorker, spawnProcessLink, spawnProcessNote } from './pipeline.js';
+import { getRecord, getRecordByUrl, insertNote, insertRecord, appendUserNote, getRecordByTelegramMessage } from '../db/index.js';
+import { startWorker, spawnProcessLink, spawnProcessNote } from '../pipeline.js';
 
 async function waitForLink(userId: number, url: string, timeoutMs: number = 60_000): Promise<number> {
   const start = Date.now();

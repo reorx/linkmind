@@ -6,7 +6,7 @@
  */
 
 import 'dotenv/config';
-import { refreshRelated } from './pipeline.js';
+import { refreshRelated } from '../src/pipeline.js';
 
 async function main() {
   const arg = process.argv[2];

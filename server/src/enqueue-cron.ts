@@ -4,7 +4,7 @@
  * and spawns the pipeline for each.
  */
 
-import { getEnqueuedRecords, updateRecord } from './db.js';
+import { getEnqueuedRecords, updateRecord } from './db/index.js';
 import { spawnProcessLink } from './pipeline.js';
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';

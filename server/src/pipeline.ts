@@ -25,7 +25,7 @@ import {
   getProbeEventById,
   updateProbeEventStatus,
   type RecordEntry,
-} from './db.js';
+} from './db/index.js';
 import type { ScrapeData } from '@linkmind/core';
 import { scrapeUrl, isTwitterUrl } from './scraper.js';
 import { processTwitterImages } from './image-handler.js';

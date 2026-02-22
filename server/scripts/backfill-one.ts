@@ -3,9 +3,9 @@
  * Usage: npx tsx src/backfill-one.ts <linkId>
  */
 import 'dotenv/config';
-import { getRecord } from './db.js';
-import { registerTasks, spawnProcessLink } from './pipeline.js';
-import { initLogger } from './logger.js';
+import { getRecord } from '../src/db/index.js';
+import { registerTasks, spawnProcessLink } from '../src/pipeline.js';
+import { initLogger } from '../src/logger.js';
 
 initLogger();
 registerTasks();

@@ -3,7 +3,7 @@
  * File export is currently disabled; renderMarkdown is kept for future use.
  */
 
-import type { RecordEntry } from './db.js';
+import type { RecordEntry } from './db/index.js';
 
 /**
  * Render a record as a Markdown document.

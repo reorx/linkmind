@@ -22,12 +22,12 @@ dotenv.config({ override: true });
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
-import { initLogger } from './logger.js';
+import { initLogger } from '../logger.js';
 initLogger();
 
-import { getDb, insertRecord, updateRecord } from './db.js';
-import { createEmbedding } from './llm.js';
-import { hybridSearch, searchRelatedRecords } from './search.js';
+import { getDb, insertRecord, updateRecord } from '../db/index.js';
+import { createEmbedding } from '../llm.js';
+import { hybridSearch, searchRelatedRecords } from '../search.js';
 
 // Unique telegram ID for test user — high enough to avoid collision
 const TEST_TELEGRAM_ID = 777_777_777;

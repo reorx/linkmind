@@ -4,7 +4,7 @@
  */
 
 import { sql } from 'kysely';
-import { getDb } from './db.js';
+import { getDb } from './db/index.js';
 import { createEmbedding } from './llm.js';
 import { logger as log } from './logger.js';
 

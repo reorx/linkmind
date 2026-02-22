@@ -10,7 +10,7 @@
  */
 
 import { getLLM } from './llm.js';
-import { getRecord } from './db.js';
+import { getRecord } from './db/index.js';
 import { logger } from './logger.js';
 import {
   SUMMARY_SYSTEM_PROMPT,
