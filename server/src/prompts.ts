@@ -2,14 +2,21 @@
  * Prompts: centralized prompt definitions for LLM interactions.
  */
 
+/* ── Tag Format ── */
+
+const TAG_FORMAT_INSTRUCTION = `标签格式要求：全部使用小写英文字母，单词之间用横杠 (-) 连接。
+示例：machine-learning, open-source, real-time-search, api-design, developer-tools`;
+
 /* ── Summary Prompts ── */
 
 export const SUMMARY_SYSTEM_PROMPT = `你是一个信息分析助手。用户会给你一篇文章的内容，请你：
 1. 生成摘要，具体要求遵循用户消息 (summary)
 2. 提取 3-5 个关键标签 (tags)
 
+${TAG_FORMAT_INSTRUCTION}
+
 你必须以 JSON 格式输出数据：
-{"summary": "...", "tags": ["tag1", "tag2", ...]}
+{"summary": "...", "tags": ["machine-learning", "api-design", ...]}
 `;
 
 export interface SummaryPromptInput {
@@ -86,8 +93,10 @@ export const NOTE_SUMMARY_SYSTEM_PROMPT = `你是一个信息分析助手。用�
 1. 生成摘要，具体要求遵循用户消息 (summary)
 2. 提取 3-5 个关键标签 (tags)
 
+${TAG_FORMAT_INSTRUCTION}
+
 你必须以 JSON 格式输出数据：
-{"summary": "...", "tags": ["tag1", "tag2", ...]}
+{"summary": "...", "tags": ["machine-learning", "api-design", ...]}
 `;
 
 export function buildNoteSummaryUserPrompt(content: string): string {
@@ -108,8 +117,10 @@ ${truncated}
 
 export const NOTE_TAGS_SYSTEM_PROMPT = `你是一个信息分析助手。用户会给你一段短文本，请你提取 3-5 个关键标签 (tags)。
 
+${TAG_FORMAT_INSTRUCTION}
+
 你必须以 JSON 格式输出数据：
-{"tags": ["tag1", "tag2", ...]}
+{"tags": ["machine-learning", "api-design", ...]}
 `;
 
 export function buildNoteTagsUserPrompt(content: string): string {
