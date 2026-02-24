@@ -42,6 +42,22 @@ function sendUnauth(req: Request, res: Response): void {
   }
 }
 
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken) {
+    res.status(503).json({ error: 'Admin API not configured' });
+    return;
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || authHeader !== `Bearer ${adminToken}`) {
+    res.status(401).json({ error: 'Invalid admin token' });
+    return;
+  }
+
+  next();
+}
+
 export function requireProbeAuth(req: ProbeAuthRequest, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

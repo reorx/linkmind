@@ -10,6 +10,7 @@ import { logger } from './logger.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerApiRoutes } from './routes/api.js';
 import { registerProbeRoutes } from './routes/probe.js';
+import { registerAdminRoutes } from './routes/admin.js';
 import { registerPageRoutes } from './routes/pages.js';
 
 const log = logger.child({ module: 'web' });
@@ -31,6 +32,7 @@ export function startWebServer(port: number): void {
   // Register all route modules
   registerAuthRoutes(app, port);
   registerApiRoutes(app);
+  registerAdminRoutes(app);
   registerProbeRoutes(app);
   registerPageRoutes(app);
 
