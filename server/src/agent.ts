@@ -30,6 +30,7 @@ import {
 const log = logger.child({ module: 'agent' });
 
 export interface SummaryResult {
+  validContent: boolean;
   summary: string;
   tags: string[];
 }
@@ -52,11 +53,12 @@ export async function generateSummary(input: SummaryPromptInput): Promise<Summar
   try {
     const parsed = JSON.parse(text);
     return {
+      validContent: parsed.valid_content !== false,
       summary: parsed.summary || '无法生成摘要',
       tags: Array.isArray(parsed.tags) ? parsed.tags : [],
     };
   } catch {
-    return { summary: text.slice(0, 500), tags: [] };
+    return { validContent: true, summary: text.slice(0, 500), tags: [] };
   }
 }
 
@@ -120,11 +122,12 @@ export async function generateNoteSummary(content: string): Promise<SummaryResul
   try {
     const parsed = JSON.parse(text);
     return {
+      validContent: true, // Notes are always user-created, content is valid
       summary: parsed.summary || '无法生成摘要',
       tags: Array.isArray(parsed.tags) ? parsed.tags : [],
     };
   } catch {
-    return { summary: text.slice(0, 500), tags: [] };
+    return { validContent: true, summary: text.slice(0, 500), tags: [] };
   }
 }
 

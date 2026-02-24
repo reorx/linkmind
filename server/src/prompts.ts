@@ -20,8 +20,12 @@ ${TAG_FORMAT_INSTRUCTION}
 - 如果正文内容明显不完整（如只有导航栏、占位符、"继续滑动"等提示文字），请在 summary 中如实说明"原文内容未能完整获取"，并只基于标题和描述做简要说明
 - 宁可输出较短的诚实摘要，也不要输出看似丰富但实际编造的内容
 
+你还需要判断正文内容是否有意义 (valid_content)：
+- 如果正文是真实的文章/帖子/讨论内容，与标题相关，有实质信息 → valid_content: true
+- 如果正文只是页面导航、占位符、无关碎片、登录提示等无意义文字，或内容极少且与标题无关 → valid_content: false
+
 你必须以 JSON 格式输出数据：
-{"summary": "...", "tags": ["machine-learning", "api-design", ...]}
+{"valid_content": true, "summary": "...", "tags": ["machine-learning", "api-design", ...]}
 `;
 
 export interface SummaryPromptInput {

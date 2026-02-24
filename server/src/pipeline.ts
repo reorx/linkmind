@@ -161,20 +161,31 @@ async function scrapeStep(recordId: number, url: string): Promise<ScrapeStepResu
  * Step 1 (with fallback): Playwright → retry Playwright → Firecrawl → Probe.
  * Returns null when falling back to probe (record enters waiting_probe state).
  */
-async function scrapeStepWithFallback(recordId: number, url: string, userId: number): Promise<ScrapeStepResult | null> {
-  // Attempt 1: Playwright + Defuddle
-  let result = await scrapeStep(recordId, url);
-  if (isScrapeContentValid(await getRecordMarkdown(recordId))) {
-    log.info({ recordId, source: 'playwright' }, '[scrape] Content valid on first attempt');
-    return result;
-  }
+async function scrapeStepWithFallback(
+  recordId: number,
+  url: string,
+  userId: number,
+  options?: { skipPlaywright?: boolean },
+): Promise<ScrapeStepResult | null> {
+  let result: ScrapeStepResult | undefined;
 
-  // Attempt 2: Playwright retry
-  log.info({ recordId, url }, '[scrape] Content too short, retrying Playwright');
-  result = await scrapeStep(recordId, url);
-  if (isScrapeContentValid(await getRecordMarkdown(recordId))) {
-    log.info({ recordId, source: 'playwright-retry' }, '[scrape] Content valid on retry');
-    return result;
+  if (!options?.skipPlaywright) {
+    // Attempt 1: Playwright + Defuddle
+    result = await scrapeStep(recordId, url);
+    if (isScrapeContentValid(await getRecordMarkdown(recordId))) {
+      log.info({ recordId, source: 'playwright' }, '[scrape] Content valid on first attempt');
+      return result;
+    }
+
+    // Attempt 2: Playwright retry
+    log.info({ recordId, url }, '[scrape] Content too short, retrying Playwright');
+    result = await scrapeStep(recordId, url);
+    if (isScrapeContentValid(await getRecordMarkdown(recordId))) {
+      log.info({ recordId, source: 'playwright-retry' }, '[scrape] Content valid on retry');
+      return result;
+    }
+  } else {
+    log.info({ recordId, url }, '[scrape] Skipping Playwright (re-scrape after invalid content)');
   }
 
   // Attempt 3: Firecrawl API
@@ -184,10 +195,10 @@ async function scrapeStepWithFallback(recordId: number, url: string, userId: num
     if (fcResult && isScrapeContentValid(fcResult.markdown)) {
       // Update record with Firecrawl data
       await updateRecord(recordId, {
-        og_title: fcResult.metadata.title || result.title,
-        og_description: fcResult.metadata.description || result.ogDescription,
+        og_title: fcResult.metadata.title || result?.title,
+        og_description: fcResult.metadata.description || result?.ogDescription,
         og_image: fcResult.metadata.ogImage || undefined,
-        og_site_name: fcResult.metadata.siteName || result.siteName,
+        og_site_name: fcResult.metadata.siteName || result?.siteName,
         markdown: fcResult.markdown,
         status: 'scraped',
       });
@@ -195,9 +206,9 @@ async function scrapeStepWithFallback(recordId: number, url: string, userId: num
       log.info({ recordId, source: 'firecrawl', chars: fcResult.markdown.length }, '[scrape] OK (from Firecrawl)');
 
       return {
-        title: fcResult.metadata.title || result.title,
-        ogDescription: fcResult.metadata.description || result.ogDescription,
-        siteName: fcResult.metadata.siteName || result.siteName,
+        title: fcResult.metadata.title || result?.title,
+        ogDescription: fcResult.metadata.description || result?.ogDescription,
+        siteName: fcResult.metadata.siteName || result?.siteName,
         markdownLength: fcResult.markdown.length,
         ocrTexts: [],
       };
@@ -237,6 +248,7 @@ async function getRecordMarkdown(recordId: number): Promise<string> {
 }
 
 interface SummarizeStepResult {
+  validContent: boolean;
   summary: string;
   tags: string[];
 }
@@ -272,7 +284,7 @@ async function summarizeStep(
     tags: JSON.stringify(result.tags),
   });
 
-  log.info({ recordId, tags: result.tags.length }, '[summarize] OK');
+  log.info({ recordId, tags: result.tags.length, validContent: result.validContent }, '[summarize] OK');
   return result;
 }
 
@@ -472,9 +484,27 @@ export function registerTasks(): void {
       }
 
       // Step 2: Summarize
-      const summaryData = await ctx.step('summarize', async () => {
+      let summaryData = await ctx.step('summarize', async () => {
         return await summarizeStep(recordId!, url, scrapeData);
       });
+
+      // Step 2.5: If LLM determined content is invalid, re-scrape via Firecrawl/Probe and re-summarize
+      if (!summaryData.validContent) {
+        log.info({ recordId, url }, '[process-link] Summary flagged invalid content, re-scraping');
+
+        const reScrapeResult = await ctx.step('re-scrape', async () => {
+          return await scrapeStepWithFallback(recordId!, url, userId, { skipPlaywright: true });
+        });
+
+        if (reScrapeResult === null) {
+          return { recordId, title: scrapeData.title, status: 'waiting_probe' };
+        }
+        scrapeData = reScrapeResult;
+
+        summaryData = await ctx.step('re-summarize', async () => {
+          return await summarizeStep(recordId!, url, scrapeData);
+        });
+      }
 
       // Step 3: Embed (summary only)
       const embedding = await ctx.step('embed', async () => {
