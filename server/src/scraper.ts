@@ -30,6 +30,16 @@ export interface ScrapeResult {
 
 export { isTwitterUrl } from '@linkmind/core/scraper-utils';
 
+/**
+ * Decode JS-style unicode escape sequences (\uXXXX) that appear as literal text.
+ * Some sites (e.g. mowen.cn) incorrectly serialize JS escapes into HTML meta attributes,
+ * producing literal "\u00a0" text instead of actual characters.
+ */
+function decodeUnicodeEscapes(s: string | undefined): string | undefined {
+  if (!s) return s;
+  return s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 const MIN_CONTENT_CHARS = 200;
 
 /**
@@ -173,6 +183,11 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
     })()`)) as { og: ScrapeResult['og']; html: string };
 
     await browser.close();
+
+    // Decode unicode escapes in OG metadata (some sites emit literal \uXXXX in HTML attributes)
+    og.title = decodeUnicodeEscapes(og.title);
+    og.description = decodeUnicodeEscapes(og.description);
+    og.siteName = decodeUnicodeEscapes(og.siteName);
 
     // Extract content with defuddle
     const _origLog = console.log;
