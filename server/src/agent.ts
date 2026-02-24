@@ -46,7 +46,7 @@ export async function generateSummary(input: SummaryPromptInput): Promise<Summar
       { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    { maxTokens: 2048, jsonMode: true, label: 'summary' },
+    { maxTokens: 2048, jsonMode: true, label: 'summary', temperature: 0.1 },
   );
 
   try {
@@ -96,7 +96,7 @@ export async function generateInsight(
       { role: 'system', content: INSIGHT_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    { maxTokens: 1024, label: 'insight' },
+    { maxTokens: 1024, label: 'insight', temperature: 0.1 },
   );
 
   return text || '无法生成 insight';

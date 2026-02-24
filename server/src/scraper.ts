@@ -30,10 +30,11 @@ export interface ScrapeResult {
 
 export { isTwitterUrl } from '@linkmind/core/scraper-utils';
 
-const MIN_CONTENT_CHARS = 50;
+const MIN_CONTENT_CHARS = 200;
 
 /**
- * Check if scraped markdown content is valid (non-empty and long enough).
+ * Check if scraped markdown content is valid (non-empty and long enough to be meaningful article content).
+ * Threshold: 200 chars — below this, content is likely navigation/placeholder, not real article body.
  */
 export function isScrapeContentValid(markdown: string, minChars = MIN_CONTENT_CHARS): boolean {
   return markdown.trim().length >= minChars;
