@@ -51,9 +51,32 @@ linkmind/
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Pipeline 流程：**
-- 普通 URL：scrape（云端 Playwright）→ summarize → embed → related → insight
-- Twitter URL 或需要本地环境：创建 probe_event → SSE 推送给 probe → probe 抓取 → POST 回结果 → resume pipeline
+**Pipeline 流程 (process-link)：**
+
+```
+Step 1: scrape
+  ├─ Probe 数据已有 → 直接使用
+  ├─ Twitter URL → 创建 probe_event (url_type: twitter) → waiting_probe → return
+  └─ 普通 URL → scrapeStepWithFallback:
+      1. Playwright + Defuddle
+      2. 字数 < 200? → Playwright 重试
+      3. 仍不足? → Firecrawl API (FIRECRAWL_API_KEY)
+      4. 仍不足? → Probe fallback (url_type: browser) → waiting_probe → return
+
+Step 2: summarize (LLM)
+  → 输出 { valid_content, summary, tags }
+  → valid_content: false? → Step 2.5
+
+Step 2.5: re-scrape + re-summarize (仅当 valid_content=false)
+  → scrapeStepWithFallback(skipPlaywright=true): 只走 Firecrawl → Probe
+  → 重新 summarize
+
+Step 3: embed (向量化 summary)
+Step 4: related (向量搜索相关 records)
+Step 5: insight (LLM，基于 summary + related links)
+```
+
+Probe 等待机制：record 进入 `waiting_probe` 状态，probe 端通过 SSE 接收任务，抓取后 POST 回结果，触发 `handleProbeResult()` 恢复 pipeline。
 
 ## Common Commands
 
