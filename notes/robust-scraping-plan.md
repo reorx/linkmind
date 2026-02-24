@@ -69,12 +69,16 @@ else                       → scrapeStep() 直接 Playwright 抓取
 2. 判断内容是否有效 (isScrapeContentValid)
    ├─ 有效 → 继续 pipeline
    └─ 无效 →
-       3. 尝试 Firecrawl API
-       4. 判断 Firecrawl 结果是否有效
-          ├─ 有效 → 用 Firecrawl 结果更新 record，继续 pipeline
+       3. Playwright 重试一次（同样的逻辑，给页面多一次机会）
+       4. 判断重试结果是否有效
+          ├─ 有效 → 继续 pipeline
           └─ 无效 →
-              5. 创建 probe event，等待 probe 回传
-              （与现有 Twitter probe 机制复用）
+              5. 尝试 Firecrawl API
+              6. 判断 Firecrawl 结果是否有效
+                 ├─ 有效 → 用 Firecrawl 结果更新 record，继续 pipeline
+                 └─ 无效 →
+                     7. 创建 probe event，等待 probe 回传
+                     （与现有 Twitter probe 机制复用）
 ```
 
 **关键设计点：**
@@ -88,8 +92,9 @@ else                       → scrapeStep() 直接 Playwright 抓取
 
 当前 probe 只用于 Twitter URL。改造后：
 - 任何 URL 在 Playwright + Firecrawl 都拿不到内容时，都可以 fallback 到 probe
-- `createProbeEvent` 的 `url_type` 扩展：`twitter` | `web`（新增）
-- probe 端无需修改（已经支持通用网页抓取）
+- `createProbeEvent` 的 `url_type` 扩展：`twitter` | `browser`（新增）
+- `browser` 类型要求 probe 端通过浏览器抓取（而非简单 URL fetch），确保能拿到 JS 渲染后的内容
+- probe 端需要相应支持 `browser` 类型的抓取能力（后续在 probe 项目中实现）
 
 ### 5. 文件改动清单
 

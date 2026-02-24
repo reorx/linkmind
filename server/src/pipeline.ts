@@ -27,7 +27,8 @@ import {
   type RecordEntry,
 } from './db/index.js';
 import type { ScrapeData } from '@linkmind/core';
-import { scrapeUrl, isTwitterUrl } from './scraper.js';
+import { scrapeUrl, isTwitterUrl, isScrapeContentValid } from './scraper.js';
+import { scrapeWithFirecrawl } from './scraper-firecrawl.js';
 import { processTwitterImages } from './image-handler.js';
 import {
   generateSummary,
@@ -154,6 +155,85 @@ async function scrapeStep(recordId: number, url: string): Promise<ScrapeStepResu
     markdownLength: result.markdown.length,
     ocrTexts,
   };
+}
+
+/**
+ * Step 1 (with fallback): Playwright → retry Playwright → Firecrawl → Probe.
+ * Returns null when falling back to probe (record enters waiting_probe state).
+ */
+async function scrapeStepWithFallback(recordId: number, url: string, userId: number): Promise<ScrapeStepResult | null> {
+  // Attempt 1: Playwright + Defuddle
+  let result = await scrapeStep(recordId, url);
+  if (isScrapeContentValid(await getRecordMarkdown(recordId))) {
+    log.info({ recordId, source: 'playwright' }, '[scrape] Content valid on first attempt');
+    return result;
+  }
+
+  // Attempt 2: Playwright retry
+  log.info({ recordId, url }, '[scrape] Content too short, retrying Playwright');
+  result = await scrapeStep(recordId, url);
+  if (isScrapeContentValid(await getRecordMarkdown(recordId))) {
+    log.info({ recordId, source: 'playwright-retry' }, '[scrape] Content valid on retry');
+    return result;
+  }
+
+  // Attempt 3: Firecrawl API
+  log.info({ recordId, url }, '[scrape] Playwright retry insufficient, trying Firecrawl');
+  try {
+    const fcResult = await scrapeWithFirecrawl(url);
+    if (fcResult && isScrapeContentValid(fcResult.markdown)) {
+      // Update record with Firecrawl data
+      await updateRecord(recordId, {
+        og_title: fcResult.metadata.title || result.title,
+        og_description: fcResult.metadata.description || result.ogDescription,
+        og_image: fcResult.metadata.ogImage || undefined,
+        og_site_name: fcResult.metadata.siteName || result.siteName,
+        markdown: fcResult.markdown,
+        status: 'scraped',
+      });
+
+      log.info({ recordId, source: 'firecrawl', chars: fcResult.markdown.length }, '[scrape] OK (from Firecrawl)');
+
+      return {
+        title: fcResult.metadata.title || result.title,
+        ogDescription: fcResult.metadata.description || result.ogDescription,
+        siteName: fcResult.metadata.siteName || result.siteName,
+        markdownLength: fcResult.markdown.length,
+        ocrTexts: [],
+      };
+    }
+    log.info({ recordId }, '[scrape] Firecrawl returned insufficient content');
+  } catch (err) {
+    log.warn(
+      { recordId, err: err instanceof Error ? err.message : String(err) },
+      '[scrape] Firecrawl failed (non-fatal)',
+    );
+  }
+
+  // Attempt 4: Fallback to probe (browser type)
+  log.info({ recordId, url }, '[scrape] All server-side methods failed, falling back to probe');
+  const { pushEventToProbe } = await import('./web.js');
+  const eventId = crypto.randomBytes(8).toString('hex');
+  await createProbeEvent(eventId, userId, recordId, url, 'browser');
+  await updateRecord(recordId, { status: 'waiting_probe' });
+
+  pushEventToProbe(userId, 'scrape_request', {
+    event_id: eventId,
+    url,
+    url_type: 'browser',
+    link_id: recordId,
+  });
+
+  log.info({ recordId, url, eventId }, '[scrape] Waiting for probe (browser), returning early');
+  return null;
+}
+
+/**
+ * Helper: get markdown from a record (used by fallback chain to check content validity).
+ */
+async function getRecordMarkdown(recordId: number): Promise<string> {
+  const record = await getRecord(recordId);
+  return record?.markdown || '';
 }
 
 interface SummarizeStepResult {
@@ -372,10 +452,16 @@ export function registerTasks(): void {
         log.info({ recordId, url, eventId }, '[process-link] Waiting for probe, returning early');
         return { recordId, title: undefined, status: 'waiting_probe' };
       } else {
-        // Normal scrape
-        scrapeData = await ctx.step('scrape', async () => {
-          return await scrapeStep(recordId!, url);
+        // Normal scrape with fallback chain: Playwright → retry Playwright → Firecrawl → Probe
+        const scrapeResult = await ctx.step('scrape', async () => {
+          return await scrapeStepWithFallback(recordId!, url, userId);
         });
+
+        // scrapeStepWithFallback returns null when falling back to probe (waiting_probe)
+        if (scrapeResult === null) {
+          return { recordId, title: undefined, status: 'waiting_probe' };
+        }
+        scrapeData = scrapeResult;
       }
 
       // Check if this is a derived link (added_by_user=false) — stop at scraped

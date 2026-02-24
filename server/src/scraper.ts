@@ -30,6 +30,15 @@ export interface ScrapeResult {
 
 export { isTwitterUrl } from '@linkmind/core/scraper-utils';
 
+const MIN_CONTENT_CHARS = 50;
+
+/**
+ * Check if scraped markdown content is valid (non-empty and long enough).
+ */
+export function isScrapeContentValid(markdown: string, minChars = MIN_CONTENT_CHARS): boolean {
+  return markdown.trim().length >= minChars;
+}
+
 /**
  * Scrape a Twitter/X tweet using the `bird` CLI.
  */
