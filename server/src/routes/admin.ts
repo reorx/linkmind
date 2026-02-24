@@ -1,6 +1,7 @@
 import type { Router, Response, Request } from 'express';
 import { requireAdmin } from './middleware.js';
 import { scrapeUrl } from '../scraper.js';
+import { retryRecord } from '../pipeline.js';
 import { logger } from '../logger.js';
 
 const log = logger.child({ module: 'admin' });
@@ -48,6 +49,25 @@ export function registerAdminRoutes(router: Router): void {
         error: message,
         stack,
       });
+    }
+  });
+
+  // POST /api/admin/retry/:id — retry a record's full pipeline
+  router.post('/api/admin/retry/:id', requireAdmin, async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid record id' });
+      return;
+    }
+
+    try {
+      const { taskId } = await retryRecord(id);
+      log.info({ recordId: id, taskId }, '[admin] retry queued');
+      res.json({ taskId, recordId: id, status: 'queued' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error({ recordId: id, err: message }, '[admin] retry failed');
+      res.status(500).json({ error: message });
     }
   });
 }
