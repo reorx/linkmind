@@ -4,8 +4,13 @@
 
 /* ── Tag Format ── */
 
-const TAG_FORMAT_INSTRUCTION = `标签格式要求：全部使用小写英文字母，单词之间用横杠 (-) 连接。
-示例：machine-learning, open-source, real-time-search, api-design, developer-tools`;
+const TAG_FORMAT_INSTRUCTION = `标签格式要求：
+- 全部使用小写英文字母
+- 尽可能使用单个单词（如 ai, deployment, scraping）
+- 最多由两个单词组成，用横杠 (-) 连接
+- 只有在必须使用专有名词时，才使用两个单词（如 claude-code, open-source）
+- 不要使用三个及以上单词的标签
+示例：ai, scraping, deployment, claude-code, open-source, typescript, llm`;
 
 /* ── Summary Prompts ── */
 
