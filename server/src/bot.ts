@@ -230,7 +230,22 @@ export function startBot(token: string, webBaseUrl: string): Bot {
       return;
     }
 
-    // 2. Message classification
+    // 2. Forwarded channel message detection: treat as link with pre-filled content
+    const forwardOrigin = (ctx.message as any).forward_origin;
+    if (forwardOrigin?.type === 'channel') {
+      const chat = forwardOrigin.chat;
+      const msgId = forwardOrigin.message_id;
+      if (chat?.username) {
+        // Public channel — treat as link with ingested content
+        handleForwardedChannelMessage(ctx, user.id!, text, chat, msgId, webBaseUrl).catch((err) => {
+          log.error({ err: err instanceof Error ? err.message : String(err) }, 'handleForwardedChannelMessage error');
+        });
+        return;
+      }
+      // Private channel (no username) — fall through to note handling
+    }
+
+    // 3. Message classification
     const urls = text.match(URL_REGEX) || [];
     const trimmedText = text.trimStart();
     const firstUrl = urls[0] as string | undefined;
@@ -299,6 +314,72 @@ async function handleReply(ctx: any, userId: number, text: string, webBaseUrl: s
   await appendUserNote(record.id, text);
   log.info({ recordId: record.id, userId }, 'User note appended via reply');
   await ctx.reply('📝 备注已添加', { reply_to_message_id: ctx.message.message_id });
+}
+
+/**
+ * Handle a forwarded public channel message — treat as link with pre-filled content.
+ */
+async function handleForwardedChannelMessage(
+  ctx: any,
+  userId: number,
+  text: string,
+  chat: { username: string; title?: string },
+  messageId: number,
+  webBaseUrl: string,
+): Promise<void> {
+  const sourceUrl = `https://t.me/${chat.username}/${messageId}`;
+
+  // Deduplicate by URL
+  const existing = await getRecordByUrl(userId, sourceUrl);
+  if (existing?.id) {
+    const recordUrl = `${webBaseUrl}/link/${existing.id}`;
+    await ctx.reply(
+      `🔄 该频道消息已存在\n\n🔍 <a href="${escHtml(recordUrl)}">查看详情</a>`,
+      { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
+    );
+    return;
+  }
+
+  const recordId = await insertRecord(userId, {
+    type: 'link',
+    url: sourceUrl,
+    content: text,
+    markdown: text,
+    og_site_name: chat.title,
+    ingested_with_content: true,
+    telegram_chat_id: ctx.message.chat.id,
+  });
+
+  log.info({ recordId, userId, sourceUrl, channel: chat.title }, 'Forwarded channel message saved as link');
+
+  await spawnProcessLink(userId, sourceUrl, recordId);
+
+  const recordUrl = `${webBaseUrl}/link/${recordId}`;
+  const statusMsg = await ctx.reply(
+    `📨 收到频道转发，已加入处理队列...\n\n🔍 <a href="${escHtml(recordUrl)}">查看处理进度</a>`,
+    { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
+  );
+
+  // Extract URLs from forwarded text and create derived links
+  const urls = text.match(URL_REGEX) || [];
+  for (const url of urls) {
+    const existingLink = await getRecordByUrl(userId, url);
+    if (!existingLink) {
+      const derivedId = await insertRecord(userId, { type: 'link', url, added_by_user: false });
+      await addDerivation(recordId, derivedId);
+      spawnProcessLink(userId, url, derivedId).catch((err) => {
+        log.error(
+          { url, err: err instanceof Error ? err.message : String(err) },
+          'Failed to spawn derived link from forwarded message',
+        );
+      });
+    }
+  }
+
+  // Poll for completion
+  pollAndNotify(ctx, recordId, sourceUrl, statusMsg, webBaseUrl).catch((err) => {
+    log.error({ recordId, err: err instanceof Error ? err.message : String(err) }, 'pollAndNotify error');
+  });
 }
 
 /**

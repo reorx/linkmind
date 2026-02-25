@@ -31,6 +31,7 @@ export interface RecordEntry {
   source_url?: string;
   user_note?: string;
   added_by_user: boolean;
+  ingested_with_content: boolean;
   og_title?: string;
   og_description?: string;
   og_image?: string;
@@ -121,6 +122,7 @@ export interface RecordsTable {
   source_url: string | null;
   user_note: string | null;
   added_by_user: boolean;
+  ingested_with_content: boolean;
   og_title: string | null;
   og_description: string | null;
   og_image: string | null;

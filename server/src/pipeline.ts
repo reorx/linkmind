@@ -241,6 +241,14 @@ async function scrapeStepWithFallback(
 }
 
 /**
+ * Helper: check if a record was ingested with content (skip scrape on process/reprocess).
+ */
+async function isIngestedWithContent(recordId: number): Promise<boolean> {
+  const record = await getRecord(recordId);
+  return !!record?.ingested_with_content;
+}
+
+/**
  * Helper: get markdown from a record (used by fallback chain to check content validity).
  */
 async function getRecordMarkdown(recordId: number): Promise<string> {
@@ -455,6 +463,24 @@ export function registerTasks(): void {
         await emitter.emitStepEnd(
           'scrape',
           { source: 'probe', chars: scrapeData.markdownLength },
+          Date.now() - scrapeStart,
+        );
+      } else if (await isIngestedWithContent(recordId!)) {
+        // Content provided at ingest time (e.g. forwarded Telegram channel message) — skip scrape
+        const scrapeStart = Date.now();
+        await emitter.emitStepStart('scrape', { url, source: 'ingest' });
+        const record = await getRecord(recordId!);
+        scrapeData = {
+          title: record?.og_title || undefined,
+          ogDescription: record?.og_description || undefined,
+          siteName: record?.og_site_name || undefined,
+          markdownLength: record?.markdown?.length || 0,
+          ocrTexts: [],
+        };
+        await updateRecord(recordId!, { status: 'scraped' });
+        await emitter.emitStepEnd(
+          'scrape',
+          { source: 'ingest', chars: scrapeData.markdownLength },
           Date.now() - scrapeStart,
         );
       } else if (isTwitterUrl(url)) {

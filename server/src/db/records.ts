@@ -12,6 +12,9 @@ export async function insertRecord(
     source_url?: string;
     user_note?: string;
     added_by_user?: boolean;
+    ingested_with_content?: boolean;
+    markdown?: string;
+    og_site_name?: string;
     telegram_message_id?: number;
     telegram_chat_id?: number;
     status?: RecordEntry['status'];
@@ -27,6 +30,9 @@ export async function insertRecord(
       source_url: data.source_url || null,
       user_note: data.user_note || null,
       added_by_user: data.added_by_user ?? true,
+      ingested_with_content: data.ingested_with_content ?? false,
+      markdown: data.markdown || null,
+      og_site_name: data.og_site_name || null,
       telegram_message_id: data.telegram_message_id || null,
       telegram_chat_id: data.telegram_chat_id || null,
       status: data.status || 'pending',
@@ -49,6 +55,7 @@ export async function insertRecordWithCreatedAt(
       type: 'link',
       url,
       added_by_user: true,
+      ingested_with_content: false,
       status,
       created_at: sql`${createdAt}::timestamptz`,
     })

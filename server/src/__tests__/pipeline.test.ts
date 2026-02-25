@@ -142,6 +142,7 @@ async function createTestDatabase(): Promise<void> {
         source_url TEXT,
         user_note TEXT,
         added_by_user BOOLEAN NOT NULL DEFAULT TRUE,
+        ingested_with_content BOOLEAN NOT NULL DEFAULT FALSE,
         og_title TEXT,
         og_description TEXT,
         og_image TEXT,
