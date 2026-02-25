@@ -385,12 +385,12 @@ export function registerTasks(): void {
     let recordId = params.recordId;
     if (recordId) {
       // Existing record passed directly - reset status
-      await updateRecord(recordId, { status: 'pending', error_message: undefined });
+      await updateRecord(recordId, { status: 'pending', error_message: null as any });
     } else {
       const existing = await getRecordByUrl(userId, url);
       if (existing?.id) {
         recordId = existing.id;
-        await updateRecord(recordId, { status: 'pending', error_message: undefined });
+        await updateRecord(recordId, { status: 'pending', error_message: null as any });
       } else {
         recordId = await insertRecord(userId, { url });
       }
