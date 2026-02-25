@@ -140,6 +140,26 @@ tail -f ~/Code/linkmind/data/launchd-stderr.log
      ```
 - `.env.prod` 包含生产环境配置，已在 `.gitignore` 中，不会提交到仓库
 
+## Database Migration
+
+**目前没有自动 migration 机制。** 每个 migration 都需要对生产数据库手动执行。
+
+Migration 文件在 `server/migrations/` 目录下（已打入 Docker 镜像），通过在服务器上用 Docker Compose 执行：
+
+```bash
+# SSH 到服务器
+ssh hh-hk-01
+
+# 执行指定 migration（通过 docker compose run 覆盖命令）
+docker compose -f /opt/apps/linkmind/docker-compose.yml run --rm server \
+  node -e "const{Client}=require('pg');const fs=require('fs');const c=new Client({connectionString:process.env.DATABASE_URL});c.connect().then(()=>c.query(fs.readFileSync('/app/server/migrations/003_agent_events.sql','utf8'))).then(()=>{console.log('Done');c.end()}).catch(e=>{console.error(e);process.exit(1)})"
+```
+
+**注意事项：**
+- 新增 migration 文件后，需确认 CI 构建的 Docker 镜像已包含该文件（push 后等部署完成）
+- 在服务器上执行 migration，利用容器内的 `DATABASE_URL` 环境变量连接 Neon
+- 执行前先在本地数据库测试通过
+
 ## Admin API
 
 Admin 接口使用 `ADMIN_TOKEN` 环境变量认证，请求需带 `Authorization: Bearer <ADMIN_TOKEN>` header。
