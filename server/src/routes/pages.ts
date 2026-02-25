@@ -1,4 +1,5 @@
 import type { Router, Response } from 'express';
+import { marked } from 'marked';
 import {
   getRecord,
   getPaginatedRecords,
@@ -8,6 +9,12 @@ import {
 } from '../db/index.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
 import { renderPage, safeParseJson, getDayLabel } from './helpers.js';
+
+/** Render markdown string to HTML. Returns empty string for falsy input. */
+function renderMarkdown(text: string | null | undefined): string {
+  if (!text) return '';
+  return marked.parse(text, { async: false }) as string;
+}
 import { logger } from '../logger.js';
 
 const log = logger.child({ module: 'pages' });
@@ -104,6 +111,10 @@ export function registerPageRoutes(router: Router): void {
         agentSession: latestSession,
         agentEvents,
         user: req.user,
+        summaryHtml: renderMarkdown(record.summary),
+        insightHtml: renderMarkdown(record.insight),
+        markdownHtml: renderMarkdown(record.markdown),
+        contentHtml: record.type === 'note' ? renderMarkdown(record.content) : '',
       });
       res.type('html').send(html);
     } catch (err) {
