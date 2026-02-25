@@ -185,7 +185,11 @@ export function startBot(token: string, webBaseUrl: string): Bot {
     const { taskId } = await spawnProcessLink(user.id!, record.url!, recordId);
     log.info({ recordId, taskId }, 'Reprocess triggered');
 
-    const statusMsg = await ctx.reply(`🔄 开始重新处理链接 #${recordId}\n\n处理完成后会通知你。`);
+    const recordUrl = `${webBaseUrl}/link/${recordId}`;
+    const statusMsg = await ctx.reply(
+      `🔄 开始重新处理链接 #${recordId}\n\n🔍 <a href="${escHtml(recordUrl)}">查看处理进度</a>`,
+      { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
+    );
 
     // Start polling for completion in background
     pollAndNotify(ctx, recordId, record.url!, statusMsg, webBaseUrl).catch((err) => {
@@ -321,9 +325,12 @@ async function handleLinkMessage(
   // Spawn the durable task
   await spawnProcessLink(userId, mainUrl, recordId);
 
+  const recordUrl = `${webBaseUrl}/link/${recordId}`;
   const statusMsg = await ctx.reply(
-    isDuplicate ? `🔄 该链接已存在，已加入处理队列...` : `🔗 收到链接，已加入处理队列...`,
-    { link_preview_options: { is_disabled: true } },
+    isDuplicate
+      ? `🔄 该链接已存在，已加入处理队列...\n\n🔍 <a href="${escHtml(recordUrl)}">查看处理进度</a>`
+      : `🔗 收到链接，已加入处理队列...\n\n🔍 <a href="${escHtml(recordUrl)}">查看处理进度</a>`,
+    { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
   );
 
   // Create derived link records for other URLs
@@ -391,9 +398,13 @@ async function handleNoteMessage(
     log.error({ noteId, err: err instanceof Error ? err.message : String(err) }, 'Failed to spawn process-note');
   });
 
-  const statusMsg = await ctx.reply(sourceUrl ? `📝 收到转发笔记，正在处理...` : `📝 收到笔记，正在处理...`, {
-    link_preview_options: { is_disabled: true },
-  });
+  const noteUrl = `${webBaseUrl}/link/${noteId}`;
+  const statusMsg = await ctx.reply(
+    sourceUrl
+      ? `📝 收到转发笔记，正在处理...\n\n🔍 <a href="${escHtml(noteUrl)}">查看处理进度</a>`
+      : `📝 收到笔记，正在处理...\n\n🔍 <a href="${escHtml(noteUrl)}">查看处理进度</a>`,
+    { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
+  );
 
   // Poll for note completion
   pollNoteAndNotify(ctx, noteId, statusMsg, webBaseUrl).catch((err) => {
