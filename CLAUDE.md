@@ -119,6 +119,27 @@ tail -f ~/Code/linkmind/data/launchd-stderr.log
 
 注意：`KeepAlive=true`，`launchctl stop` 后会自动重启，彻底停止需 `unload`。
 
+## Admin API
+
+Admin 接口使用 `ADMIN_TOKEN` 环境变量认证，请求需带 `Authorization: Bearer <ADMIN_TOKEN>` header。
+
+**可用接口：**
+
+```bash
+# 测试抓取（同步，返回完整结果）
+curl -X POST http://localhost:<port>/api/admin/test-scrape \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
+
+# 重试 record pipeline（异步，返回 taskId）
+curl -X POST http://localhost:<port>/api/admin/retry/<record_id> \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+- `ADMIN_TOKEN` 配置在 `server/.env`（本地）和 `server/.env.prod`（生产）
+- 未配置时返回 503
+
 ## 管理脚本
 
 ```bash
