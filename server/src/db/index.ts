@@ -5,3 +5,4 @@ export * from './records.js';
 export * from './users.js';
 export * from './relations.js';
 export * from './probe.js';
+export * from './agent-event.js';

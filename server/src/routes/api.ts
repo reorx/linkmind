@@ -7,6 +7,9 @@ import {
   getAllUserRecords,
   getRecordByUrl,
   insertRecordWithCreatedAt,
+  getLatestAgentSession,
+  getAgentEventsAfterCursor,
+  getAgentEventsBySessionId,
 } from '../db/index.js';
 import { spawnProcessLink, retryRecord, deleteRecordFull } from '../pipeline.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
@@ -213,5 +216,76 @@ export function registerApiRoutes(router: Router): void {
       log.error({ err: err instanceof Error ? err.message : String(err) }, 'Import failed');
       res.status(500).json({ error: 'Import failed' });
     }
+  });
+
+  // GET /api/records/:id/session — get latest agent session for a record
+  router.get('/api/records/:id/session', requireAuth, async (req: AuthRequest, res: Response) => {
+    const id = req.params.id as string;
+    const session = await getLatestAgentSession('record', id);
+    if (!session) {
+      res.json({ session: null });
+      return;
+    }
+    res.json({ session });
+  });
+
+  // GET /api/agent-events/stream — SSE endpoint for streaming agent events
+  router.get('/api/agent-events/stream', requireAuth, async (req: AuthRequest, res: Response) => {
+    const sessionId = req.query.session_id as string;
+    if (!sessionId) {
+      res.status(400).json({ error: 'Missing session_id' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.flushHeaders();
+
+    let cursor = parseInt(req.query.cursor as string, 10) || 0;
+    let closed = false;
+
+    req.on('close', () => {
+      closed = true;
+    });
+
+    const poll = async () => {
+      while (!closed) {
+        const events = await getAgentEventsAfterCursor(sessionId, cursor);
+
+        let sessionEnded = false;
+        for (const event of events) {
+          if (closed) break;
+          res.write(`event: agent_event\ndata: ${JSON.stringify(event)}\n\n`);
+          cursor = event.id;
+          if (event.event_type === 'session_end') {
+            sessionEnded = true;
+          }
+        }
+
+        if (closed || sessionEnded) {
+          if (!closed) res.end();
+          return;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    };
+
+    poll();
+  });
+
+  // GET /api/records/:id/events — get all events for a record's latest session
+  router.get('/api/records/:id/events', requireAuth, async (req: AuthRequest, res: Response) => {
+    const id = req.params.id as string;
+    const session = await getLatestAgentSession('record', id);
+    if (!session) {
+      res.json({ session: null, events: [] });
+      return;
+    }
+    const events = await getAgentEventsBySessionId(session.id);
+    res.json({ session, events });
   });
 }

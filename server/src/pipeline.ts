@@ -42,6 +42,7 @@ import { searchRelatedRecords, type RelatedRecordResult } from './search.js';
 // File export disabled for cloud deployment; renderMarkdown kept in export.ts for future use
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
+import { AgentEventEmitter } from './agent-event-emitter.js';
 
 const log = logger.child({ module: 'pipeline' });
 
@@ -395,7 +396,9 @@ export function registerTasks(): void {
       }
     }
 
-    log.info({ recordId, url, taskId: ctx.taskID }, '[process-link] Starting');
+    const emitter = new AgentEventEmitter({ refType: 'record', refId: String(recordId), agentName: 'process-link' });
+    await emitter.startSession();
+    await emitter.emitMessage('Pipeline starting', { recordId, url, taskId: ctx.taskID });
 
     try {
       // Step 1: Scrape (or use probe data, or defer to probe)
@@ -403,6 +406,8 @@ export function registerTasks(): void {
 
       if (params.scrapeData) {
         // Probe provided scrape data — populate record directly
+        const scrapeStart = Date.now();
+        await emitter.emitStepStart('scrape', { url, source: 'probe' });
         scrapeData = await ctx.step('scrape', async () => {
           const sd = params.scrapeData!;
           await updateRecord(recordId!, {
@@ -447,6 +452,11 @@ export function registerTasks(): void {
             ocrTexts,
           } satisfies ScrapeStepResult;
         });
+        await emitter.emitStepEnd(
+          'scrape',
+          { source: 'probe', chars: scrapeData.markdownLength },
+          Date.now() - scrapeStart,
+        );
       } else if (isTwitterUrl(url)) {
         // Twitter URL without probe data — create probe event and wait
         const { pushEventToProbe } = await import('./web.js');
@@ -461,78 +471,112 @@ export function registerTasks(): void {
           link_id: recordId,
         });
 
-        log.info({ recordId, url, eventId }, '[process-link] Waiting for probe, returning early');
+        await emitter.emitMessage('Waiting for probe (twitter), pipeline suspended', { eventId, urlType: 'twitter' });
         return { recordId, title: undefined, status: 'waiting_probe' };
       } else {
         // Normal scrape with fallback chain: Playwright → retry Playwright → Firecrawl → Probe
+        const scrapeStart = Date.now();
+        await emitter.emitStepStart('scrape', { url });
         const scrapeResult = await ctx.step('scrape', async () => {
           return await scrapeStepWithFallback(recordId!, url, userId);
         });
 
         // scrapeStepWithFallback returns null when falling back to probe (waiting_probe)
         if (scrapeResult === null) {
+          await emitter.emitStepEnd('scrape', { status: 'waiting_probe' });
+          await emitter.emitMessage('Falling back to probe, pipeline suspended', {});
           return { recordId, title: undefined, status: 'waiting_probe' };
         }
+        await emitter.emitStepEnd('scrape', { chars: scrapeResult.markdownLength }, Date.now() - scrapeStart);
         scrapeData = scrapeResult;
       }
 
       // Check if this is a derived link (added_by_user=false) — stop at scraped
       const currentRecord = await getRecord(recordId!);
       if (currentRecord && !currentRecord.added_by_user) {
-        log.info({ recordId, url }, '[process-link] Derived link, stopping at scraped');
+        await emitter.emitMessage('Derived link, stopping at scraped', {});
+        await emitter.endSession('completed');
         return { recordId, title: scrapeData.title, status: 'scraped' };
       }
 
       // Step 2: Summarize
+      let stepStart = Date.now();
+      await emitter.emitStepStart('summarize');
       let summaryData = await ctx.step('summarize', async () => {
         return await summarizeStep(recordId!, url, scrapeData);
       });
+      await emitter.emitStepEnd(
+        'summarize',
+        { validContent: summaryData.validContent, tags: summaryData.tags.length },
+        Date.now() - stepStart,
+      );
 
       // Step 2.5: If LLM determined content is invalid, re-scrape via Firecrawl/Probe and re-summarize
       if (!summaryData.validContent) {
-        log.info({ recordId, url }, '[process-link] Summary flagged invalid content, re-scraping');
+        await emitter.emitMessage('Summary flagged invalid content, re-scraping', {});
 
+        stepStart = Date.now();
+        await emitter.emitStepStart('re-scrape', { skipPlaywright: true });
         const reScrapeResult = await ctx.step('re-scrape', async () => {
           return await scrapeStepWithFallback(recordId!, url, userId, { skipPlaywright: true });
         });
 
         if (reScrapeResult === null) {
+          await emitter.emitStepEnd('re-scrape', { status: 'waiting_probe' });
+          await emitter.emitMessage('Re-scrape falling back to probe, pipeline suspended', {});
           return { recordId, title: scrapeData.title, status: 'waiting_probe' };
         }
+        await emitter.emitStepEnd('re-scrape', { chars: reScrapeResult.markdownLength }, Date.now() - stepStart);
         scrapeData = reScrapeResult;
 
+        stepStart = Date.now();
+        await emitter.emitStepStart('re-summarize');
         summaryData = await ctx.step('re-summarize', async () => {
           return await summarizeStep(recordId!, url, scrapeData);
         });
+        await emitter.emitStepEnd(
+          're-summarize',
+          { validContent: summaryData.validContent, tags: summaryData.tags.length },
+          Date.now() - stepStart,
+        );
       }
 
       // Step 3: Embed (summary only)
+      stepStart = Date.now();
+      await emitter.emitStepStart('embed');
       const embedding = await ctx.step('embed', async () => {
         return await embedStep(recordId!);
       });
+      await emitter.emitStepEnd('embed', { dimensions: embedding.length }, Date.now() - stepStart);
 
       // Step 4: Related records
+      stepStart = Date.now();
+      await emitter.emitStepStart('related');
       const relatedRecords = await ctx.step('related', async () => {
         return await relatedStep(recordId!, userId, embedding);
       });
+      await emitter.emitStepEnd('related', { count: relatedRecords.length }, Date.now() - stepStart);
 
       // Step 5: Insight
+      stepStart = Date.now();
+      await emitter.emitStepStart('insight');
       await ctx.step('insight', async () => {
         const relatedIds = relatedRecords.map((r) => r.id);
         await insightStep(recordId!, url, scrapeData.title, summaryData.summary, relatedIds);
       });
+      await emitter.emitStepEnd('insight', {}, Date.now() - stepStart);
 
       // Step 6: Export
       await ctx.step('export', async () => {
         await exportStep(recordId!);
       });
 
-      log.info({ recordId, url, title: scrapeData.title }, '[process-link] Complete');
+      await emitter.endSession('completed');
       return { recordId, title: scrapeData.title, status: 'analyzed' };
     } catch (err) {
       // Update record status to error with error message
       const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error({ recordId, url, err: errorMessage }, '[process-link] Failed');
+      await emitter.endSession('failed', errorMessage);
       await updateRecord(recordId!, { status: 'error', error_message: errorMessage.slice(0, 1000) });
 
       // Check if this is a permanent error that should not be retried
@@ -573,7 +617,9 @@ export function registerTasks(): void {
     if (!record.summary) throw new Error(`Record ${recordId} missing summary`);
 
     const title = record.og_title || record.url;
-    log.info({ recordId, title }, '[refresh-related] Starting');
+    const emitter = new AgentEventEmitter({ refType: 'record', refId: String(recordId), agentName: 'refresh-related' });
+    await emitter.startSession();
+    await emitter.emitMessage('Refresh starting', { recordId, title });
 
     try {
       // Re-embed if needed
@@ -581,30 +627,41 @@ export function registerTasks(): void {
       if (record.summary_embedding) {
         embedding = JSON.parse(record.summary_embedding);
       } else {
+        let stepStart = Date.now();
+        await emitter.emitStepStart('embed');
         embedding = await ctx.step('embed', async () => {
           return await embedStep(recordId);
         });
+        await emitter.emitStepEnd('embed', { dimensions: embedding.length }, Date.now() - stepStart);
       }
 
       // Search related
+      let stepStart = Date.now();
+      await emitter.emitStepStart('related');
       const relatedRecords = await ctx.step('related', async () => {
         return await relatedStep(recordId, record.user_id, embedding);
       });
+      await emitter.emitStepEnd('related', { count: relatedRecords.length }, Date.now() - stepStart);
 
       // Regenerate insight
+      stepStart = Date.now();
+      await emitter.emitStepStart('insight');
       await ctx.step('insight', async () => {
         const relatedIds = relatedRecords.map((r) => r.id);
         await insightStep(recordId, record.url!, record.og_title, record.summary!, relatedIds);
       });
+      await emitter.emitStepEnd('insight', {}, Date.now() - stepStart);
 
       // Re-export
       await ctx.step('export', async () => {
         await exportStep(recordId);
       });
 
-      log.info({ recordId, title, relatedCount: relatedRecords.length }, '[refresh-related] Complete');
+      await emitter.endSession('completed');
       return { recordId, relatedRecords: relatedRecords.length };
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      await emitter.endSession('failed', errorMessage);
       const task = (ctx as any).task;
       const isLastAttempt = task && task.attempt >= (task.max_attempts || 2);
       if (isLastAttempt) {
@@ -624,37 +681,55 @@ export function registerTasks(): void {
     const record = await getRecord(recordId);
     if (!record?.content) throw new Error(`Note ${recordId} content not found`);
 
-    log.info({ recordId, contentLength: record.content.length, taskId: ctx.taskID }, '[process-note] Starting');
+    const emitter = new AgentEventEmitter({ refType: 'record', refId: String(recordId), agentName: 'process-note' });
+    await emitter.startSession();
+    await emitter.emitMessage('Note processing starting', {
+      recordId,
+      contentLength: record.content.length,
+      taskId: ctx.taskID,
+    });
 
     try {
       // Step 1: Summarize (conditional on content length)
+      let stepStart = Date.now();
+      await emitter.emitStepStart('summarize');
       const summaryData = await ctx.step('summarize', async () => {
         return await noteSummarizeStep(recordId, record.content!);
       });
+      await emitter.emitStepEnd('summarize', { tags: summaryData.tags.length }, Date.now() - stepStart);
 
       // Step 2: Embed (summary only)
+      stepStart = Date.now();
+      await emitter.emitStepStart('embed');
       const embedding = await ctx.step('embed', async () => {
         return await embedStep(recordId);
       });
+      await emitter.emitStepEnd('embed', { dimensions: embedding.length }, Date.now() - stepStart);
 
       // Step 3: Related records
+      stepStart = Date.now();
+      await emitter.emitStepStart('related');
       const relatedRecords = await ctx.step('related', async () => {
         return await relatedStep(recordId, userId, embedding);
       });
+      await emitter.emitStepEnd('related', { count: relatedRecords.length }, Date.now() - stepStart);
 
       // Step 4: Insight
+      stepStart = Date.now();
+      await emitter.emitStepStart('insight');
       await ctx.step('insight', async () => {
         const relatedIds = relatedRecords.map((r) => r.id);
         await noteInsightStep(recordId, record.content!, summaryData.summary, relatedIds);
       });
+      await emitter.emitStepEnd('insight', {}, Date.now() - stepStart);
 
       await updateRecord(recordId, { status: 'analyzed' });
 
-      log.info({ recordId }, '[process-note] Complete');
+      await emitter.endSession('completed');
       return { recordId, status: 'analyzed' };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error({ recordId, err: errorMessage }, '[process-note] Failed');
+      await emitter.endSession('failed', errorMessage);
       await updateRecord(recordId, { status: 'error', error_message: errorMessage.slice(0, 1000) });
 
       const task = (ctx as any).task;

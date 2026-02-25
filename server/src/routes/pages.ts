@@ -1,5 +1,11 @@
 import type { Router, Response } from 'express';
-import { getRecord, getPaginatedRecords, getRelatedRecords } from '../db/index.js';
+import {
+  getRecord,
+  getPaginatedRecords,
+  getRelatedRecords,
+  getLatestAgentSession,
+  getAgentEventsBySessionId,
+} from '../db/index.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
 import { renderPage, safeParseJson, getDayLabel } from './helpers.js';
 import { logger } from '../logger.js';
@@ -79,6 +85,13 @@ export function registerPageRoutes(router: Router): void {
       }
     }
 
+    // Fetch latest agent session + events for processing history
+    const latestSession = await getLatestAgentSession('record', String(record.id));
+    let agentEvents: any[] = [];
+    if (latestSession) {
+      agentEvents = await getAgentEventsBySessionId(latestSession.id);
+    }
+
     try {
       const detailTitle = record.type === 'note' ? `笔记 — LinkMind` : `${record.og_title || record.url} — LinkMind`;
       const html = await renderPage('link-detail', {
@@ -88,6 +101,8 @@ export function registerPageRoutes(router: Router): void {
         images,
         relatedNotes,
         relatedLinks,
+        agentSession: latestSession,
+        agentEvents,
         user: req.user,
       });
       res.type('html').send(html);

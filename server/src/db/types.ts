@@ -188,6 +188,26 @@ export interface DeviceAuthRequestsTable {
   created_at: Generated<Date>;
 }
 
+export interface AgentSessionsTable {
+  id: string;
+  ref_type: string;
+  ref_id: string;
+  agent_name: string;
+  status: string;
+  error_message: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface AgentEventsTable {
+  id: Generated<number>;
+  session_id: string;
+  event_type: string;
+  name: string | null;
+  data: any | null;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   invites: InvitesTable;
   users: UsersTable;
@@ -197,4 +217,6 @@ export interface Database {
   probe_devices: ProbeDevicesTable;
   probe_events: ProbeEventsTable;
   device_auth_requests: DeviceAuthRequestsTable;
+  agent_session: AgentSessionsTable;
+  agent_event: AgentEventsTable;
 }

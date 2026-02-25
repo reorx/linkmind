@@ -178,6 +178,87 @@
     overflow-y: auto;
   }
 
+  /* Rerun button */
+  .rerun-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .btn-rerun {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .btn-rerun:hover { opacity: 0.9; }
+  .btn-rerun:disabled { opacity: 0.5; cursor: not-allowed; }
+  .rerun-status {
+    font-size: 0.85rem;
+    color: var(--dim);
+  }
+
+  /* Processing history */
+  .event-timeline {
+    font-size: 0.85rem;
+  }
+  .event-item {
+    display: flex;
+    gap: 10px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .event-item:last-child { border-bottom: none; }
+  .event-time {
+    color: var(--dim);
+    white-space: nowrap;
+    font-family: monospace;
+    font-size: 0.8rem;
+  }
+  .event-body { flex: 1; }
+  .event-type {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-right: 6px;
+  }
+  .event-type-step_start { background: var(--badge-scraped-bg); color: var(--badge-scraped-text); }
+  .event-type-step_end { background: #e8f5e9; color: #2e7d32; }
+  .event-type-message { background: var(--badge-pending-bg); color: var(--badge-pending-text); }
+  .event-type-session_start { background: #e3f2fd; color: #1565c0; }
+  .event-type-session_end { background: #fce4ec; color: #c62828; }
+  @media (prefers-color-scheme: dark) {
+    .event-type-step_end { background: #1b3a1b; color: #6ec86e; }
+    .event-type-session_start { background: #1a2a3a; color: #4ea8de; }
+    .event-type-session_end { background: #3a1a1a; color: #e88; }
+  }
+  .event-duration {
+    color: var(--dim);
+    font-size: 0.8rem;
+    margin-left: 4px;
+  }
+  .session-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .session-running { background: #fff3e0; color: #e65100; }
+  .session-completed { background: #e8f5e9; color: #2e7d32; }
+  .session-failed { background: var(--error-bg); color: var(--error-text); }
+  @media (prefers-color-scheme: dark) {
+    .session-running { background: #3a2a10; color: #ffb74d; }
+    .session-completed { background: #1b3a1b; color: #6ec86e; }
+  }
+
   @media (max-width: 768px) {
     .detail-layout {
       flex-direction: column;
@@ -336,3 +417,188 @@
     <% } %>
   </div>
 </div>
+
+<%
+  const session = typeof agentSession !== 'undefined' ? agentSession : null;
+  const events = typeof agentEvents !== 'undefined' ? agentEvents : [];
+
+  function formatEventTime(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleTimeString('zh-CN', { hour12: false });
+  }
+
+  function formatDuration(ms) {
+    if (ms == null) return '';
+    if (ms < 1000) return ms + 'ms';
+    return (ms / 1000).toFixed(1) + 's';
+  }
+
+  function eventLabel(evt) {
+    if (evt.event_type === 'step_start') return evt.name || 'step';
+    if (evt.event_type === 'step_end') return evt.name || 'step';
+    if (evt.event_type === 'message') {
+      const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+      return data?.message || 'message';
+    }
+    if (evt.event_type === 'session_start') return 'Session started';
+    if (evt.event_type === 'session_end') {
+      const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+      return data?.status === 'failed' ? 'Session failed' : 'Session completed';
+    }
+    return evt.event_type;
+  }
+
+  function eventDuration(evt) {
+    if (evt.event_type !== 'step_end') return null;
+    const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+    return data?.durationMs;
+  }
+%>
+
+<div class="rerun-bar">
+  <button class="btn-rerun" id="rerunBtn" onclick="rerunRecord()">Rerun</button>
+  <span class="rerun-status" id="rerunStatus">
+    <% if (session) { %>
+      <span class="session-badge session-<%= session.status %>"><%= session.status %></span>
+      <%= session.agent_name %> &middot; <%= formatEventTime(session.created_at) %>
+    <% } %>
+  </span>
+</div>
+
+<% if (events.length > 0 || (session && session.status === 'running')) { %>
+<div class="section">
+  <div class="section-title">Processing History</div>
+  <div class="event-timeline" id="eventTimeline">
+    <% for (const evt of events) { %>
+    <div class="event-item">
+      <span class="event-time"><%= formatEventTime(evt.created_at) %></span>
+      <span class="event-body">
+        <span class="event-type event-type-<%= evt.event_type %>"><%= evt.event_type.replace('_', ' ') %></span>
+        <%= eventLabel(evt) %>
+        <% const dur = eventDuration(evt); if (dur != null) { %>
+          <span class="event-duration">(<%= formatDuration(dur) %>)</span>
+        <% } %>
+      </span>
+    </div>
+    <% } %>
+  </div>
+</div>
+<% } %>
+
+<script>
+  const recordId = <%= link.id %>;
+  const initialSessionId = '<%= session ? session.id : '' %>';
+  const initialSessionStatus = '<%= session ? session.status : '' %>';
+
+  function rerunRecord() {
+    const btn = document.getElementById('rerunBtn');
+    const status = document.getElementById('rerunStatus');
+    btn.disabled = true;
+    btn.textContent = 'Rerunning...';
+    status.textContent = 'Starting...';
+
+    fetch('/api/retry/' + recordId, { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        status.textContent = 'Queued (taskId: ' + (data.taskId || '?') + ')';
+        // Start polling for new session
+        setTimeout(() => pollForSession(), 2000);
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.textContent = 'Rerun';
+        status.textContent = 'Error: ' + err.message;
+      });
+  }
+
+  function pollForSession() {
+    fetch('/api/records/' + recordId + '/session')
+      .then(r => r.json())
+      .then(data => {
+        if (data.session && data.session.status === 'running') {
+          startSSE(data.session.id);
+        } else {
+          // Session not ready yet, keep polling
+          setTimeout(() => pollForSession(), 1000);
+        }
+      });
+  }
+
+  function startSSE(sessionId) {
+    const timeline = document.getElementById('eventTimeline');
+    if (!timeline) {
+      // Create timeline section if it doesn't exist yet
+      const section = document.createElement('div');
+      section.className = 'section';
+      section.innerHTML = '<div class="section-title">Processing History</div><div class="event-timeline" id="eventTimeline"></div>';
+      document.querySelector('.rerun-bar').after(section);
+    }
+    const tl = document.getElementById('eventTimeline');
+    tl.innerHTML = '';
+
+    const es = new EventSource('/api/agent-events/stream?session_id=' + sessionId + '&cursor=0');
+    es.addEventListener('agent_event', function(e) {
+      const evt = JSON.parse(e.data);
+      const item = document.createElement('div');
+      item.className = 'event-item';
+
+      const time = new Date(evt.created_at).toLocaleTimeString('zh-CN', { hour12: false });
+      const typeClass = 'event-type-' + evt.event_type;
+      const typeLabel = evt.event_type.replace('_', ' ');
+
+      let label = '';
+      if (evt.event_type === 'step_start' || evt.event_type === 'step_end') {
+        label = evt.name || 'step';
+      } else if (evt.event_type === 'message') {
+        const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+        label = data?.message || 'message';
+      } else if (evt.event_type === 'session_start') {
+        label = 'Session started';
+      } else if (evt.event_type === 'session_end') {
+        const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+        label = data?.status === 'failed' ? 'Session failed' : 'Session completed';
+      }
+
+      let durHtml = '';
+      if (evt.event_type === 'step_end') {
+        const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+        if (data?.durationMs != null) {
+          const ms = data.durationMs;
+          durHtml = ' <span class="event-duration">(' + (ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(1) + 's') + ')</span>';
+        }
+      }
+
+      item.innerHTML = '<span class="event-time">' + time + '</span>' +
+        '<span class="event-body"><span class="event-type ' + typeClass + '">' + typeLabel + '</span> ' +
+        label + durHtml + '</span>';
+
+      tl.appendChild(item);
+      tl.scrollTop = tl.scrollHeight;
+
+      // Update status bar on session_end
+      if (evt.event_type === 'session_end') {
+        es.close();
+        const btn = document.getElementById('rerunBtn');
+        btn.disabled = false;
+        btn.textContent = 'Rerun';
+        const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+        const statusEl = document.getElementById('rerunStatus');
+        const statusClass = data?.status === 'failed' ? 'session-failed' : 'session-completed';
+        statusEl.innerHTML = '<span class="session-badge ' + statusClass + '">' + (data?.status || 'done') + '</span>';
+      }
+    });
+
+    es.onerror = function() {
+      es.close();
+      const btn = document.getElementById('rerunBtn');
+      btn.disabled = false;
+      btn.textContent = 'Rerun';
+    };
+  }
+
+  // Auto-connect SSE if session is running on page load
+  if (initialSessionStatus === 'running' && initialSessionId) {
+    startSSE(initialSessionId);
+  }
+</script>
