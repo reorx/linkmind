@@ -178,10 +178,12 @@
             <% } %>
             <% if (item.status === 'error') { %>
             <span class="status-badge error">失败</span>
-            <% } else if (item.status === 'pending') { %>
-            <span class="status-badge pending">等待中</span>
+            <% } else if (item.status === 'enqueued' || item.status === 'pending') { %>
+            <span class="status-badge pending">处理中</span>
             <% } else if (item.status === 'scraped') { %>
-            <span class="status-badge scraped">待分析</span>
+            <span class="status-badge scraped">分析中</span>
+            <% } else if (item.status === 'waiting_probe') { %>
+            <span class="status-badge pending">等待抓取</span>
             <% } %>
           </h3>
           <div class="card-meta">
