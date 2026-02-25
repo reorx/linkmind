@@ -161,6 +161,25 @@ curl -X POST http://localhost:<port>/api/admin/retry/<record_id> \
 - `ADMIN_TOKEN` 配置在 `server/.env`（本地）和 `server/.env.prod`（生产）
 - 未配置时返回 503
 
+## API 测试
+
+用户 API（`/api/links` 等）通过 cookie 中的 JWT token 认证（cookie 名 `lm_session`）。本地测试时，可用脚本生成 token：
+
+```bash
+# 生成指定用户的 JWT token（7天有效期）
+cd server
+npx tsx scripts/gen-token.ts <username>
+
+# 使用生成的 token 调用 API
+curl http://localhost:3456/api/links -b "lm_session=<token>"
+
+# 添加链接
+curl -X POST http://localhost:3456/api/links \
+  -b "lm_session=<token>" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
+```
+
 ## 管理脚本
 
 ```bash
