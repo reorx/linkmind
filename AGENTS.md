@@ -150,12 +150,13 @@ Migration 文件在 `server/migrations/` 目录下（已打入 Docker 镜像）�
 # SSH 到服务器
 ssh hh-hk-01
 
-# 执行指定 migration（通过 docker compose run 覆盖命令）
-docker compose -f /opt/apps/linkmind/docker-compose.yml run --rm server \
-  node -e "const{Client}=require('pg');const fs=require('fs');const c=new Client({connectionString:process.env.DATABASE_URL});c.connect().then(()=>c.query(fs.readFileSync('/app/server/migrations/003_agent_events.sql','utf8'))).then(()=>{console.log('Done');c.end()}).catch(e=>{console.error(e);process.exit(1)})"
+# 执行指定 migration（在运行中的容器内，工作目录设为 /app/server 以找到 node_modules）
+docker compose -f /opt/apps/linkmind/docker-compose.yml exec -w /app/server server \
+  node -e "const pg=require('pg');const fs=require('fs');const c=new pg.Client(process.env.DATABASE_URL);c.connect().then(()=>c.query(fs.readFileSync('/app/server/migrations/004_ingested_with_content.sql','utf8'))).then(()=>{console.log('Done');c.end()}).catch(e=>{console.error(e);process.exit(1)})"
 ```
 
-**注意事项：**
+**关键细节：**
+- 使用 `exec -w /app/server` 而非 `run --rm server`，因为 `pg` 模块安装在 `/app/server/node_modules/` 下，需要工作目录在 `/app/server` 才能 `require('pg')` 成功
 - 新增 migration 文件后，需确认 CI 构建的 Docker 镜像已包含该文件（push 后等部署完成）
 - 在服务器上执行 migration，利用容器内的 `DATABASE_URL` 环境变量连接 Neon
 - 执行前先在本地数据库测试通过
