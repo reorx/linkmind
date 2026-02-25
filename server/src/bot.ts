@@ -122,6 +122,14 @@ export function startBot(token: string, webBaseUrl: string): Bot {
     await ctx.reply('🧠 欢迎回来！\n\n发送任意链接，我会自动抓取、分析并保存。\n\n命令：\n/login — 获取网页登录链接');
   });
 
+  // /home command — link to web homepage
+  bot.command('home', async (ctx) => {
+    await ctx.reply(`🏠 <a href="${escHtml(webBaseUrl)}">打开 LinkMind 首页</a>`, {
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+    });
+  });
+
   // /login command — generate a temporary JWT link for web auth
   bot.command('login', async (ctx) => {
     const from = ctx.from;
@@ -249,6 +257,7 @@ export function startBot(token: string, webBaseUrl: string): Bot {
   // Set bot commands menu
   bot.api
     .setMyCommands([
+      { command: 'home', description: '打开 LinkMind 首页' },
       { command: 'login', description: '获取网页登录链接' },
       { command: 'reprocess', description: '重新处理链接 (用法: /reprocess <id>)' },
       { command: 'start', description: '开始使用 / 查看帮助' },
