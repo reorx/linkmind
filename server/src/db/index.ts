@@ -7,3 +7,4 @@ export * from './relations.js';
 export * from './probe.js';
 export * from './agent-event.js';
 export * from './share.js';
+export * from './record-files.js';

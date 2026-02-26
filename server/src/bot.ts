@@ -24,6 +24,7 @@ import {
   getRelatedRecords,
 } from './db/index.js';
 import { spawnProcessLink, spawnProcessNote } from './pipeline.js';
+import { downloadAndStorePhoto } from './telegram-photo.js';
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 
@@ -273,6 +274,7 @@ export function startBot(token: string, webBaseUrl: string): Bot {
   // Handle photo messages (with caption as text)
   bot.on('message:photo', async (ctx) => {
     const text = ctx.message.caption || '';
+    const photos = ctx.message.photo;
     const from = ctx.from;
     if (!from) return;
 
@@ -292,11 +294,19 @@ export function startBot(token: string, webBaseUrl: string): Bot {
       return;
     }
 
+    // Helper: store photo after record is created
+    const storePhoto = (recordId: number) => {
+      downloadAndStorePhoto(ctx.api, token, photos, recordId).catch((err) => {
+        log.error({ err: err instanceof Error ? err.message : String(err), recordId }, 'Photo storage failed');
+      });
+    };
+
     // Reply detection
     if (ctx.message.reply_to_message) {
       handleReply(ctx, user.id!, text, webBaseUrl).catch((err) => {
         log.error({ err: err instanceof Error ? err.message : String(err) }, 'handleReply error (photo)');
       });
+      // handleReply doesn't create a new record, so no photo storage
       return;
     }
 
@@ -306,9 +316,16 @@ export function startBot(token: string, webBaseUrl: string): Bot {
       const chat = forwardOrigin.chat;
       const msgId = forwardOrigin.message_id;
       if (chat?.username) {
-        handleForwardedChannelMessage(ctx, user.id!, text, chat, msgId, webBaseUrl).catch((err) => {
-          log.error({ err: err instanceof Error ? err.message : String(err) }, 'handleForwardedChannelMessage error (photo)');
-        });
+        handleForwardedChannelMessage(ctx, user.id!, text, chat, msgId, webBaseUrl)
+          .then((recordId) => {
+            if (recordId) storePhoto(recordId);
+          })
+          .catch((err) => {
+            log.error(
+              { err: err instanceof Error ? err.message : String(err) },
+              'handleForwardedChannelMessage error (photo)',
+            );
+          });
         return;
       }
     }
@@ -325,13 +342,20 @@ export function startBot(token: string, webBaseUrl: string): Bot {
       const userNote = afterUrl || undefined;
       const otherUrls = urls.slice(1);
 
-      handleLinkMessage(ctx, user.id!, mainUrl, userNote, otherUrls, webBaseUrl).catch((err) => {
-        log.error({ url: mainUrl, err: err instanceof Error ? err.message : String(err) }, 'handleLinkMessage error (photo)');
-      });
+      handleLinkMessage(ctx, user.id!, mainUrl, userNote, otherUrls, webBaseUrl)
+        .then((recordId) => storePhoto(recordId))
+        .catch((err) => {
+          log.error(
+            { url: mainUrl, err: err instanceof Error ? err.message : String(err) },
+            'handleLinkMessage error (photo)',
+          );
+        });
     } else if (text.trim().length > 0) {
-      handleNoteMessage(ctx, user.id!, text, urls, webBaseUrl).catch((err) => {
-        log.error({ err: err instanceof Error ? err.message : String(err) }, 'handleNoteMessage error (photo)');
-      });
+      handleNoteMessage(ctx, user.id!, text, urls, webBaseUrl)
+        .then((recordId) => storePhoto(recordId))
+        .catch((err) => {
+          log.error({ err: err instanceof Error ? err.message : String(err) }, 'handleNoteMessage error (photo)');
+        });
     }
   });
 
@@ -424,18 +448,18 @@ async function handleForwardedChannelMessage(
   chat: { username: string; title?: string },
   messageId: number,
   webBaseUrl: string,
-): Promise<void> {
+): Promise<number | null> {
   const sourceUrl = `https://t.me/${chat.username}/${messageId}`;
 
   // Deduplicate by URL
   const existing = await getRecordByUrl(userId, sourceUrl);
   if (existing?.id) {
     const recordUrl = `${webBaseUrl}/link/${existing.id}`;
-    await ctx.reply(
-      `🔄 该频道消息已存在\n\n🔍 <a href="${escHtml(recordUrl)}">查看详情</a>`,
-      { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
-    );
-    return;
+    await ctx.reply(`🔄 该频道消息已存在\n\n🔍 <a href="${escHtml(recordUrl)}">查看详情</a>`, {
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+    });
+    return existing.id;
   }
 
   const recordId = await insertRecord(userId, {
@@ -478,6 +502,8 @@ async function handleForwardedChannelMessage(
   pollAndNotify(ctx, recordId, sourceUrl, statusMsg, webBaseUrl).catch((err) => {
     log.error({ recordId, err: err instanceof Error ? err.message : String(err) }, 'pollAndNotify error');
   });
+
+  return recordId;
 }
 
 /**
@@ -490,7 +516,7 @@ async function handleLinkMessage(
   userNote: string | undefined,
   otherUrls: string[],
   webBaseUrl: string,
-): Promise<void> {
+): Promise<number> {
   const existing = await getRecordByUrl(userId, mainUrl);
   const isDuplicate = !!existing;
   let recordId: number;
@@ -537,6 +563,8 @@ async function handleLinkMessage(
   pollAndNotify(ctx, recordId, mainUrl, statusMsg, webBaseUrl).catch((err) => {
     log.error({ recordId, err: err instanceof Error ? err.message : String(err) }, 'pollAndNotify error');
   });
+
+  return recordId;
 }
 
 /**
@@ -548,7 +576,7 @@ async function handleNoteMessage(
   text: string,
   urls: string[],
   webBaseUrl: string,
-): Promise<void> {
+): Promise<number> {
   // Detect forwarded message for source_url
   let sourceUrl: string | undefined;
   const forwardOrigin = (ctx.message as any).forward_origin;
@@ -598,6 +626,8 @@ async function handleNoteMessage(
   pollNoteAndNotify(ctx, noteId, statusMsg, webBaseUrl).catch((err) => {
     log.error({ noteId, err: err instanceof Error ? err.message : String(err) }, 'pollNoteAndNotify error');
   });
+
+  return noteId;
 }
 
 /**
