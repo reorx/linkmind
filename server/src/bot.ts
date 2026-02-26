@@ -270,6 +270,103 @@ export function startBot(token: string, webBaseUrl: string): Bot {
     }
   });
 
+  // Handle photo messages (with caption as text)
+  bot.on('message:photo', async (ctx) => {
+    const text = ctx.message.caption || '';
+    const from = ctx.from;
+    if (!from) return;
+
+    const user = await findOrCreateUser(
+      from.id,
+      from.username,
+      [from.first_name, from.last_name].filter(Boolean).join(' '),
+    );
+
+    if (user.status !== 'active') {
+      await ctx.reply('🔒 请先通过邀请链接注册后再使用 LinkMind。');
+      return;
+    }
+
+    if (!text.trim()) {
+      await ctx.reply('📷 收到图片，但没有附带文字。请在图片说明中附上链接或文字内容。');
+      return;
+    }
+
+    // Reply detection
+    if (ctx.message.reply_to_message) {
+      handleReply(ctx, user.id!, text, webBaseUrl).catch((err) => {
+        log.error({ err: err instanceof Error ? err.message : String(err) }, 'handleReply error (photo)');
+      });
+      return;
+    }
+
+    // Forwarded channel message detection
+    const forwardOrigin = (ctx.message as any).forward_origin;
+    if (forwardOrigin?.type === 'channel') {
+      const chat = forwardOrigin.chat;
+      const msgId = forwardOrigin.message_id;
+      if (chat?.username) {
+        handleForwardedChannelMessage(ctx, user.id!, text, chat, msgId, webBaseUrl).catch((err) => {
+          log.error({ err: err instanceof Error ? err.message : String(err) }, 'handleForwardedChannelMessage error (photo)');
+        });
+        return;
+      }
+    }
+
+    // Message classification (same as text handler)
+    const urls = text.match(URL_REGEX) || [];
+    const trimmedText = text.trimStart();
+    const firstUrl = urls[0] as string | undefined;
+    const startsWithUrl = firstUrl !== undefined && trimmedText.startsWith(firstUrl);
+
+    if (startsWithUrl) {
+      const mainUrl = firstUrl;
+      const afterUrl = text.slice(text.indexOf(mainUrl) + mainUrl.length).trim();
+      const userNote = afterUrl || undefined;
+      const otherUrls = urls.slice(1);
+
+      handleLinkMessage(ctx, user.id!, mainUrl, userNote, otherUrls, webBaseUrl).catch((err) => {
+        log.error({ url: mainUrl, err: err instanceof Error ? err.message : String(err) }, 'handleLinkMessage error (photo)');
+      });
+    } else if (text.trim().length > 0) {
+      handleNoteMessage(ctx, user.id!, text, urls, webBaseUrl).catch((err) => {
+        log.error({ err: err instanceof Error ? err.message : String(err) }, 'handleNoteMessage error (photo)');
+      });
+    }
+  });
+
+  // Catch-all: unsupported message types
+  bot.on('message', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const user = await findOrCreateUser(
+      from.id,
+      from.username,
+      [from.first_name, from.last_name].filter(Boolean).join(' '),
+    );
+
+    if (user.status !== 'active') {
+      await ctx.reply('🔒 请先通过邀请链接注册后再使用 LinkMind。');
+      return;
+    }
+
+    // Determine message type for feedback
+    const msgTypes = [];
+    if (ctx.message.video) msgTypes.push('视频');
+    if (ctx.message.document) msgTypes.push('文件');
+    if (ctx.message.audio) msgTypes.push('音频');
+    if (ctx.message.voice) msgTypes.push('语音');
+    if (ctx.message.sticker) msgTypes.push('贴纸');
+    if (ctx.message.animation) msgTypes.push('GIF');
+    if (ctx.message.contact) msgTypes.push('联系人');
+    if (ctx.message.location) msgTypes.push('位置');
+    if (ctx.message.poll) msgTypes.push('投票');
+    const typeDesc = msgTypes.length > 0 ? msgTypes.join('/') : '该类型';
+
+    await ctx.reply(`⚠️ 暂不支持${typeDesc}消息。目前支持：文字消息、链接、带文字说明的图片。`);
+  });
+
   // Set bot commands menu
   bot.api
     .setMyCommands([
