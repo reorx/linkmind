@@ -5,9 +5,11 @@ import { sql } from 'kysely';
 import { requireAdmin, requireAdminPage } from './middleware.js';
 import { scrapeUrl } from '../scraper.js';
 import { retryRecord } from '../pipeline.js';
-import { getRecord, getDb, getUserById } from '../db/index.js';
+import { getRecord, getDb, getUserById, getAllInvites, getInviteById, createInvite } from '../db/index.js';
 import { toRecordEntry, toUserRecord } from '../db/helpers.js';
 import { logger } from '../logger.js';
+
+const BOT_USERNAME = process.env.BOT_USERNAME || 'linkmind_bot';
 
 const log = logger.child({ module: 'admin' });
 const ADMIN_VIEWS_DIR = path.resolve(import.meta.dirname, '../views/admin');
@@ -133,6 +135,50 @@ export function registerAdminRoutes(router: Router): void {
       pageTitle: `User #${id}`,
       user,
       records: records.map(toRecordEntry),
+    });
+    res.send(html);
+  });
+
+  // ── Invites List ──
+  router.get('/admin/invites', requireAdminPage, async (req: Request, res: Response) => {
+    const invites = await getAllInvites();
+    const html = await renderAdminPage('invites', { pageTitle: 'Invites', invites });
+    res.send(html);
+  });
+
+  // ── Create Invite ──
+  router.get('/admin/invites/create', requireAdminPage, async (req: Request, res: Response) => {
+    const html = await renderAdminPage('invite-create', { pageTitle: 'Create Invite' });
+    res.send(html);
+  });
+
+  router.post('/admin/invites/create', requireAdminPage, async (req: Request, res: Response) => {
+    const maxUses = Math.max(1, parseInt(req.body.max_uses, 10) || 1);
+    const invite = await createInvite(maxUses);
+    res.redirect(`/admin/invites/${invite.id}`);
+  });
+
+  // ── Invite Detail ──
+  router.get('/admin/invites/:id', requireAdminPage, async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id)) {
+      res.status(400).send('Invalid invite id');
+      return;
+    }
+
+    const result = await getInviteById(id);
+    if (!result) {
+      res.status(404).send('Invite not found');
+      return;
+    }
+
+    const deepLink = `https://t.me/${BOT_USERNAME}?start=invite_${result.invite.code}`;
+
+    const html = await renderAdminPage('invite-detail', {
+      pageTitle: `Invite #${id}`,
+      invite: result.invite,
+      users: result.users,
+      deepLink,
     });
     res.send(html);
   });

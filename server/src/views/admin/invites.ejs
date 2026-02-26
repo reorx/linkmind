@@ -1,0 +1,26 @@
+<h2>Invites <span class="dim" style="font-weight:400;font-size:14px;">(<%= invites.length %>)</span></h2>
+
+<p style="margin-bottom:12px;"><a href="/admin/invites/create">+ Create Invite</a></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Code</th>
+      <th>Uses</th>
+      <th>Status</th>
+      <th>Created</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% invites.forEach(function(inv) { %>
+    <tr>
+      <td><a href="/admin/invites/<%= inv.id %>">#<%= inv.id %></a></td>
+      <td class="mono"><%= inv.code %></td>
+      <td><%= inv.actual_user_count %> / <%= inv.max_uses %></td>
+      <td><span class="badge badge-<%= inv.used_count >= inv.max_uses ? 'error' : 'analyzed' %>"><%= inv.used_count >= inv.max_uses ? 'exhausted' : 'active' %></span></td>
+      <td class="mono"><%= inv.created_at ? new Date(inv.created_at).toISOString().substring(0, 10) : '—' %></td>
+    </tr>
+    <% }); %>
+  </tbody>
+</table>

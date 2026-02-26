@@ -1,0 +1,42 @@
+<h2>Invite #<%= invite.id %></h2>
+
+<dl>
+  <dt>ID</dt><dd><%= invite.id %></dd>
+  <dt>Code</dt><dd class="mono"><%= invite.code %></dd>
+  <dt>Max Uses</dt><dd><%= invite.max_uses %></dd>
+  <dt>Used Count</dt><dd><%= invite.used_count %></dd>
+  <dt>Status</dt><dd><span class="badge badge-<%= invite.used_count >= invite.max_uses ? 'error' : 'analyzed' %>"><%= invite.used_count >= invite.max_uses ? 'exhausted' : 'active' %></span></dd>
+  <dt>Created</dt><dd class="mono"><%= invite.created_at || '—' %></dd>
+  <dt>Telegram Link</dt><dd class="mono"><a href="<%= deepLink %>"><%= deepLink %></a></dd>
+</dl>
+
+<h3>Users <span class="dim" style="font-weight:400;font-size:12px;">(<%= users.length %>)</span></h3>
+
+<% if (users.length === 0) { %>
+<p class="dim" style="font-size:13px;">No users have used this invite.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Username</th>
+      <th>Display Name</th>
+      <th>Telegram ID</th>
+      <th>Status</th>
+      <th>Created</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% users.forEach(function(u) { %>
+    <tr>
+      <td><a href="/admin/users/<%= u.id %>">#<%= u.id %></a></td>
+      <td><%= u.username || '—' %></td>
+      <td><%= u.display_name || '—' %></td>
+      <td class="mono"><%= u.telegram_id %></td>
+      <td><span class="badge badge-<%= u.status === 'active' ? 'analyzed' : 'pending' %>"><%= u.status %></span></td>
+      <td class="mono"><%= u.created_at ? new Date(u.created_at).toISOString().substring(0, 10) : '—' %></td>
+    </tr>
+    <% }); %>
+  </tbody>
+</table>
+<% } %>
