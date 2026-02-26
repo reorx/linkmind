@@ -63,9 +63,9 @@ export function mdInlineToTelegramHtml(text: string): string {
  *
  * List symbols alternate by level:
  *   Level 0: •
- *   Level 1: → (with em-space indent)
+ *   Level 1: ‣ (with em-space indent)
  *   Level 2: • (with double em-space indent)
- *   Level 3: → (with triple em-space indent)
+ *   Level 3: ‣ (with triple em-space indent)
  *   ... and so on
  */
 export function renderMarkdownTelegram(md: string): string {
@@ -80,7 +80,7 @@ export function renderMarkdownTelegram(md: string): string {
       const content = listMatch[3];
       // Determine nesting level: every 2 spaces (or 4) = one level
       const level = Math.floor(indent.length / 2);
-      const symbol = level % 2 === 0 ? '•' : '→';
+      const symbol = level % 2 === 0 ? '•' : '‣';
       const emIndent = '\u2003'.repeat(level);
 
       result.push(`${emIndent}${symbol} ${mdInlineToTelegramHtml(content)}`);
@@ -91,7 +91,7 @@ export function renderMarkdownTelegram(md: string): string {
         const indent = starListMatch[1];
         const content = starListMatch[2];
         const level = Math.floor(indent.length / 2);
-        const symbol = level % 2 === 0 ? '•' : '→';
+        const symbol = level % 2 === 0 ? '•' : '‣';
         const emIndent = '\u2003'.repeat(level);
 
         result.push(`${emIndent}${symbol} ${mdInlineToTelegramHtml(content)}`);

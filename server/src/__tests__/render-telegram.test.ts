@@ -27,10 +27,10 @@ describe('renderMarkdownTelegram', () => {
     // Level 0: bullet •
     expect(result).toContain('• <b>核心功能与定位</b>');
 
-    // Level 1: arrow →
-    expect(result).toContain('\u2003→ <b>供应商分层体系 (Provider Tiers)</b>');
-    expect(result).toContain('\u2003→ <b>灵活的执行模式 (Execution Modes)</b>');
-    expect(result).toContain('\u2003→ <b>便捷的工具链与配置</b>');
+    // Level 1: arrow ‣
+    expect(result).toContain('\u2003‣ <b>供应商分层体系 (Provider Tiers)</b>');
+    expect(result).toContain('\u2003‣ <b>灵活的执行模式 (Execution Modes)</b>');
+    expect(result).toContain('\u2003‣ <b>便捷的工具链与配置</b>');
 
     // Level 2: bullet • again (alternating)
     expect(result).toContain('\u2003\u2003• <b>深度研究 (deep-research)</b>');
