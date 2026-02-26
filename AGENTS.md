@@ -158,6 +158,57 @@ tail -f ~/Code/linkmind/data/launchd-stderr.log
      ```
 - `.env.prod` 包含生产环境配置，已在 `.gitignore` 中，不会提交到仓库
 
+## 生产 Migration 安全验证流程
+
+在生产环境执行 migration 前，先在本地复制生产数据库进行验证。
+
+### 步骤
+
+```bash
+# 1. 复制生产数据库到本地（需要本地 PostgreSQL 运行中）
+#    脚本读取 server/.env.prod 中的 DATABASE_URL，dump 后 restore 到本地
+#    注意：需要 superuser (reorx) 创建数据库和安装 pgvector 扩展
+export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"
+LOCAL_DB="linkmind_pro_$(date +%Y%m%d)"
+
+# dump 生产数据
+pg_dump "$(grep '^DATABASE_URL=' server/.env.prod | sed 's/^DATABASE_URL=//')" \
+  --format=custom --no-owner --no-privileges -f /tmp/${LOCAL_DB}.dump
+
+# 创建本地数据库（superuser）+ 安装 pgvector
+psql -U reorx -h localhost -p 5432 -d postgres -c "CREATE DATABASE \"${LOCAL_DB}\" OWNER linkmind;"
+psql -U reorx -h localhost -p 5432 -d ${LOCAL_DB} -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# restore（pg_search/BM25 相关错误可忽略，本地没有 ParadeDB）
+pg_restore --no-owner --no-privileges -U reorx -h localhost -p 5432 -d ${LOCAL_DB} /tmp/${LOCAL_DB}.dump
+
+# 授权给 linkmind 用户
+psql -U reorx -h localhost -p 5432 -d ${LOCAL_DB} -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO linkmind; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO linkmind;"
+
+# 2. 在本地副本上执行 migration 验证
+cd server
+DATABASE_URL="postgresql://linkmind@localhost:5432/${LOCAL_DB}" node dist/cli.js run-sql migrations/005_xxx.sql
+# 或 Kysely migration:
+DATABASE_URL="postgresql://linkmind@localhost:5432/${LOCAL_DB}" node dist/cli.js migrate
+
+# 3. 检查结果
+psql -U linkmind -h localhost -p 5432 -d ${LOCAL_DB} -c "\d <new_table>"
+# 以及测试 CLI 等功能是否正常
+
+# 4. 确认无误后，在生产环境执行
+ssh hh-hk-01 "cd /opt/apps/linkmind && docker compose exec -w /app/server server node dist/cli.js run-sql migrations/005_xxx.sql"
+# 或 Kysely migration:
+ssh hh-hk-01 "cd /opt/apps/linkmind && docker compose exec -w /app/server server node dist/cli.js migrate"
+```
+
+### 注意事项
+
+- 本地 PostgreSQL 客户端路径：`/opt/homebrew/opt/postgresql@18/bin/`
+- linkmind 用户没有 createdb 权限，需要用 reorx superuser 创建数据库
+- pg_search (ParadeDB BM25) 本地没有，restore 时相关错误可忽略
+- 生产环境 docker compose 路径：`/opt/apps/linkmind/`
+- 执行 CLI 需要 `-w /app/server` 指定工作目录
+
 ## Database Migration
 
 使用 Kysely 的 Migrator 框架管理数据库 schema 变更。
