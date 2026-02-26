@@ -132,13 +132,11 @@ records/{record_id}/{index}_{source}.{ext}
 6. 关联到对应 record
 ```
 
-### 3.2 时序问题
+### 3.2 时序
 
-Photo handler 中创建 record 和下载图片可能有时序问题：
-- record 在 `handleLinkMessage` / `handleNoteMessage` / `handleForwardedChannelMessage` 中创建
-- 图片需要 record_id 才能写 `record_files`
+**原则：Record 先创建，图片后处理。**
 
-**方案：** 在上述 handler 中增加可选的 `photoFileId?: string` 参数。handler 创建 record 后，如果有 photoFileId，异步调用图片下载+存储流程。
+所有流程中，handler 先完成 record 创建（得到 record_id），然后再处理图片下载+存储+写 `record_files`。图片处理作为 record 创建之后的异步步骤，不阻塞主流程。
 
 ## 四、迁移：替换现有本地存储
 
