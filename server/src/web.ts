@@ -25,9 +25,30 @@ export function startWebServer(port: number): void {
   app.use(express.urlencoded({ extended: false }));
   app.use(cookieParser());
 
-  // Serve images from data/images directory
+  // Serve images from data/images directory (legacy)
   const imagesDir = path.resolve(import.meta.dirname, '../data/images');
   app.use('/images', express.static(imagesDir));
+
+  // Serve files from object storage
+  app.get('/files/*', async (req, res) => {
+    try {
+      const { getStorage } = await import('./storage/index.js');
+      const storage = getStorage();
+      const key = req.url.replace(/^\/files\//, '');
+      if (!key) {
+        res.status(400).send('Missing key');
+        return;
+      }
+      const data = await storage.get(key);
+      // Guess content type from extension
+      const ext = key.split('.').pop()?.toLowerCase();
+      const ct =
+        ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'application/octet-stream';
+      res.type(ct).send(data);
+    } catch {
+      res.status(404).send('Not found');
+    }
+  });
 
   // Register all route modules
   registerAuthRoutes(app, port);

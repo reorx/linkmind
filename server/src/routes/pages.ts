@@ -8,6 +8,7 @@ import {
   getAgentEventsBySessionId,
   getShareByRecordId,
   getShareByNanoid,
+  getRecordFiles,
 } from '../db/index.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
 import { renderPage, safeParseJson, getDayLabel, isAdminUser } from './helpers.js';
@@ -65,6 +66,7 @@ export function registerPageRoutes(router: Router): void {
 
     const tags = safeParseJson(record.tags);
     const images = safeParseJson(record.images);
+    const recordFiles = await getRecordFiles(record.id!);
     const rawNotes = safeParseJson(record.related_notes);
     const relatedNotes = rawNotes.map((n: any) => ({
       ...n,
@@ -116,6 +118,7 @@ export function registerPageRoutes(router: Router): void {
         link: record,
         tags,
         images,
+        recordFiles,
         relatedNotes,
         relatedLinks,
         agentSession: latestSession,
@@ -153,6 +156,7 @@ export function registerPageRoutes(router: Router): void {
 
     const tags = safeParseJson(record.tags);
     const images = safeParseJson(record.images);
+    const recordFiles = await getRecordFiles(record.id!);
 
     // Related links: title + sourceUrl only (no internal link)
     const relatedLinkData = await getRelatedRecords(record.id!);
@@ -186,6 +190,7 @@ export function registerPageRoutes(router: Router): void {
         link: record,
         tags,
         images,
+        recordFiles,
         relatedNotes: [], // hide related notes in shared mode
         relatedLinks,
         agentSession: null,

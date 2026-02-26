@@ -424,7 +424,20 @@
     </div>
     <% } %>
 
-    <% if (images && images.length > 0) { %>
+    <% if (recordFiles && recordFiles.length > 0) { %>
+    <div class="section">
+      <div class="section-title">图片</div>
+      <div class="image-gallery">
+        <% for (const rf of recordFiles) { %>
+        <figure>
+          <a href="/files/<%= rf.storage_key %>" target="_blank">
+            <img src="/files/<%= rf.storage_key %>" loading="lazy" alt="">
+          </a>
+        </figure>
+        <% } %>
+      </div>
+    </div>
+    <% } else if (images && images.length > 0) { %>
     <div class="section">
       <div class="section-title">图片</div>
       <div class="image-gallery">
