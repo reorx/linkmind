@@ -61,24 +61,39 @@ async function main() {
     const recordDir = path.join(IMAGES_DIR, String(record.id));
     console.log(`[${record.id}] ${images.length} image(s), dir: ${recordDir}`);
 
-    if (!fs.existsSync(recordDir)) {
-      console.log(`  ⚠️  Directory missing, skipping`);
-      errors++;
-      continue;
-    }
+    const dirExists = fs.existsSync(recordDir);
 
     let allOk = true;
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
-      const localFile = path.join(recordDir, img.local_path);
+      let data: Buffer;
 
-      if (!fs.existsSync(localFile)) {
-        console.log(`  ⚠️  File missing: ${img.local_path}`);
+      // Try local file first, fall back to downloading from original_url
+      const localFile = dirExists ? path.join(recordDir, img.local_path) : null;
+      if (localFile && fs.existsSync(localFile)) {
+        data = fs.readFileSync(localFile);
+        console.log(`  [${i}] local: ${img.local_path} (${data.length} bytes)`);
+      } else if (img.original_url) {
+        console.log(`  [${i}] downloading from ${img.original_url}...`);
+        try {
+          const resp = await fetch(img.original_url);
+          if (!resp.ok) {
+            console.log(`  ⚠️  Download failed: ${resp.status} ${resp.statusText}`);
+            allOk = false;
+            continue;
+          }
+          data = Buffer.from(await resp.arrayBuffer());
+          console.log(`  [${i}] downloaded (${data.length} bytes)`);
+        } catch (err) {
+          console.log(`  ⚠️  Download error: ${err}`);
+          allOk = false;
+          continue;
+        }
+      } else {
+        console.log(`  ⚠️  No local file and no original_url, skipping`);
         allOk = false;
         continue;
       }
-
-      const data = fs.readFileSync(localFile);
       const ext = img.local_path.split('.').pop() || 'jpg';
       const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
       const storageKey = recordFileKey(record.id!, i, 'twitter', ext);
