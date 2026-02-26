@@ -30,11 +30,12 @@ export function startWebServer(port: number): void {
   app.use('/images', express.static(imagesDir));
 
   // Serve files from object storage
-  app.get('/files/:key(*)', async (req, res) => {
+  app.get('/files/{*key}', async (req, res) => {
     try {
       const { getStorage } = await import('./storage/index.js');
       const storage = getStorage();
-      const key = req.url.replace(/^\/files\//, '');
+      const keyParts = req.params.key;
+      const key = Array.isArray(keyParts) ? keyParts.join('/') : keyParts;
       if (!key) {
         res.status(400).send('Missing key');
         return;
