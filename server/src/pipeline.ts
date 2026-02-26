@@ -29,7 +29,7 @@ import {
 import type { ScrapeData } from '@linkmind/core';
 import { scrapeUrl, isTwitterUrl, isScrapeContentValid } from './scraper.js';
 import { scrapeWithFirecrawl } from './scraper-firecrawl.js';
-import { processTwitterImages } from './image-handler.js';
+import { processTwitterMedia } from './media-handler.js';
 import {
   generateSummary,
   generateInsight,
@@ -122,24 +122,19 @@ async function scrapeStep(recordId: number, url: string): Promise<ScrapeStepResu
 
   log.info({ recordId, title: result.og.title, chars: result.markdown.length }, '[scrape] OK');
 
-  // Process Twitter images + OCR
+  // Process Twitter images → object storage + record_files
   let ocrTexts: string[] = [];
   if (isTwitterUrl(url) && result.rawMedia?.length) {
     try {
-      const images = await processTwitterImages(recordId, result.rawMedia);
-      if (images.length > 0) {
-        await updateRecord(recordId, { images: JSON.stringify(images) });
-        log.info({ recordId, count: images.length }, '[images] Downloaded and processed');
-
-        ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
-        if (ocrTexts.length > 0) {
-          log.info({ recordId, ocrCount: ocrTexts.length }, '[ocr] Extracted text from images');
-        }
+      const { results: mediaResults, ocrTexts: extractedOcr } = await processTwitterMedia(recordId, result.rawMedia);
+      if (mediaResults.length > 0) {
+        log.info({ recordId, count: mediaResults.length }, '[media] Twitter images stored');
       }
+      ocrTexts = extractedOcr;
     } catch (imgErr) {
       log.warn(
         { recordId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
-        '[images] Failed (non-fatal)',
+        '[media] Failed (non-fatal)',
       );
       Sentry.captureException(imgErr, {
         level: 'warning',
@@ -434,15 +429,15 @@ export function registerTasks(): void {
           let ocrTexts: string[] = [];
           if (isTwitterUrl(url) && sd.raw_media?.length) {
             try {
-              const images = await processTwitterImages(recordId!, sd.raw_media);
-              if (images.length > 0) {
-                await updateRecord(recordId!, { images: JSON.stringify(images) });
-                ocrTexts = images.filter((img) => img.ocr_text).map((img) => img.ocr_text!);
+              const { results: mediaResults, ocrTexts: extractedOcr } = await processTwitterMedia(recordId!, sd.raw_media);
+              if (mediaResults.length > 0) {
+                log.info({ recordId, count: mediaResults.length }, '[media] Twitter images stored (from probe)');
               }
+              ocrTexts = extractedOcr;
             } catch (imgErr) {
               log.warn(
                 { recordId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
-                '[images] Failed (non-fatal)',
+                '[media] Failed (non-fatal)',
               );
               Sentry.captureException(imgErr, {
                 level: 'warning',
