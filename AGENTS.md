@@ -174,11 +174,22 @@ npx tsx --env-file=.env.prod scripts/migrate.ts
 docker compose exec server pnpm --filter @linkmind/server run migrate
 ```
 
-**新数据库初始化（两步）：**
+**执行独立 SQL 文件：**
 
-1. 手动执行 `server/migrations/` 下的 SQL 文件（001_init.sql 到 005_share_records.sql），注意 002_bm25_index.sql 是可选的（需要 ParadeDB 扩展）
+```bash
+# 本地
+cd server
+pnpm run run-sql <sql-file-path>
+
+# Docker（生产服务器）
+docker compose exec server pnpm --filter @linkmind/server run run-sql <sql-file-path>
+```
+
+**新数据库初始化（三步）：**
+
+1. 执行 `server/migrations/` 下的 SQL 基线文件（001_init.sql 到 005_share_records.sql），注意 002_bm25_index.sql 是可选的（需要 ParadeDB 扩展）
 2. 运行 `pnpm run migrate`（Kysely 自动创建 migration 追踪表并执行所有新 migration）
-3. 执行 Absurd SQL：`server/sql/absurd.sql`，然后 `SELECT absurd.create_queue('linkmind')`
+3. 执行 Absurd SQL：`pnpm run run-sql sql/absurd.sql`，然后 `SELECT absurd.create_queue('linkmind')`
 
 ## Admin API
 
