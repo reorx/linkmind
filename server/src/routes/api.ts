@@ -1,5 +1,6 @@
 import type { Router, Response } from 'express';
 import multer from 'multer';
+import { nanoid } from 'nanoid';
 import {
   getRecord,
   getRecentRecords,
@@ -10,6 +11,9 @@ import {
   getLatestAgentSession,
   getAgentEventsAfterCursor,
   getAgentEventsBySessionId,
+  getShareByRecordId,
+  createShare,
+  deleteShareByRecordId,
 } from '../db/index.js';
 import { spawnProcessLink, retryRecord, deleteRecordFull } from '../pipeline.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
@@ -287,5 +291,50 @@ export function registerApiRoutes(router: Router): void {
     }
     const events = await getAgentEventsBySessionId(session.id);
     res.json({ session, events });
+  });
+
+  // POST /api/links/:id/share — create or return existing share link
+  router.post('/api/links/:id/share', requireAuth, async (req: AuthRequest, res: Response) => {
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid ID' });
+      return;
+    }
+    const record = await getRecord(id);
+    if (!record || record.user_id !== req.userId) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+
+    // Idempotent: return existing share if already shared
+    const existing = await getShareByRecordId(id);
+    if (existing) {
+      res.json({ nanoid: existing.nanoid, url: `/shared/${existing.nanoid}` });
+      return;
+    }
+
+    const share = await createShare(nanoid(), id, req.userId!);
+    log.info({ recordId: id, nanoid: share.nanoid }, 'Share created');
+    res.json({ nanoid: share.nanoid, url: `/shared/${share.nanoid}` });
+  });
+
+  // DELETE /api/links/:id/share — stop sharing
+  router.delete('/api/links/:id/share', requireAuth, async (req: AuthRequest, res: Response) => {
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid ID' });
+      return;
+    }
+    const record = await getRecord(id);
+    if (!record || record.user_id !== req.userId) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+
+    const deleted = await deleteShareByRecordId(id);
+    if (deleted) {
+      log.info({ recordId: id }, 'Share deleted');
+    }
+    res.json({ success: true });
   });
 }

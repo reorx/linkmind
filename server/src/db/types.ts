@@ -93,6 +93,14 @@ export interface RecordRelation {
   created_at?: string;
 }
 
+export interface ShareRecord {
+  id?: number;
+  nanoid: string;
+  record_id: number;
+  user_id: number;
+  created_at?: string;
+}
+
 /* ── Kysely table types ── */
 
 export interface InvitesTable {
@@ -210,6 +218,14 @@ export interface AgentEventsTable {
   created_at: Generated<Date>;
 }
 
+export interface ShareRecordsTable {
+  id: Generated<number>;
+  nanoid: string;
+  record_id: number;
+  user_id: number;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   invites: InvitesTable;
   users: UsersTable;
@@ -221,4 +237,5 @@ export interface Database {
   device_auth_requests: DeviceAuthRequestsTable;
   agent_session: AgentSessionsTable;
   agent_event: AgentEventsTable;
+  share_records: ShareRecordsTable;
 }

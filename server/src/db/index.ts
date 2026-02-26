@@ -6,3 +6,4 @@ export * from './users.js';
 export * from './relations.js';
 export * from './probe.js';
 export * from './agent-event.js';
+export * from './share.js';

@@ -1,4 +1,4 @@
-import type { Router, Response } from 'express';
+import type { Router, Request, Response } from 'express';
 import { marked } from 'marked';
 import {
   getRecord,
@@ -6,6 +6,8 @@ import {
   getRelatedRecords,
   getLatestAgentSession,
   getAgentEventsBySessionId,
+  getShareByRecordId,
+  getShareByNanoid,
 } from '../db/index.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
 import { renderPage, safeParseJson, getDayLabel, isAdminUser } from './helpers.js';
@@ -105,6 +107,8 @@ export function registerPageRoutes(router: Router): void {
       }
     }
 
+    const shareRecord = await getShareByRecordId(record.id!);
+
     try {
       const detailTitle = record.type === 'note' ? `笔记 — LinkMind` : `${record.og_title || record.url} — LinkMind`;
       const html = await renderPage('link-detail', {
@@ -117,6 +121,8 @@ export function registerPageRoutes(router: Router): void {
         agentSession: latestSession,
         agentEvents,
         isAdmin,
+        isShared: false,
+        shareNanoid: shareRecord?.nanoid || null,
         user: req.user,
         summaryHtml: renderMarkdown(record.summary),
         insightHtml: renderMarkdown(record.insight),
@@ -126,6 +132,75 @@ export function registerPageRoutes(router: Router): void {
       res.type('html').send(html);
     } catch (err) {
       log.error({ err: err instanceof Error ? err.message : String(err) }, 'Detail render failed');
+      res.status(500).send('Internal error');
+    }
+  });
+
+  // GET /shared/:nanoid — public shared record page
+  router.get('/shared/:nanoid', async (req: Request, res: Response) => {
+    const nanoid = req.params.nanoid as string;
+    const share = await getShareByNanoid(nanoid);
+    if (!share) {
+      res.status(404).send('Not found');
+      return;
+    }
+
+    const record = await getRecord(share.record_id);
+    if (!record) {
+      res.status(404).send('Not found');
+      return;
+    }
+
+    const tags = safeParseJson(record.tags);
+    const images = safeParseJson(record.images);
+
+    // Related links: title + sourceUrl only (no internal link)
+    const relatedLinkData = await getRelatedRecords(record.id!);
+    const relatedLinks: {
+      linkId: number;
+      title: string;
+      url: string;
+      sourceUrl: string;
+      tags: string[];
+      score: number;
+    }[] = [];
+    for (const item of relatedLinkData) {
+      const relatedRecord = await getRecord(item.relatedRecordId);
+      if (relatedRecord) {
+        relatedLinks.push({
+          linkId: item.relatedRecordId,
+          title: relatedRecord.og_title || relatedRecord.url || '',
+          url: '', // no internal link in shared mode
+          sourceUrl: relatedRecord.url || '',
+          tags: safeParseJson(relatedRecord.tags),
+          score: item.score,
+        });
+      }
+    }
+
+    try {
+      const detailTitle = record.type === 'note' ? '笔记 — LinkMind' : `${record.og_title || record.url} — LinkMind`;
+
+      const html = await renderPage('link-detail', {
+        pageTitle: detailTitle,
+        link: record,
+        tags,
+        images,
+        relatedNotes: [], // hide related notes in shared mode
+        relatedLinks,
+        agentSession: null,
+        agentEvents: [],
+        isAdmin: false,
+        isShared: true,
+        user: null,
+        summaryHtml: renderMarkdown(record.summary),
+        insightHtml: renderMarkdown(record.insight),
+        markdownHtml: renderMarkdown(record.markdown),
+        contentHtml: record.type === 'note' ? renderMarkdown(record.content) : '',
+      });
+      res.type('html').send(html);
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : String(err) }, 'Shared page render failed');
       res.status(500).send('Internal error');
     }
   });

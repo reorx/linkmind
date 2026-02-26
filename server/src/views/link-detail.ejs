@@ -255,6 +255,33 @@
     color: var(--dim);
   }
 
+  /* Share button */
+  .share-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .btn-share {
+    background: var(--green);
+    color: #fff;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .btn-share:hover { opacity: 0.9; }
+  .btn-share--active {
+    background: var(--dim);
+  }
+  .share-url {
+    font-size: 0.85rem;
+  }
+  .share-url a {
+    color: var(--accent);
+  }
+
   /* Processing history */
   .event-timeline {
     font-size: 0.85rem;
@@ -325,6 +352,16 @@
 
 <div class="detail-layout">
   <div class="detail-main">
+    <% if (typeof isShared === 'undefined' || !isShared) { %>
+    <div class="share-bar">
+      <% if (typeof shareNanoid !== 'undefined' && shareNanoid) { %>
+        <button class="btn-share btn-share--active" id="shareBtn" onclick="stopSharing()">Stop Sharing</button>
+        <span class="share-url" id="shareUrl"><a href="/shared/<%= shareNanoid %>" target="_blank">/shared/<%= shareNanoid %></a></span>
+      <% } else { %>
+        <button class="btn-share" id="shareBtn" onclick="shareRecord()">Share</button>
+      <% } %>
+    </div>
+    <% } %>
     <% if (link.type === 'note') { %>
     <h1>笔记</h1>
     <div class="meta">
@@ -461,9 +498,13 @@
       <div class="section-title">相关链接</div>
       <% for (const l of relatedLinks) { %>
       <div class="related-item">
-        🔗 <a href="<%= l.url %>"><%= l.title || l.url || '' %></a> (<a href="<%= l.sourceUrl %>" target="_blank">Source</a>)<% if (l.score) { %><span class="related-score">[<%= l.score %>]</span><% } %>
-        <% if (l.tags && l.tags.length > 0) { %>
-        <br><span class="related-tags"><%= l.tags.map(t => '#' + t).join(' ') %></span>
+        <% if (typeof isShared !== 'undefined' && isShared) { %>
+          🔗 <%= l.title || l.sourceUrl || '' %> (<a href="<%= l.sourceUrl %>" target="_blank">Source</a>)
+        <% } else { %>
+          🔗 <a href="<%= l.url %>"><%= l.title || l.url || '' %></a> (<a href="<%= l.sourceUrl %>" target="_blank">Source</a>)<% if (l.score) { %><span class="related-score">[<%= l.score %>]</span><% } %>
+          <% if (l.tags && l.tags.length > 0) { %>
+          <br><span class="related-tags"><%= l.tags.map(t => '#' + t).join(' ') %></span>
+          <% } %>
         <% } %>
       </div>
       <% } %>
@@ -541,6 +582,54 @@
 </div>
 <% } %>
 <% } /* end isAdmin */ %>
+
+<% if (typeof isShared === 'undefined' || !isShared) { %>
+<script>
+  function shareRecord() {
+    if (!confirm('确认公开分享此链接？')) return;
+    const btn = document.getElementById('shareBtn');
+    btn.disabled = true;
+    btn.textContent = 'Sharing...';
+
+    fetch('/api/links/<%= link.id %>/share', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        // Copy full URL to clipboard
+        const fullUrl = location.origin + data.url;
+        navigator.clipboard.writeText(fullUrl).then(() => {
+          alert('分享链接已复制到剪贴板：\n' + fullUrl);
+        }).catch(() => {
+          alert('分享链接：\n' + fullUrl);
+        });
+        // Reload to show updated button state
+        location.reload();
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.textContent = 'Share';
+        alert('分享失败：' + err.message);
+      });
+  }
+
+  function stopSharing() {
+    if (!confirm('确认停止分享？停止后分享链接将不可访问。')) return;
+    const btn = document.getElementById('shareBtn');
+    btn.disabled = true;
+    btn.textContent = 'Stopping...';
+
+    fetch('/api/links/<%= link.id %>/share', { method: 'DELETE' })
+      .then(r => r.json())
+      .then(() => {
+        location.reload();
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.textContent = 'Stop Sharing';
+        alert('操作失败：' + err.message);
+      });
+  }
+</script>
+<% } %>
 
 <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
 <script>
