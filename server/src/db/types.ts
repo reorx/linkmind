@@ -226,6 +226,21 @@ export interface ShareRecordsTable {
   created_at: Generated<Date>;
 }
 
+export interface RecordFilesTable {
+  id: Generated<number>;
+  record_id: number;
+  source: string;
+  source_ref: string | null;
+  storage_provider: string;
+  storage_key: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  width: number | null;
+  height: number | null;
+  metadata: any;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   invites: InvitesTable;
   users: UsersTable;
@@ -238,4 +253,5 @@ export interface Database {
   agent_session: AgentSessionsTable;
   agent_event: AgentEventsTable;
   share_records: ShareRecordsTable;
+  record_files: RecordFilesTable;
 }
