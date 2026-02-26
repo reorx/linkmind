@@ -95,6 +95,12 @@ pnpm --filter @linkmind/server run dev
 
 # 启动 probe（开发）
 pnpm --filter @linkmind/probe run dev -- run --foreground
+
+# 执行数据库 migration
+pnpm --filter @linkmind/server run migrate
+
+# 执行独立 SQL 文件
+pnpm --filter @linkmind/server run run-sql <sql-file-path>
 ```
 
 ## 部署
