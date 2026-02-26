@@ -30,7 +30,7 @@ export function startWebServer(port: number): void {
   app.use('/images', express.static(imagesDir));
 
   // Serve files from object storage
-  app.get('/files/*', async (req, res) => {
+  app.get('/files/:key(*)', async (req, res) => {
     try {
       const { getStorage } = await import('./storage/index.js');
       const storage = getStorage();
