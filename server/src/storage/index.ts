@@ -1,5 +1,5 @@
 import type { StorageBackend } from './types.js';
-import { R2Storage } from './r2.js';
+import { S3Storage } from './s3.js';
 import { LocalStorage } from './local.js';
 
 export type { StorageBackend } from './types.js';
@@ -13,7 +13,10 @@ export function getStorage(): StorageBackend {
 
   switch (backend) {
     case 'r2':
-      instance = new R2Storage();
+      instance = S3Storage.fromR2Env();
+      break;
+    case 'minio':
+      instance = S3Storage.fromMinIOEnv();
       break;
     case 'local':
       instance = new LocalStorage();
