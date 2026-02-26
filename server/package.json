@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "migrate": "tsx scripts/migrate.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

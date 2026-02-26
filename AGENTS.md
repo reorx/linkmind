@@ -142,24 +142,43 @@ tail -f ~/Code/linkmind/data/launchd-stderr.log
 
 ## Database Migration
 
-**目前没有自动 migration 机制。** 每个 migration 都需要对生产数据库手动执行。
+使用 Kysely 的 Migrator 框架管理数据库 schema 变更。
 
-Migration 文件在 `server/migrations/` 目录下（已打入 Docker 镜像），通过在服务器上用 Docker Compose 执行：
+**历史基线：** `server/migrations/` 下的 SQL 文件（001-005）是项目早期的手动 migration，不受 Kysely 管理。对于全新数据库，必须先执行这些 SQL 文件建立基线 schema，然后再运行 Kysely migration。
 
-```bash
-# SSH 到服务器
-ssh hh-hk-01
+**新 migration 写法：** 在 `server/src/db/migrations/` 下创建 TypeScript 文件，命名格式 `YYYY-MM-DDTHHMM-description.ts`，使用 raw SQL：
 
-# 执行指定 migration（在运行中的容器内，工作目录设为 /app/server 以找到 node_modules）
-docker compose -f /opt/apps/linkmind/docker-compose.yml exec -w /app/server server \
-  node -e "const pg=require('pg');const fs=require('fs');const c=new pg.Client(process.env.DATABASE_URL);c.connect().then(()=>c.query(fs.readFileSync('/app/server/migrations/004_ingested_with_content.sql','utf8'))).then(()=>{console.log('Done');c.end()}).catch(e=>{console.error(e);process.exit(1)})"
+```ts
+import { type Kysely, sql } from 'kysely'
+
+export async function up(db: Kysely<any>): Promise<void> {
+  await sql`ALTER TABLE records ADD COLUMN foo TEXT`.execute(db)
+}
+
+export async function down(db: Kysely<any>): Promise<void> {
+  // forward-only, no rollback
+}
 ```
 
-**关键细节：**
-- 使用 `exec -w /app/server` 而非 `run --rm server`，因为 `pg` 模块安装在 `/app/server/node_modules/` 下，需要工作目录在 `/app/server` 才能 `require('pg')` 成功
-- 新增 migration 文件后，需确认 CI 构建的 Docker 镜像已包含该文件（push 后等部署完成）
-- 在服务器上执行 migration，利用容器内的 `DATABASE_URL` 环境变量连接 Neon
-- 执行前先在本地数据库测试通过
+**执行 migration：**
+
+```bash
+# 本地（使用 .env）
+cd server
+pnpm run migrate
+
+# 本地（使用 .env.prod 对生产执行）
+npx tsx --env-file=.env.prod scripts/migrate.ts
+
+# Docker（生产服务器）
+docker compose exec server pnpm --filter @linkmind/server run migrate
+```
+
+**新数据库初始化（两步）：**
+
+1. 手动执行 `server/migrations/` 下的 SQL 文件（001_init.sql 到 005_share_records.sql），注意 002_bm25_index.sql 是可选的（需要 ParadeDB 扩展）
+2. 运行 `pnpm run migrate`（Kysely 自动创建 migration 追踪表并执行所有新 migration）
+3. 执行 Absurd SQL：`server/sql/absurd.sql`，然后 `SELECT absurd.create_queue('linkmind')`
 
 ## Admin API
 
