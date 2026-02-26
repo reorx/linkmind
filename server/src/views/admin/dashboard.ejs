@@ -1,0 +1,62 @@
+<h2>Dashboard</h2>
+
+<section class="stats">
+  <div>
+    <div class="stat-value"><%= userCount %></div>
+    <div class="stat-label">Users</div>
+  </div>
+  <div>
+    <div class="stat-value"><%= recordCount %></div>
+    <div class="stat-label">Total Records</div>
+  </div>
+  <div>
+    <div class="stat-value"><%= todayProcessedCount %></div>
+    <div class="stat-label">Processed Today</div>
+  </div>
+</section>
+
+<h3>Hourly Activity (Last 24h)</h3>
+<table>
+  <thead>
+    <tr><th>Hour</th><th style="width:50px;">New</th><th style="width:50px;">Done</th><th>Chart</th></tr>
+  </thead>
+  <tbody>
+    <% hourlyData.forEach(function(row) { %>
+    <% var newW = maxHourly > 0 ? Math.round((row.new_count / maxHourly) * 180) : 0; %>
+    <% var procW = maxHourly > 0 ? Math.round((row.processed_count / maxHourly) * 180) : 0; %>
+    <tr>
+      <td class="mono"><%= row.hour %></td>
+      <td><%= row.new_count %></td>
+      <td><%= row.processed_count %></td>
+      <td>
+        <div style="display:flex;gap:2px;align-items:center;height:16px;">
+          <% if (newW > 0) { %><div style="background:var(--accent);height:8px;width:<%= newW %>px;border-radius:2px;opacity:0.7;" title="New: <%= row.new_count %>"></div><% } %>
+          <% if (procW > 0) { %><div style="background:var(--green);height:8px;width:<%= procW %>px;border-radius:2px;opacity:0.7;" title="Processed: <%= row.processed_count %>"></div><% } %>
+        </div>
+      </td>
+    </tr>
+    <% }); %>
+  </tbody>
+</table>
+
+<h3>Anomalous Records <span class="dim" style="font-weight:400;font-size:12px;">(non-analyzed, latest 50)</span></h3>
+<% if (anomalousRecords.length === 0) { %>
+<p class="dim" style="font-size:13px;">All records in terminal state.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>ID</th><th>URL / Content</th><th>Status</th><th>Error</th><th>Updated</th></tr>
+  </thead>
+  <tbody>
+    <% anomalousRecords.forEach(function(r) { %>
+    <tr>
+      <td><a href="/admin/records/<%= r.id %>">#<%= r.id %></a></td>
+      <td class="truncate"><%= r.url || (r.content ? r.content.substring(0, 60) : '—') %></td>
+      <td><span class="badge badge-<%= r.status %>"><%= r.status %></span></td>
+      <td class="truncate dim" style="max-width:200px;"><%= r.error_message || '—' %></td>
+      <td class="mono"><%= r.updated_at ? new Date(r.updated_at).toISOString().replace('T', ' ').substring(5, 16) : '—' %></td>
+    </tr>
+    <% }); %>
+  </tbody>
+</table>
+<% } %>

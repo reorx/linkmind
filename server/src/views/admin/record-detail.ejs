@@ -1,0 +1,135 @@
+<h2>Record #<%= record.id %></h2>
+<p style="margin-bottom:16px;">
+  <span class="badge badge-<%= record.status %>"><%= record.status %></span>
+  <span class="dim" style="margin-left:8px;">User: <a href="/admin/users/<%= record.user_id %>"><%= user ? (user.username || user.display_name || '#' + user.id) : record.user_id %></a></span>
+  <span class="dim" style="margin-left:8px;">|</span>
+  <a href="/link/<%= record.id %>" style="margin-left:8px;font-size:13px;">View public page</a>
+</p>
+
+<h3>Core Fields</h3>
+<dl>
+  <dt>ID</dt><dd><%= record.id %></dd>
+  <dt>Type</dt><dd><%= record.type %></dd>
+  <dt>URL</dt><dd><% if (record.url) { %><a href="<%= record.url %>" target="_blank"><%= record.url %></a><% } else { %>—<% } %></dd>
+  <dt>Source URL</dt><dd><%= record.source_url || '—' %></dd>
+  <dt>Status</dt><dd><span class="badge badge-<%= record.status %>"><%= record.status %></span></dd>
+  <dt>Added by User</dt><dd><%= record.added_by_user %></dd>
+  <dt>Ingested w/ Content</dt><dd><%= record.ingested_with_content %></dd>
+  <dt>Created</dt><dd class="mono"><%= record.created_at || '—' %></dd>
+  <dt>Updated</dt><dd class="mono"><%= record.updated_at || '—' %></dd>
+</dl>
+
+<% if (record.error_message) { %>
+<h3>Error</h3>
+<pre class="data" style="color:#c53030;"><%= record.error_message %></pre>
+<% } %>
+
+<h3>Open Graph</h3>
+<dl>
+  <dt>og:title</dt><dd><%= record.og_title || '—' %></dd>
+  <dt>og:description</dt><dd><%= record.og_description || '—' %></dd>
+  <dt>og:image</dt><dd><% if (record.og_image) { %><a href="<%= record.og_image %>" target="_blank"><%= record.og_image %></a><% } else { %>—<% } %></dd>
+  <dt>og:site_name</dt><dd><%= record.og_site_name || '—' %></dd>
+  <dt>og:type</dt><dd><%= record.og_type || '—' %></dd>
+</dl>
+
+<% if (record.user_note) { %>
+<h3>User Note</h3>
+<pre class="data"><%= record.user_note %></pre>
+<% } %>
+
+<% if (record.content) { %>
+<h3>Content (Note)</h3>
+<pre class="data"><%= record.content %></pre>
+<% } %>
+
+<h3>Summary</h3>
+<% if (record.summary) { %>
+<pre class="data"><%= record.summary %></pre>
+<% } else { %>
+<p class="dim" style="font-size:13px;">—</p>
+<% } %>
+
+<h3>Insight</h3>
+<% if (record.insight) { %>
+<pre class="data"><%= record.insight %></pre>
+<% } else { %>
+<p class="dim" style="font-size:13px;">—</p>
+<% } %>
+
+<h3>Tags</h3>
+<% if (record.tags) { %>
+<pre class="data mono"><%= JSON.stringify(JSON.parse(record.tags), null, 2) %></pre>
+<% } else { %>
+<p class="dim" style="font-size:13px;">—</p>
+<% } %>
+
+<h3>Related Links</h3>
+<% if (record.related_links) { %>
+<pre class="data mono"><%= JSON.stringify(JSON.parse(record.related_links), null, 2) %></pre>
+<% } else { %>
+<p class="dim" style="font-size:13px;">—</p>
+<% } %>
+
+<h3>Related Notes</h3>
+<% if (record.related_notes) { %>
+<pre class="data mono"><%= JSON.stringify(JSON.parse(record.related_notes), null, 2) %></pre>
+<% } else { %>
+<p class="dim" style="font-size:13px;">—</p>
+<% } %>
+
+<h3>Images</h3>
+<% if (record.images) { %>
+<pre class="data mono"><%= JSON.stringify(JSON.parse(record.images), null, 2) %></pre>
+<% } else { %>
+<p class="dim" style="font-size:13px;">—</p>
+<% } %>
+
+<h3>Markdown <span class="dim" style="font-weight:400;font-size:12px;">(<%= record.markdown ? record.markdown.length + ' chars' : 'empty' %>)</span></h3>
+<% if (record.markdown) { %>
+<pre class="data" style="max-height:600px;"><%= record.markdown.length > 5000 ? record.markdown.substring(0, 5000) + '\n\n... [truncated, ' + record.markdown.length + ' chars total]' : record.markdown %></pre>
+<% } else { %>
+<p class="dim" style="font-size:13px;">—</p>
+<% } %>
+
+<h3>Telegram</h3>
+<dl>
+  <dt>Message ID</dt><dd class="mono"><%= record.telegram_message_id || '—' %></dd>
+  <dt>Chat ID</dt><dd class="mono"><%= record.telegram_chat_id || '—' %></dd>
+</dl>
+
+<% if (record.summary_embedding) { %>
+<h3>Embedding</h3>
+<p class="dim" style="font-size:12px;">Vector present (<%= record.summary_embedding.length %> chars serialized)</p>
+<% } %>
+
+<% if (session) { %>
+<h3>Latest Agent Session</h3>
+<dl>
+  <dt>Session ID</dt><dd class="mono"><%= session.id %></dd>
+  <dt>Agent</dt><dd><%= session.agent_name %></dd>
+  <dt>Status</dt><dd><span class="badge badge-<%= session.status === 'completed' ? 'analyzed' : session.status === 'failed' ? 'error' : 'pending' %>"><%= session.status %></span></dd>
+  <% if (session.error_message) { %><dt>Error</dt><dd style="color:#c53030;"><%= session.error_message %></dd><% } %>
+  <dt>Created</dt><dd class="mono"><%= session.created_at %></dd>
+  <dt>Updated</dt><dd class="mono"><%= session.updated_at %></dd>
+</dl>
+
+<% if (agentEvents.length > 0) { %>
+<h3>Agent Events (<%= agentEvents.length %>)</h3>
+<table>
+  <thead>
+    <tr><th>Type</th><th>Name</th><th>Data</th><th>Time</th></tr>
+  </thead>
+  <tbody>
+    <% agentEvents.forEach(function(e) { %>
+    <tr>
+      <td class="mono"><%= e.event_type %></td>
+      <td><%= e.name || '—' %></td>
+      <td style="max-width:400px;"><% if (e.data) { %><code style="font-size:11px;"><%= JSON.stringify(e.data).substring(0, 200) %></code><% } else { %>—<% } %></td>
+      <td class="mono"><%= e.created_at ? new Date(e.created_at).toISOString().replace('T', ' ').substring(11, 19) : '—' %></td>
+    </tr>
+    <% }); %>
+  </tbody>
+</table>
+<% } %>
+<% } %>

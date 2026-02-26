@@ -1,0 +1,28 @@
+<h2>Users <span class="dim" style="font-weight:400;font-size:14px;">(<%= users.length %>)</span></h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Username</th>
+      <th>Display Name</th>
+      <th>Telegram ID</th>
+      <th>Status</th>
+      <th>Records</th>
+      <th>Created</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% users.forEach(function(u) { %>
+    <tr>
+      <td><a href="/admin/users/<%= u.id %>">#<%= u.id %></a></td>
+      <td><%= u.username || '—' %></td>
+      <td><%= u.display_name || '—' %></td>
+      <td class="mono"><%= u.telegram_id %></td>
+      <td><span class="badge badge-<%= u.status === 'active' ? 'analyzed' : 'pending' %>"><%= u.status %></span></td>
+      <td><%= u.record_count %></td>
+      <td class="mono"><%= u.created_at ? new Date(u.created_at).toISOString().substring(0, 10) : '—' %></td>
+    </tr>
+    <% }); %>
+  </tbody>
+</table>

@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { getUserById, getProbeDeviceByToken, updateProbeDeviceLastSeen } from '../db/index.js';
-import { COOKIE_NAME, getJwtSecret } from './helpers.js';
+import { COOKIE_NAME, getJwtSecret, isAdminUser } from './helpers.js';
 
 export interface AuthRequest extends Request {
   userId?: number;
@@ -56,6 +56,16 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
   }
 
   next();
+}
+
+export function requireAdminPage(req: AuthRequest, res: Response, next: NextFunction): void {
+  requireAuth(req, res, () => {
+    if (!req.userId || !isAdminUser(req.userId)) {
+      res.status(403).send('Forbidden');
+      return;
+    }
+    next();
+  });
 }
 
 export function requireProbeAuth(req: ProbeAuthRequest, res: Response, next: NextFunction): void {

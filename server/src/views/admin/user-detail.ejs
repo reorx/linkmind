@@ -1,0 +1,33 @@
+<h2>User #<%= user.id %></h2>
+
+<dl>
+  <dt>ID</dt><dd><%= user.id %></dd>
+  <dt>Username</dt><dd><%= user.username || '—' %></dd>
+  <dt>Display Name</dt><dd><%= user.display_name || '—' %></dd>
+  <dt>Telegram ID</dt><dd class="mono"><%= user.telegram_id %></dd>
+  <dt>Status</dt><dd><span class="badge badge-<%= user.status === 'active' ? 'analyzed' : 'pending' %>"><%= user.status %></span></dd>
+  <dt>Invite ID</dt><dd><%= user.invite_id || '—' %></dd>
+  <dt>Created</dt><dd class="mono"><%= user.created_at || '—' %></dd>
+</dl>
+
+<h3>Records <span class="dim" style="font-weight:400;font-size:12px;">(<%= records.length %><%= records.length >= 100 ? '+' : '' %>)</span></h3>
+
+<% if (records.length === 0) { %>
+<p class="dim" style="font-size:13px;">No records.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>ID</th><th>URL / Content</th><th>Status</th><th>Created</th></tr>
+  </thead>
+  <tbody>
+    <% records.forEach(function(r) { %>
+    <tr>
+      <td><a href="/admin/records/<%= r.id %>">#<%= r.id %></a></td>
+      <td class="truncate"><%= r.url || (r.content ? r.content.substring(0, 60) : '—') %></td>
+      <td><span class="badge badge-<%= r.status %>"><%= r.status %></span></td>
+      <td class="mono"><%= r.created_at ? new Date(r.created_at).toISOString().replace('T', ' ').substring(0, 16) : '—' %></td>
+    </tr>
+    <% }); %>
+  </tbody>
+</table>
+<% } %>

@@ -1,0 +1,57 @@
+<h2>Records <span class="dim" style="font-weight:400;font-size:14px;">(<%= total %>)</span></h2>
+
+<div style="margin-bottom:12px;font-size:13px;">
+  Filter:
+  <% var statuses = ['', 'enqueued', 'pending', 'scraped', 'analyzed', 'error', 'waiting_probe']; %>
+  <% statuses.forEach(function(s) { %>
+    <% if (s === statusFilter) { %>
+      <strong style="margin:0 4px;"><%= s || 'all' %></strong>
+    <% } else { %>
+      <a href="/admin/records?status=<%= s %>" style="margin:0 4px;"><%= s || 'all' %></a>
+    <% } %>
+  <% }); %>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>User</th>
+      <th>Type</th>
+      <th>Title / URL</th>
+      <th>Status</th>
+      <th>Error</th>
+      <th>Created</th>
+      <th>Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% records.forEach(function(r) { %>
+    <tr>
+      <td><a href="/admin/records/<%= r.id %>">#<%= r.id %></a></td>
+      <td><%= r.username || '—' %></td>
+      <td class="dim"><%= r.type %></td>
+      <td class="truncate" style="max-width:300px;"><%= r.og_title || r.url || '—' %></td>
+      <td><span class="badge badge-<%= r.status %>"><%= r.status %></span></td>
+      <td class="truncate dim" style="max-width:150px;font-size:12px;"><%= r.error_message || '' %></td>
+      <td class="mono"><%= r.created_at ? new Date(r.created_at).toISOString().replace('T', ' ').substring(5, 16) : '—' %></td>
+      <td class="mono"><%= r.updated_at ? new Date(r.updated_at).toISOString().replace('T', ' ').substring(5, 16) : '—' %></td>
+    </tr>
+    <% }); %>
+  </tbody>
+</table>
+
+<% if (totalPages > 1) { %>
+<div class="pagination">
+  <% if (page > 1) { %><a href="/admin/records?page=<%= page - 1 %><%= statusFilter ? '&status=' + statusFilter : '' %>">&laquo; Prev</a><% } %>
+  <% for (var i = 1; i <= totalPages; i++) { %>
+    <% if (Math.abs(i - page) < 4 || i === 1 || i === totalPages) { %>
+      <% if (i === page) { %><span class="current"><%= i %></span>
+      <% } else { %><a href="/admin/records?page=<%= i %><%= statusFilter ? '&status=' + statusFilter : '' %>"><%= i %></a><% } %>
+    <% } else if (Math.abs(i - page) === 4) { %>
+      <span class="dim">…</span>
+    <% } %>
+  <% } %>
+  <% if (page < totalPages) { %><a href="/admin/records?page=<%= page + 1 %><%= statusFilter ? '&status=' + statusFilter : '' %>">Next &raquo;</a><% } %>
+</div>
+<% } %>
