@@ -472,6 +472,7 @@
   </div>
 </div>
 
+<% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
 <%
   const session = typeof agentSession !== 'undefined' ? agentSession : null;
   const events = typeof agentEvents !== 'undefined' ? agentEvents : [];
@@ -539,7 +540,9 @@
   </div>
 </div>
 <% } %>
+<% } /* end isAdmin */ %>
 
+<% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
 <script>
   const recordId = <%= link.id %>;
   const initialSessionId = '<%= session ? session.id : '' %>';
@@ -656,3 +659,4 @@
     startSSE(initialSessionId);
   }
 </script>
+<% } /* end isAdmin script */ %>

@@ -58,6 +58,15 @@ export function csvEscape(s: string): string {
   return s;
 }
 
+export function isAdminUser(userId: number): boolean {
+  const ids = process.env.ADMIN_USER_IDS;
+  if (!ids) return false;
+  return ids
+    .split(',')
+    .map((s) => s.trim())
+    .includes(String(userId));
+}
+
 export function parseCsvLine(line: string): string[] {
   const fields: string[] = [];
   let current = '';

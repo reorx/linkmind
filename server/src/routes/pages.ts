@@ -8,7 +8,7 @@ import {
   getAgentEventsBySessionId,
 } from '../db/index.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
-import { renderPage, safeParseJson, getDayLabel } from './helpers.js';
+import { renderPage, safeParseJson, getDayLabel, isAdminUser } from './helpers.js';
 
 /** Render markdown string to HTML. Returns empty string for falsy input. */
 function renderMarkdown(text: string | null | undefined): string {
@@ -92,11 +92,17 @@ export function registerPageRoutes(router: Router): void {
       }
     }
 
-    // Fetch latest agent session + events for processing history
-    const latestSession = await getLatestAgentSession('record', String(record.id));
+    // Check if current user is admin
+    const isAdmin = req.user?.id ? isAdminUser(req.user.id) : false;
+
+    // Fetch latest agent session + events for processing history (admin only)
+    let latestSession = null;
     let agentEvents: any[] = [];
-    if (latestSession) {
-      agentEvents = await getAgentEventsBySessionId(latestSession.id);
+    if (isAdmin) {
+      latestSession = await getLatestAgentSession('record', String(record.id));
+      if (latestSession) {
+        agentEvents = await getAgentEventsBySessionId(latestSession.id);
+      }
     }
 
     try {
@@ -110,6 +116,7 @@ export function registerPageRoutes(router: Router): void {
         relatedLinks,
         agentSession: latestSession,
         agentEvents,
+        isAdmin,
         user: req.user,
         summaryHtml: renderMarkdown(record.summary),
         insightHtml: renderMarkdown(record.insight),
