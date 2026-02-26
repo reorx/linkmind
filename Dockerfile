@@ -32,6 +32,8 @@ COPY --from=builder /app/server/dist/ server/dist/
 COPY server/sql/ server/sql/
 COPY server/migrations/ server/migrations/
 COPY server/scripts/ server/scripts/
+# Source needed for tsx scripts
+COPY server/src/ server/src/
 
 # Playwright
 RUN npx --prefix server playwright install --with-deps chromium
