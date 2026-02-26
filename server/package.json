@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "migrate": "tsx scripts/migrate.ts",
+    "run-sql": "tsx scripts/run-sql.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
