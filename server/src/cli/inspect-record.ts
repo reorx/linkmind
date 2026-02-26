@@ -1,7 +1,4 @@
-import dotenv from 'dotenv';
-dotenv.config({ path: '.env.prod', override: true });
-
-import { getRecord } from '../src/db/index.js';
+import { getRecord } from '../db/index.js';
 
 const id = parseInt(process.argv[2] || '78', 10);
 const r = await getRecord(id);

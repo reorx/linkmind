@@ -3,11 +3,6 @@
  * Run: npx tsx scripts/export-data.ts [output-dir]
  */
 
-import dotenv from 'dotenv';
-if (!process.env.DATABASE_URL) {
-  dotenv.config({ override: true });
-}
-
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
@@ -15,7 +10,7 @@ import path from 'path';
 const DATABASE_URL = process.env.DATABASE_URL!;
 
 async function main() {
-  const outDir = process.argv[2] || path.resolve(import.meta.dirname, '../data-export');
+  const outDir = process.argv[2] || path.resolve(import.meta.dirname, '../../data-export');
   fs.mkdirSync(outDir, { recursive: true });
 
   const pool = new pg.Pool({ connectionString: DATABASE_URL });

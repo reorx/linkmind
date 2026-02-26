@@ -1,6 +1,7 @@
 {
   "private": true,
   "scripts": {
+    "build": "pnpm --filter @linkmind/core run build && pnpm --filter @linkmind/server run build",
     "test": "pnpm -r run --if-present test",
     "typecheck": "pnpm -r --filter './server' --filter './probe' run typecheck"
   },

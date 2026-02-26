@@ -2,8 +2,7 @@
  * Check link status.
  * Usage: npx tsx src/check-link.ts <linkId>
  */
-import 'dotenv/config';
-import { getRecord } from '../src/db/index.js';
+import { getRecord } from '../db/index.js';
 
 const linkId = parseInt(process.argv[2], 10);
 if (!linkId || isNaN(linkId)) {

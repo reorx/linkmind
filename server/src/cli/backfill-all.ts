@@ -6,11 +6,10 @@
  *   npx tsx src/backfill-all.ts -c 5         # custom concurrency
  *   npx tsx src/backfill-all.ts --dry-run    # show what would be done
  */
-import 'dotenv/config';
 import { Pool } from 'pg';
-import { getAllAnalyzedRecords } from '../src/db/index.js';
-import { registerTasks, spawnProcessLink } from '../src/pipeline.js';
-import { initLogger } from '../src/logger.js';
+import { getAllAnalyzedRecords } from '../db/index.js';
+import { registerTasks, spawnProcessLink } from '../pipeline.js';
+import { initLogger } from '../logger.js';
 
 initLogger();
 registerTasks();

@@ -3,9 +3,6 @@
  * Usage: npx tsx scripts/list_invites.ts
  */
 
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
 import pg from 'pg';
 
 const PG_URL = process.env.DATABASE_URL;

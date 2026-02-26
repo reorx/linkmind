@@ -9,9 +9,8 @@
  *   pnpm tsx scripts/send-message.ts --user-id 1 --text "Check this out" --image ./photo.jpg
  */
 
-import 'dotenv/config';
 import { Bot, InputFile } from 'grammy';
-import { getDb } from '../src/db.js';
+import { getDb } from '../db/index.js';
 import { parseArgs } from 'util';
 import { existsSync } from 'fs';
 
@@ -78,18 +77,18 @@ async function main() {
 
   console.log(`Sending to user: ${user.display_name || user.username || user.id} (telegram_id: ${user.telegram_id})`);
 
-  const bot = new Bot(botToken);
+  const bot = new Bot(botToken!);
 
   try {
     if (imagePath) {
       // Send photo with caption
       await bot.api.sendPhoto(user.telegram_id, new InputFile(imagePath), {
-        caption: text,
+        caption: text!,
       });
       console.log('✅ Photo message sent successfully!');
     } else {
       // Send text only
-      await bot.api.sendMessage(user.telegram_id, text);
+      await bot.api.sendMessage(user.telegram_id, text!);
       console.log('✅ Text message sent successfully!');
     }
   } catch (err) {

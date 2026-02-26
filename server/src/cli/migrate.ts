@@ -1,8 +1,5 @@
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
-import { runMigrations } from '../src/db/migrate.js';
-import { getDb } from '../src/db/connection.js';
+import { runMigrations } from '../db/migrate.js';
+import { getDb } from '../db/connection.js';
 
 async function main() {
   console.log('Running migrations...');

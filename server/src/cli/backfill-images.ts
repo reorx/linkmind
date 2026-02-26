@@ -4,13 +4,10 @@
  * Usage: npx tsx scripts/backfill-images.ts [--dry-run] [--limit N]
  */
 
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import pg from 'pg';
-import { processTwitterImages } from '../src/image-handler.js';
+import { processTwitterImages } from '../image-handler.js';
 
 const execFileAsync = promisify(execFile);
 

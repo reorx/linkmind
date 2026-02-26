@@ -9,11 +9,6 @@
  *   --limit N      Only import first N records per table
  */
 
-import dotenv from 'dotenv';
-if (!process.env.DATABASE_URL) {
-  dotenv.config({ override: true });
-}
-
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
@@ -56,7 +51,7 @@ function buildInsert(table: string, rows: Record<string, any>[]): { text: string
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  let dataDir = path.resolve(import.meta.dirname, '../data-export');
+  let dataDir = path.resolve(import.meta.dirname, '../../data-export');
   let userId: number | null = null;
   let limit: number | null = null;
 
@@ -119,7 +114,12 @@ async function main() {
 
       // Filter relations by imported record ids
       if ((table === 'record_relations' || table === 'record_derivations') && userId !== null) {
-        rows = rows.filter((r: any) => importedRecordIds.has(r.record_id) || importedRecordIds.has(r.source_record_id) || importedRecordIds.has(r.target_record_id));
+        rows = rows.filter(
+          (r: any) =>
+            importedRecordIds.has(r.record_id) ||
+            importedRecordIds.has(r.source_record_id) ||
+            importedRecordIds.has(r.target_record_id),
+        );
       }
 
       if (rows.length === 0) {
@@ -140,7 +140,9 @@ async function main() {
 
       // Reset sequence to max id
       if (['invites', 'users', 'records', 'record_relations'].includes(table)) {
-        await client.query(`SELECT setval(pg_get_serial_sequence('${table}', 'id'), (SELECT COALESCE(MAX(id), 0) FROM ${table}))`);
+        await client.query(
+          `SELECT setval(pg_get_serial_sequence('${table}', 'id'), (SELECT COALESCE(MAX(id), 0) FROM ${table}))`,
+        );
         console.log(`   🔢 ${table}_id_seq reset`);
       }
     }

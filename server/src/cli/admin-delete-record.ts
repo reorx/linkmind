@@ -13,14 +13,9 @@
  *   3. Delete the record itself
  */
 
-import dotenv from 'dotenv';
-if (!process.env.DATABASE_URL) {
-  dotenv.config({ override: true });
-}
-
-import { deleteRecordFull } from '../src/pipeline.js';
-import { getRecord } from '../src/db/index.js';
-import { getDb } from '../src/db/connection.js';
+import { deleteRecordFull } from '../pipeline.js';
+import { getRecord } from '../db/index.js';
+import { getDb } from '../db/connection.js';
 
 async function main() {
   const recordId = parseInt(process.argv[2], 10);

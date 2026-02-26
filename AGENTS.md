@@ -15,7 +15,7 @@ linkmind/
 └── probe/      @linkmind/probe   — 本地抓取 daemon（SSE 连接云端）
 ```
 
-- `core/` — `ScrapeData`, `ScrapeRequestEvent`, `ScrapeResultPayload`, `UrlType` 类型定义；`htmlToSimpleMarkdown()`, `isTwitterUrl()` 工具函数。无运行时依赖，直接暴露 TS 源码（tsx 解析）。
+- `core/` — `ScrapeData`, `ScrapeRequestEvent`, `ScrapeResultPayload`, `UrlType` 类型定义；`htmlToSimpleMarkdown()`, `isTwitterUrl()` 工具函数。无运行时依赖，通过条件 exports 暴露：`types` 条件指向 `.ts` 源码（IDE/typecheck），`default` 条件指向 `dist/` 编译产物（运行时）。
 - `server/` — Telegram Bot、Pipeline（scrape → summarize → embed → related → insight）、Express Web 界面、Probe SSE 事件分发。
 - `probe/` — 本地 daemon，通过 SSE 接收抓取任务（Twitter via bird CLI、Web via Playwright + Defuddle），结果 POST 回云端。
 
@@ -84,23 +84,32 @@ Probe 等待机制：record 进入 `waiting_probe` 状态，probe 端通过 SSE 
 # 安装依赖
 pnpm install
 
+# 构建（core + server）
+pnpm build
+
 # 类型检查（server + probe）
 pnpm typecheck
 
 # 运行测试
 pnpm test
 
-# 启动 server（开发）
+# 启动 server（开发，tsx）
 pnpm --filter @linkmind/server run dev
+
+# 启动 server（生产，需先 build）
+cd server && node dist/index.js
 
 # 启动 probe（开发）
 pnpm --filter @linkmind/probe run dev -- run --foreground
 
-# 执行数据库 migration
-pnpm --filter @linkmind/server run migrate
+# CLI 脚本（开发，tsx 直接运行）
+cd server && npx tsx src/cli.ts <command> [args]
 
-# 执行独立 SQL 文件
-pnpm --filter @linkmind/server run run-sql <sql-file-path>
+# CLI 脚本（编译后）
+cd server && node dist/cli.js <command> [args]
+
+# 列出所有可用 CLI 命令
+cd server && node dist/cli.js
 ```
 
 ## 部署
@@ -135,14 +144,17 @@ tail -f ~/Code/linkmind/data/launchd-stderr.log
 ## 生产数据维护
 
 - **禁止对生产环境执行裸 SQL 操作**
-- 所有数据维护必须通过 `server/scripts/admin-*.ts` 脚本完成
+- 所有数据维护必须通过 `server/src/cli/admin-*.ts` 脚本完成
 - 流程：
-  1. 在 `server/scripts/` 下编写 TypeScript 脚本，调用项目内部函数
+  1. 在 `server/src/cli/` 下编写 TypeScript 脚本，调用项目内部函数
   2. 先用本地 `.env` 测试
   3. 确认无误后，使用 `.env.prod` 对生产环境执行：
      ```bash
      cd server
-     npx tsx --env-file=.env.prod scripts/admin-xxx.ts <args>
+     # 开发环境（tsx 直接运行）
+     npx tsx --env-file=.env.prod src/cli.ts <command> <args>
+     # 或编译后
+     node --env-file=.env.prod dist/cli.js <command> <args>
      ```
 - `.env.prod` 包含生产环境配置，已在 `.gitignore` 中，不会提交到仓库
 
@@ -169,33 +181,34 @@ export async function down(db: Kysely<any>): Promise<void> {
 **执行 migration：**
 
 ```bash
-# 本地（使用 .env）
-cd server
-pnpm run migrate
+# 本地（使用 .env，开发模式）
+cd server && npx tsx src/cli.ts migrate
+
+# 本地（编译后）
+cd server && node dist/cli.js migrate
 
 # 本地（使用 .env.prod 对生产执行）
-npx tsx --env-file=.env.prod scripts/migrate.ts
+cd server && node --env-file=.env.prod dist/cli.js migrate
 
 # Docker（生产服务器）
-docker compose exec server pnpm --filter @linkmind/server run migrate
+docker compose exec server node dist/cli.js migrate
 ```
 
 **执行独立 SQL 文件：**
 
 ```bash
 # 本地
-cd server
-pnpm run run-sql <sql-file-path>
+cd server && node dist/cli.js run-sql <sql-file-path>
 
 # Docker（生产服务器）
-docker compose exec server pnpm --filter @linkmind/server run run-sql <sql-file-path>
+docker compose exec server node dist/cli.js run-sql <sql-file-path>
 ```
 
 **新数据库初始化（三步）：**
 
 1. 执行 `server/migrations/` 下的 SQL 基线文件（001_init.sql 到 005_share_records.sql），注意 002_bm25_index.sql 是可选的（需要 ParadeDB 扩展）
-2. 运行 `pnpm run migrate`（Kysely 自动创建 migration 追踪表并执行所有新 migration）
-3. 执行 Absurd SQL：`pnpm run run-sql sql/absurd.sql`，然后 `SELECT absurd.create_queue('linkmind')`
+2. 运行 migration：`cd server && node dist/cli.js migrate`（Kysely 自动创建 migration 追踪表并执行所有新 migration）
+3. 执行 Absurd SQL：`cd server && node dist/cli.js run-sql sql/absurd.sql`，然后 `SELECT absurd.create_queue('linkmind')`
 
 ## Admin API
 
@@ -224,8 +237,7 @@ curl -X POST http://localhost:<port>/api/admin/retry/<record_id> \
 
 ```bash
 # 生成指定用户的 JWT token（7天有效期）
-cd server
-npx tsx scripts/gen-token.ts <username>
+cd server && npx tsx src/cli.ts gen-token <username>
 
 # 使用生成的 token 调用 API
 curl http://localhost:3456/api/links -b "lm_session=<token>"
@@ -239,11 +251,16 @@ curl -X POST http://localhost:3456/api/links \
 
 ## 管理脚本
 
+所有脚本通过统一 CLI 入口调用，脚本源码在 `server/src/cli/`。
+
 ```bash
+# 列出所有可用命令
+cd server && node dist/cli.js
+
 # 创建邀请码
-pnpm --filter @linkmind/server exec tsx scripts/create_invite.ts
-pnpm --filter @linkmind/server exec tsx scripts/create_invite.ts --max-uses 10
+cd server && npx tsx src/cli.ts create-invite
+cd server && npx tsx src/cli.ts create-invite --max-uses 10
 
 # 列出邀请码
-pnpm --filter @linkmind/server exec tsx scripts/list_invites.ts
+cd server && npx tsx src/cli.ts list-invites
 ```

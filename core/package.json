@@ -3,8 +3,20 @@
   "version": "0.1.0",
   "description": "Shared types and utilities for LinkMind",
   "type": "module",
+  "scripts": {
+    "build": "tsc"
+  },
   "exports": {
-    ".": "./src/types.ts",
-    "./scraper-utils": "./src/scraper-utils.ts"
+    ".": {
+      "types": "./src/types.ts",
+      "default": "./dist/types.js"
+    },
+    "./scraper-utils": {
+      "types": "./src/scraper-utils.ts",
+      "default": "./dist/scraper-utils.js"
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
   }
 }

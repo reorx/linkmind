@@ -1,12 +1,9 @@
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
 import fs from 'fs';
 import pg from 'pg';
 
 const filePath = process.argv[2];
 if (!filePath) {
-  console.error('Usage: tsx scripts/run-sql.ts <sql-file>');
+  console.error('Usage: linkmind run-sql <sql-file>');
   process.exit(1);
 }
 

@@ -1,8 +1,5 @@
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
-import { scrapeUrl, isScrapeContentValid } from '../src/scraper.js';
-import { scrapeWithFirecrawl } from '../src/scraper-firecrawl.js';
+import { scrapeUrl, isScrapeContentValid } from '../scraper.js';
+import { scrapeWithFirecrawl } from '../scraper-firecrawl.js';
 
 const mode = process.argv[2] || 'playwright';
 const url = process.argv[3] || 'https://note.mowen.cn/detail/FP0rFh9XewHUSKnjEZhmI';

@@ -3,9 +3,6 @@
  * Usage: npx tsx scripts/create_invite.ts [--max-uses N]
  */
 
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
 import crypto from 'crypto';
 import pg from 'pg';
 

@@ -3,16 +3,13 @@
  * Run: npx tsx scripts/backfill-embeddings.ts
  */
 
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
-import { getDb, type LinkRecord } from '../src/db.js';
-import { createEmbedding } from '../src/llm.js';
+import { getDb } from '../db/index.js';
+import { createEmbedding } from '../llm.js';
 
 /**
  * Build text content for embedding from a link record.
  */
-function buildEmbeddingText(link: LinkRecord): string {
+function buildEmbeddingText(link: any): string {
   const parts: string[] = [];
 
   if (link.og_title) {
@@ -39,10 +36,10 @@ async function main() {
 
   // Get all analyzed links without embeddings
   const links = await db
-    .selectFrom('links')
+    .selectFrom('records')
     .selectAll()
     .where('status', '=', 'analyzed')
-    .where('embedding', 'is', null)
+    .where('summary_embedding', 'is', null)
     .execute();
 
   console.log(`Found ${links.length} links without embeddings`);
@@ -52,15 +49,15 @@ async function main() {
 
   for (const link of links) {
     try {
-      const text = buildEmbeddingText(link as LinkRecord);
+      const text = buildEmbeddingText(link);
       console.log(`[${link.id}] Generating embedding for: ${link.og_title?.slice(0, 50)}...`);
 
       const embedding = await createEmbedding(text);
       const vectorStr = `[${embedding.join(',')}]`;
 
       await db
-        .updateTable('links')
-        .set({ embedding: vectorStr } as any)
+        .updateTable('records')
+        .set({ summary_embedding: vectorStr } as any)
         .where('id', '=', link.id!)
         .execute();
 

@@ -5,8 +5,7 @@
  *   tsx src/refresh-related.ts 5       # refresh link #5
  */
 
-import 'dotenv/config';
-import { refreshRelated } from '../src/pipeline.js';
+import { refreshRelated } from '../pipeline.js';
 
 async function main() {
   const arg = process.argv[2];

@@ -2,10 +2,9 @@
  * Backfill a single link by ID.
  * Usage: npx tsx src/backfill-one.ts <linkId>
  */
-import 'dotenv/config';
-import { getRecord } from '../src/db/index.js';
-import { registerTasks, spawnProcessLink } from '../src/pipeline.js';
-import { initLogger } from '../src/logger.js';
+import { getRecord } from '../db/index.js';
+import { registerTasks, spawnProcessLink } from '../pipeline.js';
+import { initLogger } from '../logger.js';
 
 initLogger();
 registerTasks();

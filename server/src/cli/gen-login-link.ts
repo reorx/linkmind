@@ -3,9 +3,6 @@
  * Usage: npx tsx scripts/gen-login-link.ts <user_id>
  */
 
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
 import jwt from 'jsonwebtoken';
 import pg from 'pg';
 

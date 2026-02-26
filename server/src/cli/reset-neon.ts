@@ -5,9 +5,6 @@
  * Run: npx tsx scripts/reset-neon.ts
  */
 
-import dotenv from 'dotenv';
-dotenv.config({ override: true });
-
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
@@ -37,8 +34,11 @@ async function main() {
   await pool.query('DROP SCHEMA IF EXISTS absurd CASCADE');
 
   // Apply migrations in order
-  const migrationsDir = path.resolve(import.meta.dirname, '../migrations');
-  const sqlFiles = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
+  const migrationsDir = path.resolve(import.meta.dirname, '../../migrations');
+  const sqlFiles = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
 
   for (const file of sqlFiles) {
     console.log(`📦 Applying ${file}...`);
@@ -48,7 +48,7 @@ async function main() {
 
   // Apply absurd queue
   console.log('⚙️  Setting up Absurd queue...');
-  const absurdSql = fs.readFileSync(path.resolve(import.meta.dirname, '../sql/absurd.sql'), 'utf-8');
+  const absurdSql = fs.readFileSync(path.resolve(import.meta.dirname, '../../sql/absurd.sql'), 'utf-8');
   await pool.query(absurdSql);
   await pool.query("SELECT absurd.create_queue('linkmind')");
 
@@ -56,10 +56,7 @@ async function main() {
   const tables = await pool.query(
     "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name",
   );
-  console.log(
-    '\n✅ Done! Tables:',
-    tables.rows.map((r: any) => r.table_name).join(', '),
-  );
+  console.log('\n✅ Done! Tables:', tables.rows.map((r: any) => r.table_name).join(', '));
 
   await pool.end();
 }
