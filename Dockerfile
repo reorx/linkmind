@@ -31,7 +31,7 @@ COPY --from=builder /app/server/dist/ server/dist/
 # Runtime resources (non-TS)
 COPY server/sql/ server/sql/
 COPY server/migrations/ server/migrations/
-COPY server/scripts/ocr server/scripts/ocr
+COPY server/scripts/ server/scripts/
 
 # Playwright
 RUN npx --prefix server playwright install --with-deps chromium
