@@ -5,7 +5,9 @@
 > 2. 数据库迁移（确保数据不丢失）
 > 3. 安装 pgvector 和 pg_search 扩展
 >
-> 本文档基于我们在 Mac Mini（Homebrew）上的实际迁移经验编写，同时覆盖 Ubuntu 24.04（apt）场景。
+> 本文档覆盖两种场景：
+> - **macOS (Homebrew)**：本地开发机直接升级
+> - **Docker**：构建包含 pgvector + pg_search 的 PG 18 镜像
 
 ---
 
@@ -52,15 +54,17 @@ ls -lh ~/pg14_full_backup_*.sql
 head -50 ~/pg14_full_backup_*.sql
 ```
 
-### Ubuntu (apt)
+### Docker (从运行中的 PG 14 容器导出)
 
 ```bash
-# 全量备份
-sudo -u postgres pg_dumpall > ~/pg14_full_backup_$(date +%Y%m%d).sql
+# 如果 PG 14 跑在 Docker 里
+docker exec <pg14_container> pg_dumpall -U postgres > ~/pg14_full_backup_$(date +%Y%m%d).sql
+
+# 或者用 pg_dump 单独备份每个数据库（推荐，更灵活）
+docker exec <pg14_container> pg_dump -U postgres -Fc <dbname> > ~/backup_<dbname>.dump
 
 # 验证
 ls -lh ~/pg14_full_backup_*.sql
-head -50 ~/pg14_full_backup_*.sql
 ```
 
 > ⚠️ 如果某个数据库已安装 pgvector 或 pg_search 扩展，backup 里会包含 `CREATE EXTENSION` 语句。
@@ -68,305 +72,293 @@ head -50 ~/pg14_full_backup_*.sql
 
 ---
 
-## 第二步：安装 PostgreSQL 18
+## 第二步：构建 PG 18 + pgvector + pg_search Docker 镜像
 
-### macOS (Homebrew)
+### Dockerfile
 
-```bash
-# 安装 PG 18
-brew install postgresql@18
+以 `pgvector/pgvector:pg18` 为基础镜像（已包含 PG 18 + pgvector），再安装 pg_search：
 
-# 初始化数据目录
-/opt/homebrew/opt/postgresql@18/bin/initdb \
-  --locale=C \
-  -E UTF8 \
-  /opt/homebrew/var/postgresql@18
+```dockerfile
+# PG 18 + pgvector + pg_search
+# 基础镜像: pgvector/pgvector (official, 基于 postgres:18)
+# pgvector 版本随基础镜像更新，当前 0.8.2
+ARG PG_MAJOR=18
+FROM pgvector/pgvector:pg${PG_MAJOR}
+
+# pg_search 版本（ParadeDB BM25 全文搜索）
+ARG PG_SEARCH_VERSION=0.21.9
+ARG TARGETARCH
+
+# 安装 pg_search 预编译 deb 包
+# 基础镜像基于 Debian bookworm
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") \
+    && curl -L "https://github.com/paradedb/paradedb/releases/download/v${PG_SEARCH_VERSION}/postgresql-${PG_MAJOR}-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-bookworm_${ARCH}.deb" \
+       -o /tmp/pg_search.deb \
+    && apt-get install -y /tmp/pg_search.deb \
+    && rm -f /tmp/pg_search.deb \
+    && apt-get purge -y curl \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# 自动创建扩展的初始化脚本
+# 放在 /docker-entrypoint-initdb.d/ 下，首次启动时自动执行
+COPY docker-entrypoint-initdb.d/ /docker-entrypoint-initdb.d/
 ```
 
-### Ubuntu 24.04 (apt)
+### 初始化脚本
 
-```bash
-# 1. 添加 PostgreSQL 官方 APT 源
-sudo apt install -y curl ca-certificates
-sudo install -d /usr/share/postgresql-common/pgdg
-sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail \
-  https://www.postgresql.org/media/keys/ACCC4CF8.asc
+创建 `docker-entrypoint-initdb.d/10-create-extensions.sql`：
 
-. /etc/os-release
-sudo sh -c "echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main' > /etc/apt/sources.list.d/pgdg.list"
-
-sudo apt update
-
-# 2. 安装 PG 18
-sudo apt install -y postgresql-18
-
-# PG 18 会自动初始化数据目录并启动
-# 数据目录: /var/lib/postgresql/18/main
-# 配置文件: /etc/postgresql/18/main/postgresql.conf
+```sql
+-- 自动在默认数据库中启用扩展
+-- 如果需要在其他数据库启用，在 restore 后手动执行
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_search;
 ```
 
-> 📝 **Ubuntu 注意**：`apt install postgresql-18` 会自动创建 `postgres` 系统用户、初始化数据库集群并启动服务。PG 14 和 PG 18 可以共存（不同端口），PG 14 默认 5432，PG 18 默认 5433。
+### 构建 & 运行
+
+```bash
+# 构建（支持 amd64 和 arm64）
+docker build -t pg18-with-extensions .
+
+# 多架构构建（如果需要推送到 registry）
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/<your-org>/postgres:18-extensions --push .
+
+# 运行
+docker run -d \
+  --name pg18 \
+  -e POSTGRES_PASSWORD=<password> \
+  -v pg18-data:/var/lib/postgresql/data \
+  -p 5432:5432 \
+  pg18-with-extensions
+```
+
+### docker-compose.yml 示例
+
+```yaml
+services:
+  db:
+    image: pg18-with-extensions  # 或你推到 registry 的镜像名
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    # 如果数据量大，增大共享内存（pgvector HNSW 索引构建需要）
+    shm_size: 256mb
+
+volumes:
+  pg-data:
+```
 
 ---
 
 ## 第三步：数据迁移
 
-有两种方案，根据你的情况选择：
+### macOS (Homebrew → Homebrew)
 
-### 方案 A：pg_upgrade（推荐，速度快，保留 OID）
+两种方案，选一个：
 
-适用于数据量较大或需要保持最短停机时间的场景。
-
-#### macOS
+**方案 A：pg_upgrade（推荐，速度快）**
 
 ```bash
-# 1. 停止 PG 14
+# 1. 停止 PG 14 和 PG 18
 brew services stop postgresql@14
-
-# 2. 确保 PG 18 也是停止状态
 brew services stop postgresql@18
 
-# 3. 运行 pg_upgrade
+# 2. 运行 pg_upgrade
 /opt/homebrew/opt/postgresql@18/bin/pg_upgrade \
   --old-datadir /opt/homebrew/var/postgresql@14 \
   --new-datadir /opt/homebrew/var/postgresql@18 \
   --old-bindir /opt/homebrew/opt/postgresql@14/bin \
   --new-bindir /opt/homebrew/opt/postgresql@18/bin
 
-# 4. 启动 PG 18
-brew services start postgresql@18
-```
-
-#### Ubuntu
-
-```bash
-# 1. 停止两个 PG 实例
-sudo systemctl stop postgresql@14-main
-sudo systemctl stop postgresql@18-main
-
-# 2. 以 postgres 用户运行 pg_upgrade
-sudo -u postgres /usr/lib/postgresql/18/bin/pg_upgrade \
-  --old-datadir /var/lib/postgresql/14/main \
-  --new-datadir /var/lib/postgresql/18/main \
-  --old-bindir /usr/lib/postgresql/14/bin \
-  --new-bindir /usr/lib/postgresql/18/bin \
-  --old-options '-c config_file=/etc/postgresql/14/main/postgresql.conf' \
-  --new-options '-c config_file=/etc/postgresql/18/main/postgresql.conf'
-
 # 3. 启动 PG 18
-sudo systemctl start postgresql@18-main
+brew services start postgresql@18
 ```
 
-> ⚠️ **pg_upgrade 前提**：如果旧数据库使用了 pgvector 或 pg_search 扩展，新版 PG 18 上**必须先安装好这些扩展的 .so/.dylib 文件**，否则 pg_upgrade 会失败。可以先跳到第四步安装扩展文件，再回来执行 pg_upgrade。
+> ⚠️ pg_upgrade 前需要**先安装好扩展文件**（第四步的 macOS 部分），否则会报错。
 
-### 方案 B：dump/restore（更安全，适合数据量小的场景）
+**方案 B：dump/restore（更安全，适合数据量小）**
 
-我们在 Mac Mini 上就是用这个方案（数据总量才 ~52 MB，秒级完成）。
-
-#### macOS
+我们在 Mac Mini 上用的这个方案（~52 MB，秒级完成）。
 
 ```bash
-# 1. 停止 PG 14
+# 1. 停止 PG 14，启动 PG 18
 brew services stop postgresql@14
-
-# 2. 启动 PG 18
 brew services start postgresql@18
-
-# 3. 更新 PATH 指向 PG 18
 export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"
 
-# 4. 恢复前，先创建必要的角色（pg_dumpall 的 SQL 可能依赖角色存在）
-# 查看备份文件开头的 CREATE ROLE 语句确认需要哪些角色
-
-# 5. 导入全量备份
+# 2. 导入全量备份
 psql -U <superuser> -d postgres -f ~/pg14_full_backup_*.sql
-
-# 注: pg_search/pgvector 相关的 CREATE EXTENSION 可能报错
-# 如果报错，先安装扩展（第四步），再重新导入
 ```
 
-#### Ubuntu
+### Docker (PG 14 → PG 18 容器)
 
 ```bash
-# 1. 停止 PG 14
-sudo systemctl stop postgresql@14-main
-sudo systemctl disable postgresql@14-main
+# 1. 启动新的 PG 18 容器（使用上面构建的镜像）
+docker run -d \
+  --name pg18-new \
+  -e POSTGRES_PASSWORD=<password> \
+  -v pg18-data:/var/lib/postgresql/data \
+  -p 5433:5432 \
+  pg18-with-extensions
 
-# 2. 确保 PG 18 运行中（默认端口 5433，改成 5432）
-# 编辑 /etc/postgresql/18/main/postgresql.conf，设 port = 5432
-sudo sed -i 's/^port = 5433/port = 5432/' /etc/postgresql/18/main/postgresql.conf
-sudo systemctl restart postgresql@18-main
+# 等待初始化完成
+docker logs -f pg18-new  # 看到 "database system is ready to accept connections" 即可
 
-# 3. 导入全量备份
-sudo -u postgres psql -d postgres -f ~/pg14_full_backup_*.sql
+# 2. 创建角色和数据库（根据你的 pg_dumpall 备份开头的 CREATE ROLE 语句）
+docker exec -i pg18-new psql -U postgres <<'SQL'
+-- 示例，按实际情况调整
+CREATE ROLE myapp LOGIN PASSWORD 'xxx';
+CREATE DATABASE mydb OWNER myapp;
+SQL
+
+# 3. 在目标数据库启用扩展
+docker exec -i pg18-new psql -U postgres -d mydb <<'SQL'
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_search;
+SQL
+
+# 4a. 用 pg_dumpall 的全量备份恢复
+docker exec -i pg18-new psql -U postgres -d postgres < ~/pg14_full_backup_*.sql
+
+# 4b. 或者用 pg_dump 的单库备份恢复（推荐）
+docker exec -i pg18-new pg_restore -U postgres -d mydb --no-owner --no-privileges < ~/backup_mydb.dump
+
+# 5. 验证
+docker exec pg18-new psql -U postgres -d mydb -c "\dt"
+docker exec pg18-new psql -U postgres -d mydb -c "SELECT count(*) FROM <important_table>;"
 ```
+
+> 💡 **提示**：如果旧 PG 14 也是 Docker 容器，可以直接 pipe：
+> ```bash
+> docker exec pg14-old pg_dump -U postgres -Fc mydb | \
+>   docker exec -i pg18-new pg_restore -U postgres -d mydb --no-owner
+> ```
 
 ---
 
-## 第四步：安装 pgvector
+## 第四步：安装扩展（macOS Homebrew 场景）
 
-### macOS (Homebrew)
+> Docker 场景下扩展已在镜像中安装，跳过此步。
+
+### pgvector
 
 ```bash
 brew install pgvector
 ```
 
-Homebrew 的 pgvector 会自动针对已安装的 PG 版本编译。安装后文件位于：
-- 库文件: `/opt/homebrew/lib/postgresql@18/vector.dylib`
-- SQL 文件: `/opt/homebrew/share/postgresql@18/extension/vector*`
+文件位置：
+- 库: `/opt/homebrew/lib/postgresql@18/vector.dylib`
+- SQL: `/opt/homebrew/share/postgresql@18/extension/vector*`
 
-### Ubuntu (apt)
+### pg_search
 
-```bash
-# pgvector 在 PostgreSQL 官方 APT 源中可用
-sudo apt install -y postgresql-18-pgvector
-```
-
-### 启用扩展
-
-```sql
--- 连接到需要 pgvector 的数据库
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- 验证
-SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
-```
-
----
-
-## 第五步：安装 pg_search（ParadeDB BM25 全文搜索）
-
-pg_search 不在标准 APT/Homebrew 源中，需要从 [ParadeDB GitHub Releases](https://github.com/paradedb/paradedb/releases) 下载预编译包。
-
-### 查看最新版本
-
-```bash
-# 获取最新版本号
-curl -s https://api.github.com/repos/paradedb/paradedb/releases/latest | grep tag_name
-# 当前: v0.21.9
-```
-
-### macOS (Homebrew PG 18)
+从 [ParadeDB GitHub Releases](https://github.com/paradedb/paradedb/releases) 下载预编译 `.pkg`：
 
 ```bash
 PG_SEARCH_VERSION="0.21.9"
 
-# 下载 macOS pkg（根据你的 macOS 版本选择 sequoia 或 sonoma）
-# arm64 (Apple Silicon):
+# arm64 (Apple Silicon) + macOS Sequoia:
 curl -L "https://github.com/paradedb/paradedb/releases/download/v${PG_SEARCH_VERSION}/pg_search@18--${PG_SEARCH_VERSION}.arm64_sequoia.pkg" \
   -o /tmp/pg_search.pkg
+
+# macOS Sonoma 用: ...arm64_sonoma.pkg
 
 # 安装
 sudo installer -pkg /tmp/pg_search.pkg -target /
 ```
 
-安装后文件位于：
-- 库文件: `/opt/homebrew/lib/postgresql@18/pg_search.dylib`（约 70 MB）
+文件位置：
+- 库: `/opt/homebrew/lib/postgresql@18/pg_search.dylib`（约 70 MB）
 - SQL/Control: `/opt/homebrew/share/postgresql@18/extension/pg_search*`
-
-### Ubuntu 24.04 (Noble, amd64)
-
-```bash
-PG_SEARCH_VERSION="0.21.9"
-
-# 下载 deb 包
-curl -L "https://github.com/paradedb/paradedb/releases/download/v${PG_SEARCH_VERSION}/postgresql-18-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-noble_amd64.deb" \
-  -o /tmp/pg_search.deb
-
-# 安装
-sudo apt-get install -y /tmp/pg_search.deb
-```
-
-> 📝 **其他平台的包名格式**：
-> - Ubuntu 22.04: `...-jammy_amd64.deb`
-> - Debian 12: `...-bookworm_amd64.deb`
-> - Debian 13: `...-trixie_amd64.deb`
-> - RHEL 9: `pg_search_18-0.21.9-1PARADEDB.el9.x86_64.rpm`
-> - ARM64: 把 `amd64` 换成 `arm64`
-
-### 配置 shared_preload_libraries（PG < 17 才需要）
-
-> ✅ **PostgreSQL 17+ 不需要这一步**。pg_search 文档明确说明：如果你的 PG 版本是 17 或更高，不需要添加 `shared_preload_libraries`。我们在 PG 18 上验证了这一点——`shared_preload_libraries` 为空，pg_search 正常工作。
-
-如果你碰到 PG 14~16 的场景（不推荐，直接升 18），需要：
-
-```bash
-# 编辑 postgresql.conf
-# macOS: /opt/homebrew/var/postgresql@XX/postgresql.conf
-# Ubuntu: /etc/postgresql/XX/main/postgresql.conf
-
-shared_preload_libraries = 'pg_search'
-
-# 重启 PostgreSQL
-```
 
 ### 启用扩展
 
 ```sql
--- 连接到需要 pg_search 的数据库
-CREATE EXTENSION pg_search;
-
--- 验证
-SELECT extname, extversion FROM pg_extension WHERE extname = 'pg_search';
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_search;
 ```
+
+### 关于 shared_preload_libraries
+
+> ✅ **PostgreSQL 17+ 不需要配置**。pg_search 文档明确说明 PG 17+ 不需要 `shared_preload_libraries`。
+> 我们在 PG 18 上验证了——`shared_preload_libraries` 为空，pg_search 正常工作。
 
 ---
 
-## 第六步：验证
-
-完成所有步骤后，逐项验证：
+## 第五步：验证
 
 ```bash
+# 调整为你的连接方式（本地 psql 或 docker exec）
+PSQL="psql -U <superuser>"                          # macOS
+# PSQL="docker exec pg18-new psql -U postgres"      # Docker
+
 # 1. PG 版本
-psql -U <superuser> -d postgres -c "SELECT version();"
+$PSQL -d postgres -c "SELECT version();"
 # 预期: PostgreSQL 18.x
 
 # 2. 数据库完整性
-psql -U <superuser> -d postgres -c "\l+"
-# 对比迁移前的输出，确认所有数据库都在
+$PSQL -d postgres -c "\l+"
 
 # 3. 角色完整性
-psql -U <superuser> -d postgres -c "\du"
+$PSQL -d postgres -c "\du"
 
 # 4. 扩展状态
-psql -U <superuser> -d <your_db> -c "SELECT extname, extversion FROM pg_extension ORDER BY extname;"
-# 预期看到: vector, pg_search, 以及其他原有扩展
+$PSQL -d <your_db> -c "SELECT extname, extversion FROM pg_extension ORDER BY extname;"
+# 预期: vector, pg_search
 
 # 5. 数据抽检
-psql -U <superuser> -d <your_db> -c "SELECT count(*) FROM <important_table>;"
-# 对比迁移前的行数
+$PSQL -d <your_db> -c "SELECT count(*) FROM <important_table>;"
 
-# 6. pgvector 功能验证
-psql -U <superuser> -d <your_db> -c "SELECT '[1,2,3]'::vector;"
+# 6. pgvector 功能测试
+$PSQL -d <your_db> -c "SELECT '[1,2,3]'::vector;"
 
-# 7. pg_search 功能验证
-psql -U <superuser> -d <your_db> -c "SELECT * FROM paradedb.version();"
+# 7. pg_search 功能测试
+$PSQL -d <your_db> -c "SELECT * FROM paradedb.version();"
 ```
 
 ---
 
-## 第七步：清理
+## 第六步：清理
+
+### macOS
 
 ```bash
-# macOS - 确认一切正常后卸载 PG 14
+# 确认一切正常后卸载 PG 14
 brew uninstall postgresql@14
 
-# Ubuntu - 卸载 PG 14
-sudo apt remove -y postgresql-14
-sudo rm -rf /var/lib/postgresql/14  # 数据目录（确认备份在手再删）
+# 确保 PATH 指向 PG 18
+echo 'export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"' >> ~/.zshrc
+```
 
-# 确保 PATH/环境变量指向 PG 18
-# macOS: ~/.zshrc 中 export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"
-# Ubuntu: PG 18 的 bin 默认在 /usr/lib/postgresql/18/bin/
+### Docker
 
-# 备份文件保留几天确认无问题后可删除
+```bash
+# 停止并移除旧 PG 14 容器
+docker stop <pg14_container>
+docker rm <pg14_container>
+
+# 可选：清理旧 volume
+docker volume rm <pg14_volume>
+
+# 把新容器端口改回 5432（如果之前用的 5433）
+# 修改 docker-compose.yml 或重新 run
 ```
 
 ---
 
 ## 我们的实际迁移记录
 
-以下是在 Mac Mini (Apple Silicon, macOS Sequoia) 上完成的迁移状态，供参考：
+Mac Mini (Apple Silicon, macOS Sequoia) 上完成的迁移状态，供参考：
 
 | 项目 | 值 |
 |------|------|
@@ -384,13 +376,16 @@ sudo rm -rf /var/lib/postgresql/14  # 数据目录（确认备份在手再删）
 ## 常见问题
 
 ### Q: pg_upgrade 报错找不到 pgvector/pg_search 扩展？
-先安装扩展文件（第四、五步），再跑 pg_upgrade。pg_upgrade 需要在新集群中能找到旧集群使用的所有扩展。
-
-### Q: Ubuntu 上 PG 14 和 PG 18 端口冲突？
-两个版本默认使用不同端口（14→5432, 18→5433）。迁移完成后，停掉 PG 14 并把 PG 18 端口改回 5432。
+先安装扩展文件（第四步），再跑 pg_upgrade。pg_upgrade 需要在新集群中能找到旧集群使用的所有扩展。
 
 ### Q: dump/restore 时 CREATE EXTENSION 报错？
-说明扩展文件还没装。先执行第四、五步安装扩展，再重新 restore。可以编辑 dump 文件暂时注释掉 `CREATE EXTENSION` 行，分步处理。
+说明扩展文件还没装。先安装扩展，再重新 restore。或者编辑 dump 文件注释掉 `CREATE EXTENSION` 行，分步处理。
 
 ### Q: pg_search 的 BM25 索引数据会迁移吗？
 pg_search 的 BM25 索引是派生数据（类似于普通索引），dump/restore 后需要重建。数据本身不会丢失，只是索引需要重新创建。
+
+### Q: Docker 镜像中 pgvector/pg_search 版本怎么升级？
+修改 Dockerfile 中的 `PG_SEARCH_VERSION` ARG，重新 build 即可。pgvector 版本随基础镜像 `pgvector/pgvector:pg18` 更新。
+
+### Q: 基础镜像为什么选 pgvector/pgvector 而不是 postgres?
+`pgvector/pgvector:pg18` 是 pgvector 官方维护的镜像，基于 `postgres:18`，只多了 pgvector 扩展。省去自己编译 pgvector 的步骤，更可靠。
