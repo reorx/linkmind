@@ -66,6 +66,7 @@ export async function scrapeWithJina(url: string): Promise<JinaResult | null> {
         headers: {
           Authorization: `Bearer ${key.api_key}`,
           Accept: 'application/json',
+          'X-Return-Format': 'markdown',
         },
       });
 
@@ -104,10 +105,7 @@ export async function scrapeWithJina(url: string): Promise<JinaResult | null> {
         usage: { tokens: tokensUsed },
       };
 
-      log.info(
-        { url, keyLabel: key.label, markdownLength: result.markdown.length, tokensUsed },
-        '[jina] OK',
-      );
+      log.info({ url, keyLabel: key.label, markdownLength: result.markdown.length, tokensUsed }, '[jina] OK');
       return result;
     } catch (err) {
       log.error({ url, keyLabel: key.label, err: err instanceof Error ? err.message : String(err) }, '[jina] Failed');
