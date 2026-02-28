@@ -19,6 +19,7 @@
     "@types/multer": "^2.0.0",
     "absurd-sdk": "^0.0.7",
     "cookie-parser": "^1.4.7",
+    "crawlee": "^3.16.0",
     "defuddle": "^0.6.6",
     "dotenv": "^17.0.0",
     "ejs": "^4.0.1",

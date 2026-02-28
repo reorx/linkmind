@@ -16,7 +16,7 @@ import { isTwitterUrl, htmlToSimpleMarkdown } from '@linkmind/core/scraper-utils
 const execFileAsync = promisify(execFile);
 
 export interface ScrapeTraceEntry {
-  step: 'playwright' | 'playwright-retry' | 'jina' | 'firecrawl';
+  step: 'crawlee' | 'playwright' | 'playwright-retry' | 'jina' | 'firecrawl';
   success: boolean;
   elapsed_ms: number;
   markdown_length: number;
@@ -28,7 +28,7 @@ export interface ScrapeChainResult {
   /** Final scrape data, null if all methods failed */
   data: ScrapeResult | null;
   /** Which step produced the final result */
-  source: 'playwright' | 'playwright-retry' | 'jina' | 'firecrawl' | null;
+  source: 'crawlee' | 'playwright' | 'playwright-retry' | 'jina' | 'firecrawl' | null;
   /** Debug trace of each attempted step */
   trace: ScrapeTraceEntry[];
 }
@@ -239,7 +239,7 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
 }
 
 /**
- * Run the full scrape fallback chain: Playwright → Playwright retry → Firecrawl.
+ * Run the full scrape fallback chain: Crawlee → Playwright → Playwright retry → Jina → Firecrawl.
  * Returns the result + a trace of every step attempted.
  * Does NOT touch the database or probe — pure scraping only.
  */
@@ -253,6 +253,55 @@ export async function scrapeWithFallbackChain(
   let source: ScrapeChainResult['source'] = null;
 
   if (!options?.skipPlaywright) {
+    // Attempt 0: Crawlee (PlaywrightCrawler with fingerprint rotation)
+    {
+      const { scrapeWithCrawlee } = await import('./scraper-crawlee.js');
+      const t0 = Date.now();
+      try {
+        const crawleeResult = await scrapeWithCrawlee(url);
+        const elapsed = Date.now() - t0;
+        const valid = isScrapeContentValid(crawleeResult.markdown);
+        trace.push({
+          step: 'crawlee',
+          success: valid,
+          elapsed_ms: elapsed,
+          markdown_length: crawleeResult.markdown.length,
+          ...(!valid && { reason: `content too short (${crawleeResult.markdown.length} < ${MIN_CONTENT_CHARS})` }),
+        });
+        if (valid) {
+          return {
+            data: {
+              url: crawleeResult.url,
+              og: crawleeResult.og,
+              title: crawleeResult.title,
+              author: crawleeResult.author,
+              published: crawleeResult.published,
+              markdown: crawleeResult.markdown,
+              rawHtml: crawleeResult.rawHtml,
+            },
+            source: 'crawlee',
+            trace,
+          };
+        }
+        // Keep metadata for fallback
+        finalData = {
+          url: crawleeResult.url,
+          og: crawleeResult.og,
+          title: crawleeResult.title,
+          markdown: crawleeResult.markdown,
+          rawHtml: crawleeResult.rawHtml,
+        };
+      } catch (err) {
+        trace.push({
+          step: 'crawlee',
+          success: false,
+          elapsed_ms: Date.now() - t0,
+          markdown_length: 0,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // Attempt 1: Playwright + Defuddle
     {
       const t0 = Date.now();
