@@ -230,6 +230,7 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
       author: result.author || undefined,
       published: result.published || undefined,
       markdown,
+      rawHtml: html,
     };
   } catch (err) {
     await browser.close();
