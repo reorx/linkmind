@@ -241,6 +241,19 @@ export interface RecordFilesTable {
   created_at: Generated<Date>;
 }
 
+export interface CrawlerApiKeysTable {
+  id: Generated<number>;
+  crawler_type: string;
+  label: string;
+  api_key: string;
+  total_credits: Generated<number>;
+  used_credits: Generated<number>;
+  exhausted: Generated<boolean>;
+  enabled: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface Database {
   invites: InvitesTable;
   users: UsersTable;
@@ -254,4 +267,5 @@ export interface Database {
   agent_event: AgentEventsTable;
   share_records: ShareRecordsTable;
   record_files: RecordFilesTable;
+  crawler_api_keys: CrawlerApiKeysTable;
 }

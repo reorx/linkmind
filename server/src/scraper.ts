@@ -5,14 +5,18 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import playwright from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Defuddle } from 'defuddle/node';
+
+// Apply stealth plugin to avoid bot detection
+chromium.use(StealthPlugin());
 import { isTwitterUrl, htmlToSimpleMarkdown } from '@linkmind/core/scraper-utils';
 
 const execFileAsync = promisify(execFile);
 
 export interface ScrapeTraceEntry {
-  step: 'playwright' | 'playwright-retry' | 'firecrawl';
+  step: 'playwright' | 'playwright-retry' | 'jina' | 'firecrawl';
   success: boolean;
   elapsed_ms: number;
   markdown_length: number;
@@ -24,7 +28,7 @@ export interface ScrapeChainResult {
   /** Final scrape data, null if all methods failed */
   data: ScrapeResult | null;
   /** Which step produced the final result */
-  source: 'playwright' | 'playwright-retry' | 'firecrawl' | null;
+  source: 'playwright' | 'playwright-retry' | 'jina' | 'firecrawl' | null;
   /** Debug trace of each attempted step */
   trace: ScrapeTraceEntry[];
 }
@@ -152,7 +156,7 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
   if (isTwitterUrl(url)) {
     return scrapeTwitter(url);
   }
-  const browser = await playwright.chromium.launch({
+  const browser = await chromium.launch({
     headless: true,
     args: ['--disable-blink-features=AutomationControlled'],
   });
@@ -307,7 +311,55 @@ export async function scrapeWithFallbackChain(
     }
   }
 
-  // Attempt 3: Firecrawl API
+  // Attempt 3: Jina Reader API (key rotation)
+  {
+    const { scrapeWithJina } = await import('./scraper-jina.js');
+    const t0 = Date.now();
+    try {
+      const jinaResult = await scrapeWithJina(url);
+      const elapsed = Date.now() - t0;
+      if (jinaResult && isScrapeContentValid(jinaResult.markdown)) {
+        trace.push({
+          step: 'jina',
+          success: true,
+          elapsed_ms: elapsed,
+          markdown_length: jinaResult.markdown.length,
+        });
+        const data: ScrapeResult = {
+          url,
+          og: {
+            title: jinaResult.metadata.title || finalData?.og.title,
+            description: jinaResult.metadata.description || finalData?.og.description,
+            image: finalData?.og.image,
+            siteName: jinaResult.metadata.siteName || finalData?.og.siteName,
+          },
+          title: jinaResult.metadata.title || finalData?.title,
+          published: jinaResult.metadata.publishedTime || finalData?.published,
+          markdown: jinaResult.markdown,
+        };
+        return { data, source: 'jina', trace };
+      }
+
+      const mdLen = jinaResult?.markdown.length ?? 0;
+      trace.push({
+        step: 'jina',
+        success: false,
+        elapsed_ms: elapsed,
+        markdown_length: mdLen,
+        reason: jinaResult ? `content too short (${mdLen} < ${MIN_CONTENT_CHARS})` : 'no Jina API keys available',
+      });
+    } catch (err) {
+      trace.push({
+        step: 'jina',
+        success: false,
+        elapsed_ms: Date.now() - t0,
+        markdown_length: 0,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Attempt 4: Firecrawl API
   {
     const t0 = Date.now();
     try {

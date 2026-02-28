@@ -1,0 +1,79 @@
+<h2>Crawler API Keys</h2>
+
+<h3>Add New Key</h3>
+<form method="POST" action="/admin/crawler-keys" style="display:flex; gap:8px; align-items:end; margin-bottom:20px; flex-wrap:wrap;">
+  <label style="font-size:12px;">
+    Type
+    <input name="crawler_type" value="jina" required style="display:block; padding:4px 8px; border:1px solid var(--border); border-radius:3px; background:var(--surface); color:var(--text); font-size:13px; width:100px;">
+  </label>
+  <label style="font-size:12px;">
+    Label
+    <input name="label" placeholder="free-account-1" required style="display:block; padding:4px 8px; border:1px solid var(--border); border-radius:3px; background:var(--surface); color:var(--text); font-size:13px; width:160px;">
+  </label>
+  <label style="font-size:12px;">
+    API Key
+    <input name="api_key" required style="display:block; padding:4px 8px; border:1px solid var(--border); border-radius:3px; background:var(--surface); color:var(--text); font-size:13px; font-family:monospace; width:320px;">
+  </label>
+  <label style="font-size:12px;">
+    Total Credits
+    <input name="total_credits" type="number" value="10000000" style="display:block; padding:4px 8px; border:1px solid var(--border); border-radius:3px; background:var(--surface); color:var(--text); font-size:13px; width:130px;">
+  </label>
+  <button type="submit" style="padding:5px 14px; background:var(--accent); color:#fff; border:none; border-radius:3px; cursor:pointer; font-size:13px;">Add</button>
+</form>
+
+<% if (keys.length === 0) { %>
+  <p class="dim">No crawler API keys configured.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Type</th>
+      <th>Label</th>
+      <th>Key</th>
+      <th>Usage</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const k of keys) { %>
+    <tr>
+      <td><%= k.id %></td>
+      <td><%= k.crawler_type %></td>
+      <td><%= k.label %></td>
+      <td class="mono"><%= k.api_key.slice(0, 12) %>…<%= k.api_key.slice(-4) %></td>
+      <td>
+        <% const pct = k.total_credits > 0 ? Math.min(100, Math.round(k.used_credits / k.total_credits * 100)) : 0; %>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="width:80px; height:8px; background:var(--border); border-radius:4px; overflow:hidden;">
+            <div style="width:<%= pct %>%; height:100%; background:<%= pct > 90 ? '#c53030' : pct > 70 ? '#d69e2e' : 'var(--green)' %>; border-radius:4px;"></div>
+          </div>
+          <span class="mono" style="font-size:11px;"><%= (k.used_credits / 1e6).toFixed(1) %>M / <%= (k.total_credits / 1e6).toFixed(1) %>M</span>
+        </div>
+      </td>
+      <td>
+        <% if (k.exhausted) { %>
+          <span class="badge badge-error">exhausted</span>
+        <% } else if (!k.enabled) { %>
+          <span class="badge badge-pending">disabled</span>
+        <% } else { %>
+          <span class="badge badge-analyzed">active</span>
+        <% } %>
+      </td>
+      <td style="white-space:nowrap;">
+        <form method="POST" action="/admin/crawler-keys/<%= k.id %>/toggle" style="display:inline;">
+          <button type="submit" style="padding:2px 8px; font-size:11px; cursor:pointer; background:var(--surface); border:1px solid var(--border); border-radius:3px; color:var(--text);"><%= k.enabled ? 'Disable' : 'Enable' %></button>
+        </form>
+        <form method="POST" action="/admin/crawler-keys/<%= k.id %>/reset" style="display:inline;">
+          <button type="submit" style="padding:2px 8px; font-size:11px; cursor:pointer; background:var(--surface); border:1px solid var(--border); border-radius:3px; color:var(--text);">Reset</button>
+        </form>
+        <form method="POST" action="/admin/crawler-keys/<%= k.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this key?')">
+          <button type="submit" style="padding:2px 8px; font-size:11px; cursor:pointer; background:#c53030; border:none; border-radius:3px; color:#fff;">Delete</button>
+        </form>
+      </td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>

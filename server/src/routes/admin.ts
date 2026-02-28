@@ -7,6 +7,7 @@ import { scrapeWithFallbackChain } from '../scraper.js';
 import { retryRecord } from '../pipeline.js';
 import { getRecord, getDb, getUserById, getAllInvites, getInviteById, createInvite } from '../db/index.js';
 import { toRecordEntry, toUserRecord } from '../db/helpers.js';
+import { getCrawlerKeys } from '../crawler-keys.js';
 import { logger } from '../logger.js';
 
 const BOT_USERNAME = process.env.BOT_USERNAME || 'linkmind_bot';
@@ -291,6 +292,64 @@ export function registerAdminRoutes(router: Router): void {
       })),
     });
     res.send(html);
+  });
+
+  // ── Crawler API Keys ──
+  router.get('/admin/crawler-keys', requireAdminPage, async (req: Request, res: Response) => {
+    const keys = await getCrawlerKeys();
+    const html = await renderAdminPage('crawler-keys', { pageTitle: 'Crawler API Keys', keys });
+    res.send(html);
+  });
+
+  router.post('/admin/crawler-keys', requireAdminPage, async (req: Request, res: Response) => {
+    const { crawler_type, label, api_key, total_credits } = req.body;
+    if (!crawler_type || !label || !api_key) {
+      res.status(400).send('Missing required fields');
+      return;
+    }
+    const db = getDb();
+    await db
+      .insertInto('crawler_api_keys')
+      .values({
+        crawler_type,
+        label,
+        api_key,
+        total_credits: parseInt(total_credits, 10) || 0,
+      })
+      .execute();
+    res.redirect('/admin/crawler-keys');
+  });
+
+  router.post('/admin/crawler-keys/:id/toggle', requireAdminPage, async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id)) { res.status(400).send('Invalid id'); return; }
+    const db = getDb();
+    await db
+      .updateTable('crawler_api_keys')
+      .set({ enabled: sql`NOT enabled`, updated_at: sql`NOW()` } as any)
+      .where('id', '=', id)
+      .execute();
+    res.redirect('/admin/crawler-keys');
+  });
+
+  router.post('/admin/crawler-keys/:id/reset', requireAdminPage, async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id)) { res.status(400).send('Invalid id'); return; }
+    const db = getDb();
+    await db
+      .updateTable('crawler_api_keys')
+      .set({ used_credits: 0, exhausted: false, updated_at: sql`NOW()` } as any)
+      .where('id', '=', id)
+      .execute();
+    res.redirect('/admin/crawler-keys');
+  });
+
+  router.post('/admin/crawler-keys/:id/delete', requireAdminPage, async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id as string, 10);
+    if (isNaN(id)) { res.status(400).send('Invalid id'); return; }
+    const db = getDb();
+    await db.deleteFrom('crawler_api_keys').where('id', '=', id).execute();
+    res.redirect('/admin/crawler-keys');
   });
 
   // ══════════════════════════════════════════
