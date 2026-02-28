@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { scrapeUrl, isScrapeContentValid } from '../scraper.js';
 import { scrapeWithFirecrawl } from '../scraper-firecrawl.js';
 import { scrapeWithJina } from '../scraper-jina.js';
@@ -5,9 +6,21 @@ import { scrapeWithCrawlee } from '../scraper-crawlee.js';
 
 const args = process.argv.slice(2);
 const verbose = args.includes('--verbose') || args.includes('-v');
-const positional = args.filter((a) => !a.startsWith('-'));
+
+// Parse --output-html <path>
+const outputHtmlIdx = args.indexOf('--output-html');
+const outputHtmlPath = outputHtmlIdx !== -1 ? args[outputHtmlIdx + 1] : undefined;
+
+const positional = args.filter((a, i) => !a.startsWith('-') && (i === 0 || args[i - 1] !== '--output-html'));
 const mode = positional[0] || 'playwright';
 const url = positional[1] || 'https://note.mowen.cn/detail/FP0rFh9XewHUSKnjEZhmI';
+
+function saveHtml(html: string | undefined) {
+  if (outputHtmlPath && html) {
+    writeFileSync(outputHtmlPath, html, 'utf-8');
+    console.log(`\nHTML written to ${outputHtmlPath} (${html.length} bytes)`);
+  }
+}
 
 console.log(`Mode: ${mode} | URL: ${url}${verbose ? ' | verbose' : ''}\n`);
 
@@ -31,6 +44,7 @@ try {
     console.log('Markdown length:', result.markdown.length);
     console.log('Valid:', isScrapeContentValid(result.markdown));
     console.log('Markdown preview:', result.markdown.slice(0, 500));
+    saveHtml(result.rawHtml);
     if (verbose) {
       console.log('\n--- Raw HTML length:', result.rawHtml?.length ?? 0);
       console.log('--- Raw HTML preview (first 2000 chars):');
@@ -59,6 +73,7 @@ try {
     console.log('Markdown length:', result.markdown.length);
     console.log('Valid:', isScrapeContentValid(result.markdown));
     console.log('Markdown preview:', result.markdown.slice(0, 500));
+    saveHtml(result.rawHtml);
     if (verbose) {
       console.log('\n--- Raw HTML length:', result.rawHtml?.length ?? 0);
       console.log('--- Raw HTML preview (first 2000 chars):');
