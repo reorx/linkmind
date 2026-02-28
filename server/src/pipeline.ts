@@ -27,7 +27,7 @@ import {
   type RecordEntry,
 } from './db/index.js';
 import type { ScrapeData } from '@linkmind/core';
-import { scrapeUrl, isTwitterUrl, isScrapeContentValid } from './scraper.js';
+import { scrapeUrl, isTwitterUrl, isScrapeContentValid, scrapeWithFallbackChain } from './scraper.js';
 import { scrapeWithFirecrawl } from './scraper-firecrawl.js';
 import { processTwitterMedia } from './media-handler.js';
 import {
@@ -163,61 +163,60 @@ async function scrapeStepWithFallback(
   userId: number,
   options?: { skipPlaywright?: boolean },
 ): Promise<ScrapeStepResult | null> {
-  let result: ScrapeStepResult | undefined;
+  const chainResult = await scrapeWithFallbackChain(url, options);
 
-  if (!options?.skipPlaywright) {
-    // Attempt 1: Playwright + Defuddle
-    result = await scrapeStep(recordId, url);
-    if (isScrapeContentValid(await getRecordMarkdown(recordId))) {
-      log.info({ recordId, source: 'playwright' }, '[scrape] Content valid on first attempt');
-      return result;
+  log.info(
+    { recordId, source: chainResult.source, trace: chainResult.trace },
+    '[scrape] Fallback chain completed',
+  );
+
+  if (chainResult.data && chainResult.source) {
+    // A step succeeded — update record with the result
+    const data = chainResult.data;
+    await updateRecord(recordId, {
+      og_title: data.og.title,
+      og_description: data.og.description,
+      og_image: data.og.image,
+      og_site_name: data.og.siteName,
+      og_type: data.og.type,
+      markdown: data.markdown,
+      status: 'scraped',
+    });
+
+    log.info({ recordId, source: chainResult.source, chars: data.markdown.length }, '[scrape] OK');
+
+    // Process Twitter images if applicable
+    let ocrTexts: string[] = [];
+    if (isTwitterUrl(url) && data.rawMedia?.length) {
+      try {
+        const { results: mediaResults, ocrTexts: extractedOcr } = await processTwitterMedia(recordId, data.rawMedia);
+        if (mediaResults.length > 0) {
+          log.info({ recordId, count: mediaResults.length }, '[media] Twitter images stored');
+        }
+        ocrTexts = extractedOcr;
+      } catch (imgErr) {
+        log.warn(
+          { recordId, err: imgErr instanceof Error ? imgErr.message : String(imgErr) },
+          '[media] Failed (non-fatal)',
+        );
+        Sentry.captureException(imgErr, {
+          level: 'warning',
+          tags: { step: 'scrape', sub: 'twitter-images' },
+          extra: { recordId },
+        });
+      }
     }
 
-    // Attempt 2: Playwright retry
-    log.info({ recordId, url }, '[scrape] Content too short, retrying Playwright');
-    result = await scrapeStep(recordId, url);
-    if (isScrapeContentValid(await getRecordMarkdown(recordId))) {
-      log.info({ recordId, source: 'playwright-retry' }, '[scrape] Content valid on retry');
-      return result;
-    }
-  } else {
-    log.info({ recordId, url }, '[scrape] Skipping Playwright (re-scrape after invalid content)');
+    return {
+      title: data.og.title,
+      ogDescription: data.og.description,
+      siteName: data.og.siteName,
+      markdownLength: data.markdown.length,
+      ocrTexts,
+    };
   }
 
-  // Attempt 3: Firecrawl API
-  log.info({ recordId, url }, '[scrape] Playwright retry insufficient, trying Firecrawl');
-  try {
-    const fcResult = await scrapeWithFirecrawl(url);
-    if (fcResult && isScrapeContentValid(fcResult.markdown)) {
-      // Update record with Firecrawl data
-      await updateRecord(recordId, {
-        og_title: fcResult.metadata.title || result?.title,
-        og_description: fcResult.metadata.description || result?.ogDescription,
-        og_image: fcResult.metadata.ogImage || undefined,
-        og_site_name: fcResult.metadata.siteName || result?.siteName,
-        markdown: fcResult.markdown,
-        status: 'scraped',
-      });
-
-      log.info({ recordId, source: 'firecrawl', chars: fcResult.markdown.length }, '[scrape] OK (from Firecrawl)');
-
-      return {
-        title: fcResult.metadata.title || result?.title,
-        ogDescription: fcResult.metadata.description || result?.ogDescription,
-        siteName: fcResult.metadata.siteName || result?.siteName,
-        markdownLength: fcResult.markdown.length,
-        ocrTexts: [],
-      };
-    }
-    log.info({ recordId }, '[scrape] Firecrawl returned insufficient content');
-  } catch (err) {
-    log.warn(
-      { recordId, err: err instanceof Error ? err.message : String(err) },
-      '[scrape] Firecrawl failed (non-fatal)',
-    );
-  }
-
-  // Attempt 4: Fallback to probe (browser type)
+  // All server-side methods failed — fallback to probe
   log.info({ recordId, url }, '[scrape] All server-side methods failed, falling back to probe');
   const { pushEventToProbe } = await import('./web.js');
   const eventId = crypto.randomBytes(8).toString('hex');

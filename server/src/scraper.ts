@@ -11,6 +11,24 @@ import { isTwitterUrl, htmlToSimpleMarkdown } from '@linkmind/core/scraper-utils
 
 const execFileAsync = promisify(execFile);
 
+export interface ScrapeTraceEntry {
+  step: 'playwright' | 'playwright-retry' | 'firecrawl';
+  success: boolean;
+  elapsed_ms: number;
+  markdown_length: number;
+  reason?: string;
+  error?: string;
+}
+
+export interface ScrapeChainResult {
+  /** Final scrape data, null if all methods failed */
+  data: ScrapeResult | null;
+  /** Which step produced the final result */
+  source: 'playwright' | 'playwright-retry' | 'firecrawl' | null;
+  /** Debug trace of each attempted step */
+  trace: ScrapeTraceEntry[];
+}
+
 export interface ScrapeResult {
   url: string;
   og: {
@@ -213,4 +231,129 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
     await browser.close();
     throw err;
   }
+}
+
+/**
+ * Run the full scrape fallback chain: Playwright → Playwright retry → Firecrawl.
+ * Returns the result + a trace of every step attempted.
+ * Does NOT touch the database or probe — pure scraping only.
+ */
+export async function scrapeWithFallbackChain(
+  url: string,
+  options?: { skipPlaywright?: boolean },
+): Promise<ScrapeChainResult> {
+  const { scrapeWithFirecrawl } = await import('./scraper-firecrawl.js');
+  const trace: ScrapeTraceEntry[] = [];
+  let finalData: ScrapeResult | null = null;
+  let source: ScrapeChainResult['source'] = null;
+
+  if (!options?.skipPlaywright) {
+    // Attempt 1: Playwright + Defuddle
+    {
+      const t0 = Date.now();
+      try {
+        const result = await scrapeUrl(url);
+        const elapsed = Date.now() - t0;
+        const valid = isScrapeContentValid(result.markdown);
+        trace.push({
+          step: 'playwright',
+          success: valid,
+          elapsed_ms: elapsed,
+          markdown_length: result.markdown.length,
+          ...(!valid && { reason: `content too short (${result.markdown.length} < ${MIN_CONTENT_CHARS})` }),
+        });
+        if (valid) {
+          return { data: result, source: 'playwright', trace };
+        }
+        finalData = result; // keep for metadata fallback
+      } catch (err) {
+        trace.push({
+          step: 'playwright',
+          success: false,
+          elapsed_ms: Date.now() - t0,
+          markdown_length: 0,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Attempt 2: Playwright retry
+    {
+      const t0 = Date.now();
+      try {
+        const result = await scrapeUrl(url);
+        const elapsed = Date.now() - t0;
+        const valid = isScrapeContentValid(result.markdown);
+        trace.push({
+          step: 'playwright-retry',
+          success: valid,
+          elapsed_ms: elapsed,
+          markdown_length: result.markdown.length,
+          ...(!valid && { reason: `content too short (${result.markdown.length} < ${MIN_CONTENT_CHARS})` }),
+        });
+        if (valid) {
+          return { data: result, source: 'playwright-retry', trace };
+        }
+        finalData = result;
+      } catch (err) {
+        trace.push({
+          step: 'playwright-retry',
+          success: false,
+          elapsed_ms: Date.now() - t0,
+          markdown_length: 0,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  // Attempt 3: Firecrawl API
+  {
+    const t0 = Date.now();
+    try {
+      const fcResult = await scrapeWithFirecrawl(url);
+      const elapsed = Date.now() - t0;
+      if (fcResult && isScrapeContentValid(fcResult.markdown)) {
+        trace.push({
+          step: 'firecrawl',
+          success: true,
+          elapsed_ms: elapsed,
+          markdown_length: fcResult.markdown.length,
+        });
+        // Build a ScrapeResult from Firecrawl data, using previous OG as fallback
+        const data: ScrapeResult = {
+          url,
+          og: {
+            title: fcResult.metadata.title || finalData?.og.title,
+            description: fcResult.metadata.description || finalData?.og.description,
+            image: fcResult.metadata.ogImage || finalData?.og.image,
+            siteName: fcResult.metadata.siteName || finalData?.og.siteName,
+          },
+          title: fcResult.metadata.title || finalData?.title,
+          markdown: fcResult.markdown,
+        };
+        return { data, source: 'firecrawl', trace };
+      }
+
+      const mdLen = fcResult?.markdown.length ?? 0;
+      trace.push({
+        step: 'firecrawl',
+        success: false,
+        elapsed_ms: elapsed,
+        markdown_length: mdLen,
+        reason: fcResult ? `content too short (${mdLen} < ${MIN_CONTENT_CHARS})` : 'FIRECRAWL_API_KEY not configured',
+      });
+    } catch (err) {
+      trace.push({
+        step: 'firecrawl',
+        success: false,
+        elapsed_ms: Date.now() - t0,
+        markdown_length: 0,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // All methods failed — return whatever we have (may be short content from Playwright)
+  return { data: finalData, source: null, trace };
 }

@@ -3,7 +3,7 @@ import type { Router, Response, Request } from 'express';
 import ejs from 'ejs';
 import { sql } from 'kysely';
 import { requireAdmin, requireAdminPage } from './middleware.js';
-import { scrapeUrl } from '../scraper.js';
+import { scrapeWithFallbackChain } from '../scraper.js';
 import { retryRecord } from '../pipeline.js';
 import { getRecord, getDb, getUserById, getAllInvites, getInviteById, createInvite } from '../db/index.js';
 import { toRecordEntry, toUserRecord } from '../db/helpers.js';
@@ -308,21 +308,27 @@ export function registerAdminRoutes(router: Router): void {
     const startTime = Date.now();
 
     try {
-      const result = await scrapeUrl(url);
+      const chainResult = await scrapeWithFallbackChain(url);
       const elapsed = Date.now() - startTime;
+      const data = chainResult.data;
 
-      log.info({ url, elapsed, markdownLength: result.markdown.length }, '[admin] test-scrape complete');
+      log.info(
+        { url, elapsed, source: chainResult.source, markdownLength: data?.markdown.length ?? 0 },
+        '[admin] test-scrape complete',
+      );
 
       res.json({
-        success: true,
+        success: !!chainResult.source,
         elapsed_ms: elapsed,
-        url: result.url,
-        title: result.title,
-        author: result.author,
-        published: result.published,
-        og: result.og,
-        markdown_length: result.markdown.length,
-        markdown: result.markdown,
+        source: chainResult.source,
+        url: data?.url ?? url,
+        title: data?.title,
+        author: data?.author,
+        published: data?.published,
+        og: data?.og,
+        markdown_length: data?.markdown.length ?? 0,
+        markdown: data?.markdown ?? '',
+        trace: chainResult.trace,
       });
     } catch (err) {
       const elapsed = Date.now() - startTime;
