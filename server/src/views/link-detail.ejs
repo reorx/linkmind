@@ -566,7 +566,7 @@
 %>
 
 <div class="rerun-bar">
-  <button class="btn-rerun" id="rerunBtn" onclick="rerunRecord()">Rerun</button>
+  <button class="btn-rerun" id="rerunBtn" style="touch-action:manipulation">Rerun</button>
   <span class="rerun-status" id="rerunStatus">
     <% if (session) { %>
       <span class="session-badge session-<%= session.status %>"><%= session.status %></span>
@@ -767,5 +767,25 @@
   if (initialSessionStatus === 'running' && initialSessionId) {
     startSSE(initialSessionId);
   }
+
+  // Bind rerun button — use touchend on mobile to avoid tap/click issues
+  (function() {
+    const btn = document.getElementById('rerunBtn');
+    if (!btn) return;
+    let handled = false;
+    btn.addEventListener('touchend', function(e) {
+      e.preventDefault();
+      if (handled) return;
+      handled = true;
+      rerunRecord();
+      setTimeout(() => { handled = false; }, 1000);
+    });
+    btn.addEventListener('click', function(e) {
+      if (handled) { e.preventDefault(); return; }
+      handled = true;
+      rerunRecord();
+      setTimeout(() => { handled = false; }, 1000);
+    });
+  })();
 </script>
 <% } /* end isAdmin script */ %>
