@@ -650,12 +650,13 @@
   const initialSessionId = '<%= session ? session.id : '' %>';
   const initialSessionStatus = '<%= session ? session.status : '' %>';
 
-  function rerunRecord() {
+  function rerunRecord(attempt) {
+    attempt = attempt || 1;
     const btn = document.getElementById('rerunBtn');
     const status = document.getElementById('rerunStatus');
     btn.disabled = true;
     btn.textContent = 'Rerunning...';
-    status.textContent = 'Starting...';
+    status.textContent = attempt > 1 ? 'Retrying...' : 'Starting...';
 
     fetch('/api/retry/' + recordId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -665,6 +666,12 @@
         setTimeout(() => pollForSession(), 2000);
       })
       .catch(err => {
+        console.error('Rerun fetch failed (attempt ' + attempt + '):', err.name, err.message);
+        if (attempt < 3 && err instanceof TypeError) {
+          // Auto-retry on network errors (e.g. "Load failed")
+          setTimeout(() => rerunRecord(attempt + 1), 500);
+          return;
+        }
         btn.disabled = false;
         btn.textContent = 'Rerun';
         status.textContent = 'Error: ' + err.message;
