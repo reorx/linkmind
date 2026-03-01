@@ -657,8 +657,8 @@
     btn.textContent = 'Rerunning...';
     status.textContent = 'Starting...';
 
-    fetch('/api/retry/' + recordId, { method: 'POST' })
-      .then(r => r.json())
+    fetch('/api/retry/' + recordId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(data => {
         status.textContent = 'Queued (taskId: ' + (data.taskId || '?') + ')';
         // Start polling for new session
