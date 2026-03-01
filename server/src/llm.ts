@@ -195,6 +195,71 @@ function createGeminiProvider(): LLMProvider {
   };
 }
 
+/* ── generateObject: structured JSON output with retry ── */
+
+export interface GenerateObjectOptions<T> extends ChatOptions {
+  /** Transform and validate the parsed JSON. Throw on invalid shape. */
+  parse: (raw: unknown) => T;
+  /** Max retry attempts when JSON parsing fails (default: 1) */
+  maxRetries?: number;
+}
+
+/**
+ * Call LLM with jsonMode, parse the response as JSON, validate with `parse()`.
+ * On parse failure: log warning, feed the error back to LLM for one retry.
+ * If retry also fails, throw the error (caller should let it propagate to fail the record).
+ */
+export async function generateObject<T>(messages: ChatMessage[], options: GenerateObjectOptions<T>): Promise<T> {
+  const { parse, maxRetries = 1, ...chatOptions } = options;
+  const label = chatOptions.label || 'generateObject';
+
+  const tryParse = (text: string): T => {
+    // Strip markdown code fences if present
+    const cleaned = text
+      .replace(/^```(?:json)?\s*\n?/i, '')
+      .replace(/\n?```\s*$/i, '')
+      .trim();
+    const parsed = JSON.parse(cleaned);
+    return parse(parsed);
+  };
+
+  // Build a mutable copy of messages for potential retry
+  const msgs = [...messages];
+
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const text = await getLLM().chat(msgs, { ...chatOptions, jsonMode: true });
+
+    try {
+      return tryParse(text);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      if (attempt < maxRetries) {
+        log.warn(
+          { label, attempt: attempt + 1, error: lastError.message, rawText: text.slice(0, 500) },
+          `[${label}] JSON parse failed, retrying with error feedback`,
+        );
+        // Feed the error back to LLM so it can fix its output
+        msgs.push(
+          { role: 'assistant', content: text },
+          {
+            role: 'user',
+            content: `Your previous response could not be parsed as valid JSON.\nError: ${lastError.message}\nPlease output the corrected JSON only, with no extra text or markdown fences.`,
+          },
+        );
+      } else {
+        log.error(
+          { label, attempts: attempt + 1, error: lastError.message, rawText: text.slice(0, 500) },
+          `[${label}] JSON parse failed after all retries`,
+        );
+      }
+    }
+  }
+
+  throw lastError!;
+}
+
 /* ── Factory ── */
 
 let _provider: LLMProvider | null = null;

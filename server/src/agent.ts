@@ -9,7 +9,7 @@
  * - generateNoteInsight: Generate insight for a note
  */
 
-import { getLLM } from './llm.js';
+import { getLLM, generateObject } from './llm.js';
 import { getRecord } from './db/index.js';
 import { logger } from './logger.js';
 import {
@@ -42,24 +42,22 @@ export async function generateSummary(input: SummaryPromptInput): Promise<Summar
   const userPrompt = buildSummaryUserPrompt(input);
   log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'summary prompt (first 500 chars)');
 
-  const text = await getLLM().chat(
+  return generateObject<SummaryResult>(
     [
       { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    { maxTokens: 2048, jsonMode: true, label: 'summary', temperature: 0.1 },
+    {
+      maxTokens: 2048,
+      label: 'summary',
+      temperature: 0.1,
+      parse: (raw: any) => ({
+        validContent: raw.valid_content !== false,
+        summary: raw.summary || '无法生成摘要',
+        tags: Array.isArray(raw.tags) ? raw.tags : [],
+      }),
+    },
   );
-
-  try {
-    const parsed = JSON.parse(text);
-    return {
-      validContent: parsed.valid_content !== false,
-      summary: parsed.summary || '无法生成摘要',
-      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
-    };
-  } catch {
-    return { validContent: true, summary: text.slice(0, 500), tags: [] };
-  }
 }
 
 /**
@@ -111,24 +109,21 @@ export async function generateNoteSummary(content: string): Promise<SummaryResul
   const userPrompt = buildNoteSummaryUserPrompt(content);
   log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'note summary prompt (first 500 chars)');
 
-  const text = await getLLM().chat(
+  return generateObject<SummaryResult>(
     [
       { role: 'system', content: NOTE_SUMMARY_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    { maxTokens: 2048, jsonMode: true, label: 'note-summary' },
+    {
+      maxTokens: 2048,
+      label: 'note-summary',
+      parse: (raw: any) => ({
+        validContent: true, // Notes are always user-created, content is valid
+        summary: raw.summary || '无法生成摘要',
+        tags: Array.isArray(raw.tags) ? raw.tags : [],
+      }),
+    },
   );
-
-  try {
-    const parsed = JSON.parse(text);
-    return {
-      validContent: true, // Notes are always user-created, content is valid
-      summary: parsed.summary || '无法生成摘要',
-      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
-    };
-  } catch {
-    return { validContent: true, summary: text.slice(0, 500), tags: [] };
-  }
 }
 
 /**
@@ -137,20 +132,17 @@ export async function generateNoteSummary(content: string): Promise<SummaryResul
 export async function generateNoteTags(content: string): Promise<string[]> {
   const userPrompt = buildNoteTagsUserPrompt(content);
 
-  const text = await getLLM().chat(
+  return generateObject<string[]>(
     [
       { role: 'system', content: NOTE_TAGS_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    { maxTokens: 512, jsonMode: true, label: 'note-tags' },
+    {
+      maxTokens: 512,
+      label: 'note-tags',
+      parse: (raw: any) => (Array.isArray(raw.tags) ? raw.tags : []),
+    },
   );
-
-  try {
-    const parsed = JSON.parse(text);
-    return Array.isArray(parsed.tags) ? parsed.tags : [];
-  } catch {
-    return [];
-  }
 }
 
 /**
