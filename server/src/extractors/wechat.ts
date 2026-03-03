@@ -8,6 +8,19 @@
 
 import type { Extractor } from '@substancejs/common';
 
+function isSubstanceDebugEnabled(): boolean {
+  return process.env.LINKMIND_SUBSTANCE_DEBUG === '1' || process.env.SUBSTANCE_DEBUG === '1';
+}
+
+function debugWechat(message: string, details?: Record<string, unknown>): void {
+  if (!isSubstanceDebugEnabled()) return;
+  if (details) {
+    console.info(`[substance:wechat] ${message}`, details);
+    return;
+  }
+  console.info(`[substance:wechat] ${message}`);
+}
+
 export const WechatExtractor: Extractor = {
   match: {
     domain: /^mp\.weixin\.qq\.com$/,
@@ -107,6 +120,10 @@ export const WechatExtractor: Extractor = {
       // Remove promotional sections at the end if option is enabled
       if (state.options.removePromotions) {
         const promotionKeywords = ['好物推荐', '近期好文', '往期精选', '推荐阅读', '相关推荐'];
+        const htmlBeforePromotionCleanup = $content.html() || '';
+        const textBeforePromotionCleanup = $content.text().replace(/\s+/g, ' ').trim();
+        let matchedPromotionKeyword: string | undefined;
+        let matchedPromotionText: string | undefined;
 
         // WeChat articles are deeply nested sections. We need to find the
         // promotion marker and remove it + all subsequent siblings at the
@@ -119,6 +136,8 @@ export const WechatExtractor: Extractor = {
           for (const keyword of promotionKeywords) {
             if (text.includes(keyword) && text.length < 50) {
               done = true;
+              matchedPromotionKeyword = keyword;
+              matchedPromotionText = text;
               // Walk up from the matched element, but stop BEFORE the direct
               // child of $content (which often wraps the entire article).
               // Instead, find the closest ancestor that has siblings after it.
@@ -149,6 +168,27 @@ export const WechatExtractor: Extractor = {
             }
           }
         });
+
+        if (done) {
+          const textAfterPromotionCleanup = $content.text().replace(/\s+/g, ' ').trim();
+
+          debugWechat('promotion cleanup applied', {
+            matchedPromotionKeyword,
+            matchedPromotionText,
+            beforeTextLength: textBeforePromotionCleanup.length,
+            afterTextLength: textAfterPromotionCleanup.length,
+          });
+
+          // Guard against aggressive cleanup wiping the entire article body.
+          if (textBeforePromotionCleanup.length > 500 && textAfterPromotionCleanup.length < 200) {
+            $content.html(htmlBeforePromotionCleanup);
+            debugWechat('promotion cleanup rolled back due to over-removal', {
+              matchedPromotionKeyword,
+              beforeTextLength: textBeforePromotionCleanup.length,
+              afterTextLength: textAfterPromotionCleanup.length,
+            });
+          }
+        }
       }
 
       // Remove empty paragraphs that only contain <br> or whitespace

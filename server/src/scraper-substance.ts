@@ -14,6 +14,19 @@ import type { ScrapeResult } from './scraper.js';
 /** Registry of all Substance extractors */
 const extractors: Extractor[] = [WechatExtractor];
 
+function isSubstanceDebugEnabled(): boolean {
+  return process.env.LINKMIND_SUBSTANCE_DEBUG === '1' || process.env.SUBSTANCE_DEBUG === '1';
+}
+
+function debugSubstance(message: string, details?: Record<string, unknown>): void {
+  if (!isSubstanceDebugEnabled()) return;
+  if (details) {
+    console.info(`[substance] ${message}`, details);
+    return;
+  }
+  console.info(`[substance] ${message}`);
+}
+
 /**
  * Check if a URL has a matching Substance extractor.
  */
@@ -36,7 +49,16 @@ export function hasSubstanceExtractor(url: string): boolean {
  */
 function findExtractor(html: string, url: string): Extractor | null {
   for (const ext of extractors) {
-    if (matchExtractor(ext, html, url)) {
+    const matched = matchExtractor(ext, html, url);
+    debugSubstance('extractor match check', {
+      url,
+      extractorDomain:
+        typeof ext.match.domain === 'string'
+          ? ext.match.domain
+          : ext.match.domain?.toString(),
+      matched,
+    });
+    if (matched) {
       return ext;
     }
   }
@@ -54,11 +76,24 @@ export function extractWithSubstance(
   html: string,
   url: string,
 ): ScrapeResult | null {
+  debugSubstance('starting extraction', {
+    url,
+    htmlLength: html.length,
+  });
+
   const extractor = findExtractor(html, url);
-  if (!extractor) return null;
+  if (!extractor) {
+    debugSubstance('no extractor matched', { url });
+    return null;
+  }
 
   const em = new ExtractManager(extractor);
   const result = em.extract(html, url);
+  debugSubstance('extract manager completed', {
+    url,
+    contentLength: result.content?.length ?? 0,
+    markdownLength: result.contentMarkdown?.length ?? 0,
+  });
 
   // Manually extract author and publishedDate since Substance doesn't process them
   const $ = load(html, undefined, false);

@@ -7,6 +7,11 @@ import { extractWithSubstance, hasSubstanceExtractor } from '../scraper-substanc
 
 const TEST_HTML_PATH = join(import.meta.dirname, '../../test-data/weixin-Gul8WUEvRvcDuRsFehfL3w.html');
 const TEST_URL = 'https://mp.weixin.qq.com/s/Gul8WUEvRvcDuRsFehfL3w';
+const TEST_HTML_PATH_LWCRAB = join(
+  import.meta.dirname,
+  '../../test-data/weixin-LWcRabPmQy6kd1qqv9MmXA.html',
+);
+const TEST_URL_LWCRAB = 'https://mp.weixin.qq.com/s/LWcRabPmQy6kd1qqv9MmXA';
 
 describe('WechatExtractor', () => {
   const html = readFileSync(TEST_HTML_PATH, 'utf-8');
@@ -64,5 +69,19 @@ describe('scraper-substance integration', () => {
     expect(result!.markdown.length).toBeGreaterThan(500);
     expect(result!.author).toBeTruthy();
     expect(result!.og.siteName).toBeTruthy();
+  });
+
+  it('should extract full content from LWcRabPmQy6kd1qqv9MmXA instead of empty markdown', () => {
+    const html = readFileSync(TEST_HTML_PATH_LWCRAB, 'utf-8');
+    const em = new ExtractManager(WechatExtractor);
+    const emResult = em.extract(html, TEST_URL_LWCRAB);
+    expect(emResult.contentMarkdown.length).toBeGreaterThan(2000);
+    expect(emResult.contentMarkdown).toContain('情绪劳动');
+
+    const result = extractWithSubstance(html, TEST_URL_LWCRAB);
+    expect(result).not.toBeNull();
+    expect(result!.title).toContain('为什么我们总觉得陪小孩特别累');
+    expect(result!.markdown.length).toBeGreaterThan(2000);
+    expect(result!.markdown).toContain('情绪劳动');
   });
 });
