@@ -9,10 +9,11 @@ import { load } from 'cheerio';
 import { ExtractManager, matchExtractor, type Extractor } from '@substancejs/common';
 
 import { WechatExtractor } from './extractors/wechat.js';
+import { HNExtractor } from './extractors/hn.js';
 import type { ScrapeResult } from './scraper.js';
 
 /** Registry of all Substance extractors */
-const extractors: Extractor[] = [WechatExtractor];
+const extractors: Extractor[] = [WechatExtractor, HNExtractor];
 
 function isSubstanceDebugEnabled(): boolean {
   return process.env.LINKMIND_SUBSTANCE_DEBUG === '1' || process.env.SUBSTANCE_DEBUG === '1';

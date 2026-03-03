@@ -28,10 +28,12 @@ import {
 } from './db/index.js';
 import type { ScrapeData } from '@linkmind/core';
 import { scrapeUrl, isTwitterUrl, isScrapeContentValid, scrapeWithFallbackChain } from './scraper.js';
+import { isHNUrl } from '@linkmind/core/scraper-utils';
 import { scrapeWithFirecrawl } from './scraper-firecrawl.js';
 import { processTwitterMedia } from './media-handler.js';
 import {
   generateSummary,
+  generateHNSummary,
   generateInsight,
   generateNoteSummary,
   generateNoteTags,
@@ -258,6 +260,7 @@ interface SummarizeStepResult {
 
 /**
  * Step 2: Summarize - generate summary and tags via LLM.
+ * Uses HN-specific prompts for Hacker News discussion URLs.
  */
 async function summarizeStep(
   recordId: number,
@@ -275,12 +278,23 @@ async function summarizeStep(
     markdownForSummary += '\n\n---\n**图片文字 (OCR):**\n' + scrapeData.ocrTexts.join('\n\n');
   }
 
-  const result = await generateSummary({
-    url,
-    title: scrapeData.title,
-    ogDescription: scrapeData.ogDescription,
-    markdown: markdownForSummary,
-  });
+  let result;
+  if (isHNUrl(url)) {
+    // HN discussion: use specialized prompts for discussion insight extraction
+    log.info({ recordId }, '[summarize] Using HN discussion prompts');
+    result = await generateHNSummary({
+      url,
+      title: scrapeData.title,
+      markdown: markdownForSummary,
+    });
+  } else {
+    result = await generateSummary({
+      url,
+      title: scrapeData.title,
+      ogDescription: scrapeData.ogDescription,
+      markdown: markdownForSummary,
+    });
+  }
 
   await updateRecord(recordId, {
     summary: result.summary,

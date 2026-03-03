@@ -61,6 +61,59 @@ ${content}
 `;
 }
 
+/* ── HN Discussion Summary Prompts ── */
+
+export const HN_SUMMARY_SYSTEM_PROMPT = `你是一个信息分析助手，专门分析 Hacker News 讨论帖。用户会给你一个 HN 讨论的完整内容（帖子标题 + 评论树），请你：
+1. 从讨论中提取最有价值的洞察，生成摘要 (summary)
+2. 提取 3-5 个关键标签 (tags)
+
+${TAG_FORMAT_INSTRUCTION}
+
+重要规则：
+- 聚焦于讨论中的高质量评论，不要流水账式列举
+- 优先关注：有数据/经验支撑的观点、技术修正、有力的反驳、亲身经历
+- 忽略低质量评论：一句话反应、纯表情、跑题
+- 引用评论时保留作者名 (@username)
+- 如果评论内容明显不足（如讨论很少），如实说明
+- valid_content: 只要有真实讨论内容就是 true，如果帖子几乎没有评论则 false
+
+你必须以 JSON 格式输出数据：
+{"valid_content": true, "summary": "...", "tags": ["machine-learning", "api-design", ...]}
+`;
+
+export interface HNSummaryPromptInput {
+  url: string;
+  title?: string;
+  markdown: string;
+}
+
+export function buildHNSummaryUserPrompt(input: HNSummaryPromptInput): string {
+  const content = input.markdown.slice(0, 16000);
+
+  return `
+请分析以下 Hacker News 讨论帖，提取最有价值的洞察，生成摘要 (summary)。
+
+摘要格式要求：
+1. 第一行用一句话概括帖子主题
+2. 然后按以下类别组织洞察（跳过没有内容的类别）：
+   - **关键反驳/反对意见** — 挑战或批评原文观点的评论
+   - **个人经验与案例** — 评论者分享的真实经历和具体案例
+   - **技术细节与修正** — 技术性补充、纠正误解、深入解释
+   - **值得关注的争论** — 有来有回的有趣讨论
+   - **其他亮点** — 其他有价值、意外或发人深省的评论
+3. 每条洞察：一句话总结要点，然后引用关键评论（用 > 引用块，标注 @username）
+4. 使用中文总结，但保留关键英文术语
+5. 精选 5-15 条真正有价值的洞察，质量优先于数量
+
+<hn_discussion>
+标题: ${input.title || '无'}
+来源: ${input.url}
+
+${content}
+</hn_discussion>
+`;
+}
+
 /* ── Insight Prompts ── */
 
 export const INSIGHT_SYSTEM_PROMPT = `你是用户的个人信息分析师。

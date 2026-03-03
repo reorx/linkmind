@@ -1,4 +1,16 @@
 /**
+ * Check if a URL is a Hacker News discussion URL.
+ */
+export function isHNUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.hostname === 'news.ycombinator.com' && u.pathname === '/item' && u.searchParams.has('id');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check if a URL is a Twitter/X tweet URL.
  */
 export function isTwitterUrl(url: string): boolean {

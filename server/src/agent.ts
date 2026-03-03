@@ -14,16 +14,19 @@ import { getRecord } from './db/index.js';
 import { logger } from './logger.js';
 import {
   SUMMARY_SYSTEM_PROMPT,
+  HN_SUMMARY_SYSTEM_PROMPT,
   INSIGHT_SYSTEM_PROMPT,
   NOTE_SUMMARY_SYSTEM_PROMPT,
   NOTE_TAGS_SYSTEM_PROMPT,
   NOTE_INSIGHT_SYSTEM_PROMPT,
   buildSummaryUserPrompt,
+  buildHNSummaryUserPrompt,
   buildInsightUserPrompt,
   buildNoteSummaryUserPrompt,
   buildNoteTagsUserPrompt,
   buildNoteInsightUserPrompt,
   type SummaryPromptInput,
+  type HNSummaryPromptInput,
   type RelatedLinkContext,
 } from './prompts.js';
 
@@ -50,6 +53,32 @@ export async function generateSummary(input: SummaryPromptInput): Promise<Summar
     {
       maxTokens: 2048,
       label: 'summary',
+      temperature: 0.1,
+      parse: (raw: any) => ({
+        validContent: raw.valid_content !== false,
+        summary: raw.summary || '无法生成摘要',
+        tags: Array.isArray(raw.tags) ? raw.tags : [],
+      }),
+    },
+  );
+}
+
+/**
+ * Generate summary for a Hacker News discussion thread.
+ * Uses HN-specific prompts that focus on extracting discussion insights.
+ */
+export async function generateHNSummary(input: HNSummaryPromptInput): Promise<SummaryResult> {
+  const userPrompt = buildHNSummaryUserPrompt(input);
+  log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'HN summary prompt (first 500 chars)');
+
+  return generateObject<SummaryResult>(
+    [
+      { role: 'system', content: HN_SUMMARY_SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
+    {
+      maxTokens: 4096,
+      label: 'hn-summary',
       temperature: 0.1,
       parse: (raw: any) => ({
         validContent: raw.valid_content !== false,
