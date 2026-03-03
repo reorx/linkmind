@@ -12,6 +12,7 @@ import { Defuddle } from 'defuddle/node';
 // Apply stealth plugin to avoid bot detection
 chromium.use(StealthPlugin());
 import { isTwitterUrl, htmlToSimpleMarkdown } from '@linkmind/core/scraper-utils';
+import { hasSubstanceExtractor, extractWithSubstance } from './scraper-substance.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -211,7 +212,25 @@ export async function scrapeUrl(url: string): Promise<ScrapeResult> {
     og.description = decodeUnicodeEscapes(og.description);
     og.siteName = decodeUnicodeEscapes(og.siteName);
 
-    // Extract content with defuddle
+    // Try Substance extractor first (for sites with dedicated extractors like WeChat)
+    if (hasSubstanceExtractor(url)) {
+      const substanceResult = extractWithSubstance(html, url);
+      if (substanceResult && substanceResult.markdown.trim().length > 0) {
+        // Merge OG metadata from Playwright (more reliable for images) with Substance result
+        return {
+          ...substanceResult,
+          og: {
+            ...substanceResult.og,
+            image: og.image || substanceResult.og.image,
+            description: og.description || substanceResult.og.description,
+            type: og.type,
+          },
+          rawHtml: html,
+        };
+      }
+    }
+
+    // Extract content with defuddle (default path)
     const _origLog = console.log;
     console.log = (msg: unknown, ...args: unknown[]) => {
       if (typeof msg === 'string' && msg.includes('Initial parse returned very little content')) return;

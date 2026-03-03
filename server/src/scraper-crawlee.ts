@@ -8,6 +8,7 @@
 import { PlaywrightCrawler, Configuration } from 'crawlee';
 import { Defuddle } from 'defuddle/node';
 import { htmlToSimpleMarkdown } from '@linkmind/core/scraper-utils';
+import { hasSubstanceExtractor, extractWithSubstance } from './scraper-substance.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'crawlee' });
@@ -90,19 +91,39 @@ export async function scrapeWithCrawlee(url: string): Promise<CrawleeResult> {
           return { og, html: document.documentElement.outerHTML };
         })()`)) as { og: CrawleeResult['og']; html: string };
 
-        // Extract content with Defuddle
+        const resolvedUrl = request.loadedUrl || url;
+
+        // Try Substance extractor first (for sites with dedicated extractors like WeChat)
+        if (hasSubstanceExtractor(resolvedUrl)) {
+          const substanceResult = extractWithSubstance(html, resolvedUrl);
+          if (substanceResult && substanceResult.markdown.trim().length > 0) {
+            result = {
+              ...substanceResult,
+              og: {
+                ...substanceResult.og,
+                image: og.image || substanceResult.og.image,
+                description: og.description || substanceResult.og.description,
+                type: og.type,
+              },
+              rawHtml: html,
+            };
+            return;
+          }
+        }
+
+        // Extract content with Defuddle (default path)
         const _origLog = console.log;
         console.log = (msg: unknown, ...args: unknown[]) => {
           if (typeof msg === 'string' && msg.includes('Initial parse returned very little content')) return;
           _origLog(msg, ...args);
         };
-        const defuddled = await Defuddle(html, request.loadedUrl || url);
+        const defuddled = await Defuddle(html, resolvedUrl);
         console.log = _origLog;
 
         const markdown = htmlToSimpleMarkdown(defuddled.content);
 
         result = {
-          url: request.loadedUrl || url,
+          url: resolvedUrl,
           og,
           title: defuddled.title || og.title,
           author: defuddled.author || undefined,
