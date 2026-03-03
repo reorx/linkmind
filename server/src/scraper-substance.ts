@@ -6,7 +6,7 @@
  */
 
 import { load } from 'cheerio';
-import { ExtractManager, matchExtractor, type Extractor } from './lib/substance/extract.js';
+import { ExtractManager, matchExtractor, type Extractor } from '@substancejs/common';
 
 import { WechatExtractor } from './extractors/wechat.js';
 import type { ScrapeResult } from './scraper.js';

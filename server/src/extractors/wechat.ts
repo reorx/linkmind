@@ -6,7 +6,7 @@
  * and article body with proper image handling and noise removal.
  */
 
-import type { Extractor } from '../lib/substance/extract.js';
+import type { Extractor } from '@substancejs/common';
 
 export const WechatExtractor: Extractor = {
   match: {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ExtractManager, matchExtractor } from '../lib/substance/extract.js';
+import { ExtractManager, matchExtractor } from '@substancejs/common';
 import { WechatExtractor } from '../extractors/wechat.js';
 import { extractWithSubstance, hasSubstanceExtractor } from '../scraper-substance.js';
 
