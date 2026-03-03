@@ -8,19 +8,6 @@
 
 import type { Extractor } from '@substancejs/common';
 
-function isSubstanceDebugEnabled(): boolean {
-  return process.env.LINKMIND_SUBSTANCE_DEBUG === '1' || process.env.SUBSTANCE_DEBUG === '1';
-}
-
-function debugWechat(message: string, details?: Record<string, unknown>): void {
-  if (!isSubstanceDebugEnabled()) return;
-  if (details) {
-    console.info(`[substance:wechat] ${message}`, details);
-    return;
-  }
-  console.info(`[substance:wechat] ${message}`);
-}
-
 export const WechatExtractor: Extractor = {
   match: {
     domain: /^mp\.weixin\.qq\.com$/,
@@ -31,10 +18,6 @@ export const WechatExtractor: Extractor = {
     removeImages: {
       help: 'Remove all images from the output',
       default: false,
-    },
-    removePromotions: {
-      help: 'Remove promotional sections at the end (好物推荐, 近期好文, etc.)',
-      default: true,
     },
   },
 
@@ -115,80 +98,6 @@ export const WechatExtractor: Extractor = {
       // Remove images if option set
       if (state.options.removeImages) {
         $content.find('img').remove();
-      }
-
-      // Remove promotional sections at the end if option is enabled
-      if (state.options.removePromotions) {
-        const promotionKeywords = ['好物推荐', '近期好文', '往期精选', '推荐阅读', '相关推荐'];
-        const htmlBeforePromotionCleanup = $content.html() || '';
-        const textBeforePromotionCleanup = $content.text().replace(/\s+/g, ' ').trim();
-        let matchedPromotionKeyword: string | undefined;
-        let matchedPromotionText: string | undefined;
-
-        // WeChat articles are deeply nested sections. We need to find the
-        // promotion marker and remove it + all subsequent siblings at the
-        // appropriate nesting level — NOT the top-level container.
-        let done = false;
-        $content.find('p, span').each((_, el) => {
-          if (done) return;
-          const $el = $(el);
-          const text = $el.text().trim();
-          for (const keyword of promotionKeywords) {
-            if (text.includes(keyword) && text.length < 50) {
-              done = true;
-              matchedPromotionKeyword = keyword;
-              matchedPromotionText = text;
-              // Walk up from the matched element, but stop BEFORE the direct
-              // child of $content (which often wraps the entire article).
-              // Instead, find the closest ancestor that has siblings after it.
-              let target = $el;
-              const parents = $el.parentsUntil($content);
-              // Try each ancestor level (innermost to outermost), stop at the
-              // one whose removal doesn't wipe the whole article.
-              for (let j = 0; j < parents.length; j++) {
-                const ancestor = $(parents[j]);
-                // If this ancestor has preceding siblings, it's safe to remove
-                // it and everything after it at this level.
-                if (ancestor.prev().length > 0) {
-                  target = ancestor;
-                  break;
-                }
-                // If it's the only child (no prev siblings), going up more
-                // would delete the whole article. Stay at current level.
-                if (j === parents.length - 1) {
-                  // We're at the top-level child of $content — don't remove it.
-                  // Instead, remove from the matched element's immediate parent.
-                  target = $(parents[0]);
-                  break;
-                }
-              }
-              target.nextAll().remove();
-              target.remove();
-              return;
-            }
-          }
-        });
-
-        if (done) {
-          const textAfterPromotionCleanup = $content.text().replace(/\s+/g, ' ').trim();
-
-          debugWechat('promotion cleanup applied', {
-            matchedPromotionKeyword,
-            matchedPromotionText,
-            beforeTextLength: textBeforePromotionCleanup.length,
-            afterTextLength: textAfterPromotionCleanup.length,
-          });
-
-          // Guard against aggressive cleanup wiping the entire article body.
-          if (textBeforePromotionCleanup.length > 500 && textAfterPromotionCleanup.length < 200) {
-            $content.html(htmlBeforePromotionCleanup);
-            debugWechat('promotion cleanup rolled back due to over-removal', {
-              matchedPromotionKeyword,
-              beforeTextLength: textBeforePromotionCleanup.length,
-              afterTextLength: textAfterPromotionCleanup.length,
-            });
-          }
-        }
       }
 
       // Remove empty paragraphs that only contain <br> or whitespace

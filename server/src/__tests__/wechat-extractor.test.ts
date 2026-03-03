@@ -47,11 +47,10 @@ describe('WechatExtractor', () => {
     expect(result.extraData.isOriginal).toBe(true);
   });
 
-  it('should not contain promotional content when removePromotions is true', () => {
+  it('should keep promotional content by default', () => {
     const em = new ExtractManager(WechatExtractor);
-    const result = em.extract(html, TEST_URL, { removePromotions: true });
-    expect(result.contentMarkdown).not.toContain('好物推荐');
-    expect(result.contentMarkdown).not.toContain('近期好文');
+    const result = em.extract(html, TEST_URL);
+    expect(result.contentMarkdown).toContain('好物推荐');
   });
 });
 
