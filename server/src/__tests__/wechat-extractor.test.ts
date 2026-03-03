@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-// @ts-expect-error - @substancejs/common exports .ts source, no compiled type declarations
-import { ExtractManager, matchExtractor } from '@substancejs/common';
+import { ExtractManager, matchExtractor } from '../lib/substance/extract.js';
 import { WechatExtractor } from '../extractors/wechat.js';
 import { extractWithSubstance, hasSubstanceExtractor } from '../scraper-substance.js';
 

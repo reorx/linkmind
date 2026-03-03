@@ -1,5 +1,4 @@
-// @ts-nocheck — @substancejs/common ships .ts source without type declarations;
-// Substance's Extractor callback signatures use untyped parameters.
+// @ts-nocheck — Substance's Extractor callback signatures use untyped parameters.
 /**
  * WeChat Official Account (微信公众号) article extractor for Substance.
  *
@@ -7,7 +6,7 @@
  * and article body with proper image handling and noise removal.
  */
 
-import type { Extractor } from '@substancejs/common';
+import type { Extractor } from '../lib/substance/extract.js';
 
 export const WechatExtractor: Extractor = {
   match: {

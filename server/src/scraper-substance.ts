@@ -6,8 +6,7 @@
  */
 
 import { load } from 'cheerio';
-// @ts-expect-error - @substancejs/common exports .ts source, no compiled type declarations
-import { ExtractManager, matchExtractor, type Extractor } from '@substancejs/common';
+import { ExtractManager, matchExtractor, type Extractor } from './lib/substance/extract.js';
 
 import { WechatExtractor } from './extractors/wechat.js';
 import type { ScrapeResult } from './scraper.js';
