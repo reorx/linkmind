@@ -23,6 +23,7 @@ linkmind 项目相关的抓取工具整理。
 - **[Kernel](https://www.kernel.sh/)** — 云端浏览器，支持 stealth 模式和 session 持久化
 - **[Hyperbrowser](https://www.hyperbrowser.ai/)** — AI agent 专用的云端浏览器平台
 
+
 ## 库
 
 本地运行的爬虫/自动化库。
@@ -31,6 +32,10 @@ linkmind 项目相关的抓取工具整理。
   - [Crawler Plugins 示例](https://crawlee.dev/js/docs/examples/crawler-plugins)
 - **[Scrapling](https://github.com/D4Vinci/Scrapling)** — Python 爬虫库，自动适应网站变化，智能选择器
 - **[undetected-chromedriver](https://github.com/ultrafunkamsterdam/undetected-chromedriver)** — 绕过 Cloudflare 等反爬检测的 Chrome driver，Python
+
+## X / Twitter
+- https://github.com/rohunvora/x-research-skill
+- https://github.com/reorx/bird
 
 ---
 
