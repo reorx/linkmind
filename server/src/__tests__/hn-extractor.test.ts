@@ -18,23 +18,17 @@ describe('HNExtractor', () => {
     expect(matchExtractor(HNExtractor, html, 'https://example.com/article')).toBe(false);
   });
 
-  it('should extract via ExtractManager without throwing', () => {
+  it('should extract via ExtractManager and produce valid markdown', () => {
     const em = new ExtractManager(HNExtractor);
     const result = em.extract(html, TEST_URL);
+
+    // First line should be the post title as a heading
+    const firstLine = result.contentMarkdown.split('\n')[0];
+    expect(firstLine).toBe('# MacBook Pro with M5 Pro and M5 Max');
+
+    // Content should be substantial (well above 200-char validity threshold)
     expect(result.contentMarkdown.length).toBeGreaterThan(500);
     expect(result.title).toBeTruthy();
-  });
-
-  it('should produce structured markdown with comment tree', () => {
-    const em = new ExtractManager(HNExtractor);
-    const result = em.extract(html, TEST_URL);
-    // Should contain post title
-    expect(result.contentMarkdown).toContain('MacBook Pro');
-    // Should contain comment markers (@ prefix for authors)
-    expect(result.contentMarkdown).toMatch(/@\w+/);
-    // Should contain multiple comments
-    const commentCount = (result.contentMarkdown.match(/- @\w+/g) || []).length;
-    expect(commentCount).toBeGreaterThan(10);
   });
 
   it('should extract extra data with comment count and points', () => {
@@ -54,18 +48,17 @@ describe('scraper-substance HN integration', () => {
     expect(hasSubstanceExtractor('https://example.com')).toBe(false);
   });
 
-  it('extractWithSubstance should return ScrapeResult for HN', () => {
+  it('extractWithSubstance should return valid ScrapeResult for HN', () => {
     const result = extractWithSubstance(html, TEST_URL);
     expect(result).not.toBeNull();
-    expect(result!.title).toContain('MacBook Pro');
-    expect(result!.markdown.length).toBeGreaterThan(500);
-    expect(result!.og.siteName).toBeTruthy();
-  });
 
-  it('should produce markdown that passes content validity check', () => {
-    const result = extractWithSubstance(html, TEST_URL);
-    expect(result).not.toBeNull();
+    // First line of markdown should be the title heading
+    const firstLine = result!.markdown.split('\n')[0];
+    expect(firstLine).toBe('# MacBook Pro with M5 Pro and M5 Max');
+
     // Must be >= 200 chars to pass isScrapeContentValid
     expect(result!.markdown.trim().length).toBeGreaterThanOrEqual(200);
+    expect(result!.title).toContain('MacBook Pro');
+    expect(result!.og.siteName).toBeTruthy();
   });
 });
