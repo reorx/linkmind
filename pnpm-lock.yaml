@@ -51,8 +51,8 @@ importers:
         specifier: ^10.38.0
         version: 10.38.0
       '@substancejs/common':
-        specifier: ^1.0.1
-        version: 1.0.1(@babel/runtime@7.28.6)(@types/markdown-it@14.1.2)(codemirror@6.0.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^1.1.1
+        version: 1.1.1(@babel/runtime@7.28.6)(@types/markdown-it@14.1.2)(codemirror@6.0.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@types/multer':
         specifier: ^2.0.0
         version: 2.0.0
@@ -1315,8 +1315,8 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@substancejs/common@1.0.1':
-    resolution: {integrity: sha512-6RDhEHrLDD13Omnwk0Il1szzFOTE1kymc3LCCMxxTV0cUsvnklKy9phhxlfh4vgERBweF687HgqTLsFbjSiklg==}
+  '@substancejs/common@1.1.1':
+    resolution: {integrity: sha512-CvWW96dHLLeAZFtFsvyVd1d/h9Zs1cH3eKbdoJJJVzXCWskMn1BzRTOnYfsf/WkuhsMt55nLs8QFVlKe90aJeQ==}
 
   '@tokenizer/inflate@0.2.7':
     resolution: {integrity: sha512-MADQgmZT1eKjp06jpI2yozxaU9uVs4GzzgSL+uEq7bVcJ9V1ZXQkeGNql1fsSI0gMy1vhvNTNbUqrx+pZfJVmg==}
@@ -5276,7 +5276,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@substancejs/common@1.0.1(@babel/runtime@7.28.6)(@types/markdown-it@14.1.2)(codemirror@6.0.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@substancejs/common@1.1.1(@babel/runtime@7.28.6)(@types/markdown-it@14.1.2)(codemirror@6.0.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       '@codemirror/autocomplete': 6.20.1
       '@codemirror/commands': 6.10.2

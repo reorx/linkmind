@@ -3,13 +3,13 @@
  *
  * Currently supports:
  * - WeChat Official Account articles (mp.weixin.qq.com)
+ * - Hacker News discussions (news.ycombinator.com) — via @substancejs/common built-in
  */
 
 import { load } from 'cheerio';
-import { ExtractManager, matchExtractor, type Extractor } from '@substancejs/common';
+import { ExtractManager, matchExtractor, HNExtractor, type Extractor } from '@substancejs/common';
 
 import { WechatExtractor } from './extractors/wechat.js';
-import { HNExtractor } from './extractors/hn.js';
 import type { ScrapeResult } from './scraper.js';
 
 /** Registry of all Substance extractors */
@@ -53,10 +53,7 @@ function findExtractor(html: string, url: string): Extractor | null {
     const matched = matchExtractor(ext, html, url);
     debugSubstance('extractor match check', {
       url,
-      extractorDomain:
-        typeof ext.match.domain === 'string'
-          ? ext.match.domain
-          : ext.match.domain?.toString(),
+      extractorDomain: typeof ext.match.domain === 'string' ? ext.match.domain : ext.match.domain?.toString(),
       matched,
     });
     if (matched) {
@@ -73,10 +70,7 @@ function findExtractor(html: string, url: string): Extractor | null {
  * Note: Substance's ExtractManager doesn't process `author` and `publishedDate`
  * property handlers, so we extract them manually from the HTML using cheerio.
  */
-export function extractWithSubstance(
-  html: string,
-  url: string,
-): ScrapeResult | null {
+export function extractWithSubstance(html: string, url: string): ScrapeResult | null {
   debugSubstance('starting extraction', {
     url,
     htmlLength: html.length,
@@ -121,12 +115,24 @@ export function extractWithSubstance(
     }
   }
 
+  // Build siteName from extraData or URL hostname
+  let siteName: string | undefined;
+  if (result.extraData?.accountName) {
+    siteName = result.extraData.accountName as string;
+  } else {
+    try {
+      siteName = new URL(url).hostname;
+    } catch {
+      // ignore
+    }
+  }
+
   return {
     url,
     og: {
       title: result.title || undefined,
-      description: result.extraData?.accountSignature || undefined,
-      siteName: result.extraData?.accountName || 'WeChat',
+      description: (result.extraData?.accountSignature as string) || undefined,
+      siteName,
     },
     title: result.title || undefined,
     author: author || result.author || undefined,
