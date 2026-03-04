@@ -21,6 +21,19 @@ export { pushEventToProbe } from './routes/probe.js';
 export function startWebServer(port: number): void {
   const app = express();
 
+  // Access log middleware
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      const ms = Date.now() - start;
+      log.info(
+        { method: req.method, url: req.originalUrl, status: res.statusCode, ms },
+        `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`,
+      );
+    });
+    next();
+  });
+
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
   app.use(cookieParser());
@@ -60,7 +73,15 @@ export function startWebServer(port: number): void {
 
   Sentry.setupExpressErrorHandler(app);
 
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     log.info({ port }, `Server listening on http://localhost:${port}`);
+  });
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      log.fatal({ port }, `Port ${port} is already in use`);
+      process.exit(1);
+    }
+    throw err;
   });
 }
