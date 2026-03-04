@@ -61,4 +61,21 @@ describe('scraper-substance HN integration', () => {
     expect(result!.title).toContain('MacBook Pro');
     expect(result!.og.siteName).toBeTruthy();
   });
+
+  it('should enforce markdown char limit for large HN output', () => {
+    const oldLimit = process.env.HN_SUMMARY_MARKDOWN_CHAR_LIMIT;
+    process.env.HN_SUMMARY_MARKDOWN_CHAR_LIMIT = '1200';
+
+    try {
+      const result = extractWithSubstance(html, TEST_URL);
+      expect(result).not.toBeNull();
+      expect(result!.markdown.length).toBeLessThanOrEqual(1200);
+    } finally {
+      if (oldLimit === undefined) {
+        delete process.env.HN_SUMMARY_MARKDOWN_CHAR_LIMIT;
+      } else {
+        process.env.HN_SUMMARY_MARKDOWN_CHAR_LIMIT = oldLimit;
+      }
+    }
+  });
 });

@@ -2,6 +2,8 @@
  * Prompts: centralized prompt definitions for LLM interactions.
  */
 
+import { getHNSummaryMarkdownCharLimit } from './hn-limits.js';
+
 /* ── Tag Format ── */
 
 const TAG_FORMAT_INSTRUCTION = `标签格式要求：
@@ -88,7 +90,7 @@ export interface HNSummaryPromptInput {
 }
 
 export function buildHNSummaryUserPrompt(input: HNSummaryPromptInput): string {
-  const content = input.markdown.slice(0, 16000);
+  const content = input.markdown.slice(0, getHNSummaryMarkdownCharLimit());
 
   return `
 请分析以下 Hacker News 讨论帖，提取最有价值的洞察，生成摘要 (summary)。

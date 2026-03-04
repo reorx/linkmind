@@ -11,9 +11,12 @@ import { ExtractManager, matchExtractor, HNExtractor, type Extractor } from '@su
 
 import { WechatExtractor } from './extractors/wechat.js';
 import type { ScrapeResult } from './scraper.js';
+import { getHNSummaryMarkdownCharLimit } from './hn-limits.js';
 
 /** Registry of all Substance extractors */
 const extractors: Extractor[] = [WechatExtractor, HNExtractor];
+const HN_CONDENSE_MAX_ATTEMPTS = 8;
+const HN_TRUNCATION_NOTICE = '\n\n...（内容过长，已按长度限制截断剩余评论）';
 
 function isSubstanceDebugEnabled(): boolean {
   return process.env.LINKMIND_SUBSTANCE_DEBUG === '1' || process.env.SUBSTANCE_DEBUG === '1';
@@ -63,6 +66,18 @@ function findExtractor(html: string, url: string): Extractor | null {
   return null;
 }
 
+function truncateHNMarkdown(markdown: string, limit: number): string {
+  if (markdown.length <= limit) return markdown;
+
+  // Prefer cutting at comment boundary to keep markdown structure readable.
+  const boundary = markdown.lastIndexOf('\n- @', limit);
+  const cutAt = boundary > Math.floor(limit * 0.6) ? boundary : limit;
+
+  const roomForNotice = Math.max(0, limit - HN_TRUNCATION_NOTICE.length);
+  const trimmed = markdown.slice(0, Math.min(cutAt, roomForNotice)).trimEnd();
+  return (trimmed + HN_TRUNCATION_NOTICE).slice(0, limit);
+}
+
 /**
  * Extract content from HTML using a Substance extractor.
  * Returns null if no extractor matches the URL/HTML.
@@ -83,11 +98,54 @@ export function extractWithSubstance(html: string, url: string): ScrapeResult | 
   }
 
   const em = new ExtractManager(extractor);
-  const result = em.extract(html, url);
+  let result = em.extract(html, url);
+  let markdown = result.contentMarkdown || '';
+
+  // HN threads can be extremely long. Keep markdown within summarize budget:
+  // uncondensed -> condenseComments=true -> repeat check; if no further shrink, hard-cap.
+  if (extractor === HNExtractor) {
+    const charLimit = getHNSummaryMarkdownCharLimit();
+    let attempts = 0;
+    let useCondense = false;
+    let previousLength = markdown.length;
+
+    while (markdown.length > charLimit && attempts < HN_CONDENSE_MAX_ATTEMPTS) {
+      attempts += 1;
+      useCondense = true;
+
+      const next = em.extract(html, url, { condenseComments: true });
+      const nextMarkdown = next.contentMarkdown || '';
+
+      debugSubstance('hn markdown over limit, retry with condense', {
+        attempt: attempts,
+        previousLength,
+        nextLength: nextMarkdown.length,
+        charLimit,
+      });
+
+      result = next;
+      markdown = nextMarkdown;
+
+      if (markdown.length <= charLimit) break;
+
+      if (markdown.length >= previousLength) {
+        markdown = truncateHNMarkdown(markdown, charLimit);
+        break;
+      }
+
+      previousLength = markdown.length;
+    }
+
+    if (useCondense && markdown.length > charLimit) {
+      markdown = truncateHNMarkdown(markdown, charLimit);
+    }
+  }
+
+  result.contentMarkdown = markdown;
   debugSubstance('extract manager completed', {
     url,
     contentLength: result.content?.length ?? 0,
-    markdownLength: result.contentMarkdown?.length ?? 0,
+    markdownLength: markdown.length,
   });
 
   // Manually extract author and publishedDate since Substance doesn't process them
@@ -137,6 +195,6 @@ export function extractWithSubstance(html: string, url: string): ScrapeResult | 
     title: result.title || undefined,
     author: author || result.author || undefined,
     published: published || result.publishedDate || undefined,
-    markdown: result.contentMarkdown,
+    markdown,
   };
 }
