@@ -308,6 +308,9 @@ export const HNExtractor: Extractor = {
     clean: [],
     transforms: {},
 
+    // No-op processElement — required by ExtractManager before it reaches the markdown hook
+    processElement: () => {},
+
     // Bypass turndown entirely — produce markdown directly from the parsed comment tree
     markdown: ($, $content, _turndownService, state) => {
       const flatComments = parseComments($);
