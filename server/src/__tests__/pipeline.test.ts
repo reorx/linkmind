@@ -15,9 +15,20 @@ dotenv.config({ override: true });
 const PROD_DB_URL = process.env.DATABASE_URL!;
 const TEST_DB_URL = PROD_DB_URL.replace(/\/[^/]+$/, '/linkmind_test');
 process.env.DATABASE_URL = TEST_DB_URL;
+const TEST_DB_ADMIN_URL =
+  process.env.TEST_DB_ADMIN_DATABASE_URL ??
+  (() => {
+    const url = new URL(TEST_DB_URL);
+    url.pathname = '/postgres';
+    if (!url.username || url.username === 'linkmind') {
+      url.username = 'reorx';
+    }
+    return url.toString();
+  })();
 
-import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import pg from 'pg';
+import { bootstrapDatabase } from '../db/bootstrap.js';
 
 // ── Mock scraper ──
 vi.mock('../scraper.js', () => ({
@@ -41,12 +52,43 @@ vi.mock('../scraper.js', () => ({
     author: 'Reorx',
     published: '2023-01-15',
   }),
+  scrapeWithFallbackChain: vi.fn().mockResolvedValue({
+    source: 'playwright',
+    data: {
+      title: 'What HotS Means to Me',
+      og: {
+        title: 'What HotS Means to Me',
+        description: 'A personal reflection on Heroes of the Storm and what the game meant.',
+        image: 'https://reorx.com/og-image.png',
+        siteName: 'reorx.com',
+        type: 'article',
+      },
+      markdown:
+        '# What HotS Means to Me\n\nHeroes of the Storm was more than a game to me. ' +
+        'It was a place where I found community, learned teamwork, and experienced some of the most ' +
+        'memorable gaming moments of my life. The game taught me about strategy, adaptability, and ' +
+        'the importance of team composition. Even though Blizzard pulled the plug on its esports scene, ' +
+        'the community persists. The lessons I learned playing HotS — about cooperation, about reading ' +
+        'situations, about making the best of imperfect circumstances — carry over into everything I do.',
+      rawMedia: [],
+      author: 'Reorx',
+      published: '2023-01-15',
+    },
+    trace: ['playwright'],
+  }),
   isTwitterUrl: vi.fn().mockReturnValue(false),
 }));
 
 // ── Mock LLM ──
 vi.mock('../llm.js', () => ({
   createEmbedding: vi.fn().mockResolvedValue(new Array(1024).fill(0)),
+  generateObject: vi.fn().mockImplementation(async (_messages: any[], options: any) =>
+    options.parse({
+      valid_content: true,
+      summary: '这是一篇关于风暴英雄（HotS）的个人回忆文章，作者分享了这款游戏对他的意义。',
+      tags: ['gaming', 'HotS', 'community', 'personal-essay'],
+    }),
+  ),
   getLLM: vi.fn().mockReturnValue({
     name: 'mock-llm',
     chat: vi.fn().mockImplementation(async (messages: any[], opts?: any) => {
@@ -81,157 +123,19 @@ const TEST_TELEGRAM_ID = 999999;
 // ── Test database setup ──
 
 async function createTestDatabase(): Promise<void> {
-  // Connect as superuser to create/drop test database
-  const adminPool = new pg.Pool({
-    host: 'localhost',
-    port: 5432,
-    user: 'reorx',
-    database: 'postgres',
+  await bootstrapDatabase({
+    databaseUrl: TEST_DB_URL,
+    adminDatabaseUrl: TEST_DB_ADMIN_URL,
+    dropIfExists: true,
+    absurdQueueName: 'linkmind',
   });
 
-  try {
-    // Drop if exists, then create (owned by linkmind so the app user has full access)
-    await adminPool.query('DROP DATABASE IF EXISTS linkmind_test');
-    await adminPool.query('CREATE DATABASE linkmind_test OWNER linkmind');
-  } finally {
-    await adminPool.end();
-  }
-
-  // Enable pgvector as superuser (requires elevated privileges)
-  const adminTestPool = new pg.Pool({
-    host: 'localhost',
-    port: 5432,
-    user: 'reorx',
-    database: 'linkmind_test',
-  });
-  try {
-    await adminTestPool.query('CREATE EXTENSION IF NOT EXISTS vector');
-  } finally {
-    await adminTestPool.end();
-  }
-
-  // Now connect to the test database and set up schema
   const testPool = new pg.Pool({ connectionString: TEST_DB_URL });
   try {
-    // Create application tables
-    await testPool.query(`
-      CREATE TABLE IF NOT EXISTS invites (
-        id SERIAL PRIMARY KEY,
-        code TEXT NOT NULL UNIQUE,
-        max_uses INTEGER NOT NULL DEFAULT 1,
-        used_count INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      );
-
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        telegram_id BIGINT NOT NULL UNIQUE,
-        username TEXT,
-        display_name TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        status TEXT NOT NULL DEFAULT 'pending',
-        invite_id INTEGER REFERENCES invites(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS records (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        type TEXT NOT NULL DEFAULT 'link',
-        url TEXT,
-        content TEXT,
-        source_url TEXT,
-        user_note TEXT,
-        added_by_user BOOLEAN NOT NULL DEFAULT TRUE,
-        ingested_with_content BOOLEAN NOT NULL DEFAULT FALSE,
-        og_title TEXT,
-        og_description TEXT,
-        og_image TEXT,
-        og_site_name TEXT,
-        og_type TEXT,
-        markdown TEXT,
-        summary TEXT,
-        insight TEXT,
-        related_notes JSONB DEFAULT '[]',
-        related_links JSONB DEFAULT '[]',
-        tags JSONB DEFAULT '[]',
-        status TEXT NOT NULL DEFAULT 'pending',
-        error_message TEXT,
-        telegram_message_id BIGINT,
-        telegram_chat_id BIGINT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        images TEXT,
-        summary_embedding vector(1024)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_records_url ON records(url);
-      CREATE INDEX IF NOT EXISTS idx_records_user_id ON records(user_id);
-      CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
-      CREATE INDEX IF NOT EXISTS idx_records_created_at ON records(created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_records_type ON records(type);
-      CREATE INDEX IF NOT EXISTS idx_records_added_by_user ON records(added_by_user);
-      CREATE INDEX IF NOT EXISTS idx_records_telegram_msg ON records(telegram_chat_id, telegram_message_id);
-
-      CREATE TABLE IF NOT EXISTS record_relations (
-        id SERIAL PRIMARY KEY,
-        record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-        related_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-        score REAL NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(record_id, related_record_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS record_derivations (
-        source_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-        derived_record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (source_record_id, derived_record_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS probe_devices (
-        id TEXT PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        access_token TEXT UNIQUE NOT NULL,
-        name TEXT,
-        last_seen_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      CREATE TABLE IF NOT EXISTS probe_events (
-        id TEXT PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        link_id INTEGER REFERENCES records(id),
-        url TEXT NOT NULL,
-        url_type TEXT NOT NULL,
-        status TEXT DEFAULT 'pending',
-        result JSONB,
-        error TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        sent_at TIMESTAMPTZ,
-        completed_at TIMESTAMPTZ
-      );
-
-      CREATE TABLE IF NOT EXISTS device_auth_requests (
-        device_code TEXT PRIMARY KEY,
-        user_code TEXT NOT NULL,
-        user_id INTEGER REFERENCES users(id),
-        status TEXT DEFAULT 'pending',
-        expires_at TIMESTAMPTZ NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Create Absurd schema, functions, and queue
-    const fs = await import('fs');
-    const path = await import('path');
-    const absurdSql = fs.readFileSync(path.resolve(import.meta.dirname, '../../sql/absurd.sql'), 'utf-8');
-    await testPool.query(absurdSql);
-    await testPool.query("SELECT absurd.create_queue('linkmind')");
-
-    // Create test user
     await testPool.query(
       `INSERT INTO users (telegram_id, username, display_name, status)
-       VALUES ($1, 'test_user', 'Test User', 'active')`,
+       VALUES ($1, 'test_user', 'Test User', 'active')
+       ON CONFLICT (telegram_id) DO NOTHING`,
       [TEST_TELEGRAM_ID],
     );
   } finally {
@@ -240,14 +144,9 @@ async function createTestDatabase(): Promise<void> {
 }
 
 async function dropTestDatabase(): Promise<void> {
-  const adminPool = new pg.Pool({
-    host: 'localhost',
-    port: 5432,
-    user: 'reorx',
-    database: 'postgres',
-  });
+  const adminPool = new pg.Pool({ connectionString: TEST_DB_ADMIN_URL });
   try {
-    await adminPool.query('DROP DATABASE IF EXISTS linkmind_test WITH (FORCE)');
+    await adminPool.query('DROP DATABASE IF EXISTS "linkmind_test" WITH (FORCE)');
   } finally {
     await adminPool.end();
   }
