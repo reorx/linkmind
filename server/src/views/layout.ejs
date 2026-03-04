@@ -69,7 +69,9 @@
 <body>
 <header class="site-header">
   <a href="/">🧠 LinkMind</a>
+  <% if (typeof user !== 'undefined' && user) { %>
   <a href="/settings" style="float:right;font-size:0.9rem;font-weight:400;color:var(--dim);">Settings</a>
+  <% } %>
 </header>
 <div class="page-body">
   <%- body %>

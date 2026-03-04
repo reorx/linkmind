@@ -647,8 +647,8 @@
 <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
 <script>
   const recordId = <%= link.id %>;
-  const initialSessionId = '<%= agentSession ? agentSession.id : '' %>';
-  const initialSessionStatus = '<%= agentSession ? agentSession.status : '' %>';
+  const initialSessionId = '<%= typeof agentSession !== 'undefined' && agentSession ? agentSession.id : '' %>';
+  const initialSessionStatus = '<%= typeof agentSession !== 'undefined' && agentSession ? agentSession.status : '' %>';
 
   function rerunRecord(attempt) {
     attempt = attempt || 1;
