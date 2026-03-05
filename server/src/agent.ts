@@ -56,7 +56,6 @@ export async function generateSummary(input: SummaryPromptInput): Promise<WithUs
       { role: 'user', content: userPrompt },
     ],
     {
-      maxTokens: 2048,
       label: 'summary',
       temperature: 0.1,
       parse: (raw: any) => ({
@@ -82,7 +81,6 @@ export async function generateHNSummary(input: HNSummaryPromptInput): Promise<Wi
       { role: 'user', content: userPrompt },
     ],
     {
-      maxTokens: 4096,
       label: 'hn-summary',
       temperature: 0.1,
       parse: (raw: any) => ({
@@ -98,22 +96,23 @@ export async function generateHNSummary(input: HNSummaryPromptInput): Promise<Wi
  * Generate insight based on article content and related links.
  * @param input - Article metadata
  * @param summary - Generated summary
- * @param relatedRecordIds - IDs of related records found via embedding search
+ * @param relatedRecords - Related records with scores found via embedding search
  */
 export async function generateInsight(
   input: { url: string; title?: string },
   summary: string,
-  relatedRecordIds: number[],
+  relatedRecords: Array<{ id: number; score: number }>,
 ): Promise<WithUsage<string>> {
   // Fetch related records details
   const relatedLinks: RelatedLinkContext[] = [];
-  for (const id of relatedRecordIds) {
-    const record = await getRecord(id);
+  for (const rel of relatedRecords) {
+    const record = await getRecord(rel.id);
     if (record) {
       relatedLinks.push({
         title: record.og_title || record.url || record.summary || 'Untitled',
         url: record.url || '',
         summary: record.summary || '',
+        score: rel.score,
       });
     }
   }
@@ -130,7 +129,7 @@ export async function generateInsight(
       { role: 'system', content: INSIGHT_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    { maxTokens: 1024, label: 'insight', temperature: 0.1 },
+    { label: 'insight', temperature: 0.1 },
   );
 
   return { result: chatResult.text || '无法生成 insight', usage: chatResult.usage };
@@ -149,7 +148,6 @@ export async function generateNoteSummary(content: string): Promise<WithUsage<Su
       { role: 'user', content: userPrompt },
     ],
     {
-      maxTokens: 2048,
       label: 'note-summary',
       parse: (raw: any) => ({
         validContent: true, // Notes are always user-created, content is valid
@@ -172,7 +170,6 @@ export async function generateNoteTags(content: string): Promise<WithUsage<strin
       { role: 'user', content: userPrompt },
     ],
     {
-      maxTokens: 512,
       label: 'note-tags',
       parse: (raw: any) => (Array.isArray(raw.tags) ? raw.tags : []),
     },
@@ -185,16 +182,17 @@ export async function generateNoteTags(content: string): Promise<WithUsage<strin
 export async function generateNoteInsight(
   content: string,
   summary: string,
-  relatedRecordIds: number[],
+  relatedRecords: Array<{ id: number; score: number }>,
 ): Promise<WithUsage<string>> {
   const relatedLinks: RelatedLinkContext[] = [];
-  for (const id of relatedRecordIds) {
-    const record = await getRecord(id);
+  for (const rel of relatedRecords) {
+    const record = await getRecord(rel.id);
     if (record) {
       relatedLinks.push({
         title: record.og_title || record.url || record.summary || 'Untitled',
         url: record.url || '',
         summary: record.summary || '',
+        score: rel.score,
       });
     }
   }
@@ -210,7 +208,7 @@ export async function generateNoteInsight(
       { role: 'system', content: NOTE_INSIGHT_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    { maxTokens: 1024, label: 'note-insight' },
+    { label: 'note-insight' },
   );
 
   return { result: chatResult.text || '无法生成 insight', usage: chatResult.usage };

@@ -427,11 +427,11 @@ async function insightStep(
   url: string,
   title: string | undefined,
   summary: string,
-  relatedIds: number[],
+  relatedRecords: Array<{ id: number; score: number }>,
 ): Promise<{ usage?: UsageInfo }> {
-  log.info({ recordId, relatedCount: relatedIds.length }, '[insight] Starting');
+  log.info({ recordId, relatedCount: relatedRecords.length }, '[insight] Starting');
 
-  const { result: insight, usage } = await generateInsight({ url, title }, summary, relatedIds);
+  const { result: insight, usage } = await generateInsight({ url, title }, summary, relatedRecords);
 
   await updateRecord(recordId, {
     insight,
@@ -686,8 +686,7 @@ export function registerTasks(): void {
       stepStart = Date.now();
       await emitter.emitStepStart('insight');
       const insightResult = await ctx.step('insight', async () => {
-        const relatedIds = relatedRecords.map((r) => r.id);
-        return await insightStep(recordId!, url, scrapeData.title, summaryData.summary, relatedIds);
+        return await insightStep(recordId!, url, scrapeData.title, summaryData.summary, relatedRecords);
       });
       await emitter.emitStepEnd('insight', {}, Date.now() - stepStart);
       await recordLLMStepUsage(userId, recordId!, 'insight', insightResult?.usage);
@@ -774,8 +773,7 @@ export function registerTasks(): void {
       stepStart = Date.now();
       await emitter.emitStepStart('insight');
       await ctx.step('insight', async () => {
-        const relatedIds = relatedRecords.map((r) => r.id);
-        await insightStep(recordId, record.url!, record.og_title, record.summary!, relatedIds);
+        await insightStep(recordId, record.url!, record.og_title, record.summary!, relatedRecords);
       });
       await emitter.emitStepEnd('insight', {}, Date.now() - stepStart);
 
@@ -847,8 +845,7 @@ export function registerTasks(): void {
       stepStart = Date.now();
       await emitter.emitStepStart('insight');
       const noteInsightResult = await ctx.step('insight', async () => {
-        const relatedIds = relatedRecords.map((r) => r.id);
-        return await noteInsightStep(recordId, record.content!, summaryData.summary, relatedIds);
+        return await noteInsightStep(recordId, record.content!, summaryData.summary, relatedRecords);
       });
       await emitter.emitStepEnd('insight', {}, Date.now() - stepStart);
       await recordLLMStepUsage(userId, recordId, 'insight', noteInsightResult?.usage);
@@ -919,11 +916,11 @@ async function noteInsightStep(
   recordId: number,
   content: string,
   summary: string,
-  relatedIds: number[],
+  relatedRecords: Array<{ id: number; score: number }>,
 ): Promise<{ usage?: UsageInfo }> {
-  log.info({ recordId, relatedCount: relatedIds.length }, '[note-insight] Starting');
+  log.info({ recordId, relatedCount: relatedRecords.length }, '[note-insight] Starting');
 
-  const { result: insight, usage } = await generateNoteInsight(content, summary, relatedIds);
+  const { result: insight, usage } = await generateNoteInsight(content, summary, relatedRecords);
 
   await updateRecord(recordId, { insight });
 
@@ -1126,8 +1123,7 @@ export async function refreshRelated(recordId?: number): Promise<RefreshResult[]
 
       // Regenerate insight
       log.info({ recordId: id, title }, '[refresh] Generating insight...');
-      const relatedIds = relatedRecords.map((r) => r.id);
-      await insightStep(id, record.url!, record.og_title, record.summary, relatedIds);
+      await insightStep(id, record.url!, record.og_title, record.summary, relatedRecords);
 
       log.info({ recordId: id, title, relatedCount: relatedRecords.length }, '[refresh] Done');
       results.push({ recordId: id, title, relatedRecords: relatedRecords.length });

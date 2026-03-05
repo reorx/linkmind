@@ -130,13 +130,16 @@ export const INSIGHT_SYSTEM_PROMPT = `你是用户的个人信息分析师。
 - 只基于提供的摘要和相关链接信息来生成 insight，不要编造原文中没有提到的内容
 - 如果摘要信息明显不足或标注了"内容未能完整获取"，请诚实说明信息不足，不要强行生成 insight
 - 不要把相关链接的内容混入当前文章的 insight 中，除非是在做明确的对比关联
+- 相关链接来自向量搜索，关联度未必高（注意每条链接后的相似度分数）。不要强行从中找关联，只在确实存在有意义的联系时才提及
+- 如果没有相关链接，或相关链接关联度不高，完全可以只聚焦当前文章本身
 
-语气要像朋友之间的分享，简洁有力，不要模板化的套话。3-5 句话即可。`;
+语气要像朋友之间的分享，简洁有力，不要模板化的套话。3-5 句话，不超过 500 字。`;
 
 export interface RelatedLinkContext {
   title: string;
   url: string;
   summary: string;
+  score?: number;
 }
 
 export interface InsightPromptInput {
@@ -149,7 +152,12 @@ export interface InsightPromptInput {
 export function buildInsightUserPrompt(input: InsightPromptInput): string {
   const linksContext =
     input.relatedLinks.length > 0
-      ? input.relatedLinks.map((l) => `- [${l.title}](${l.url}): ${l.summary.slice(0, 100)}`).join('\n')
+      ? input.relatedLinks
+          .map((l) => {
+            const scoreStr = l.score != null ? ` (相似度: ${l.score.toFixed(2)})` : '';
+            return `- [${l.title}](${l.url})${scoreStr}: ${l.summary.slice(0, 100)}`;
+          })
+          .join('\n')
       : '（无相关历史链接）';
 
   return `文章: ${input.title || input.url}
@@ -212,7 +220,11 @@ export const NOTE_INSIGHT_SYSTEM_PROMPT = `你是用户的个人信息分析师�
 - 对用户的工作或项目有什么启发？
 - 有没有值得进一步探索的方向？
 
-语气要像朋友之间的分享，简洁有力，不要模板化的套话。3-5 句话即可。`;
+重要规则：
+- 相关内容来自向量搜索，关联度未必高（注意每条后的相似度分数）。不要强行从中找关联，只在确实存在有意义的联系时才提及
+- 如果没有相关内容，或关联度不高，完全可以只聚焦当前笔记本身
+
+语气要像朋友之间的分享，简洁有力，不要模板化的套话。3-5 句话，不超过 500 字。`;
 
 export interface NoteInsightPromptInput {
   content: string;
@@ -223,7 +235,12 @@ export interface NoteInsightPromptInput {
 export function buildNoteInsightUserPrompt(input: NoteInsightPromptInput): string {
   const linksContext =
     input.relatedLinks.length > 0
-      ? input.relatedLinks.map((l) => `- [${l.title}](${l.url}): ${l.summary.slice(0, 100)}`).join('\n')
+      ? input.relatedLinks
+          .map((l) => {
+            const scoreStr = l.score != null ? ` (相似度: ${l.score.toFixed(2)})` : '';
+            return `- [${l.title}](${l.url})${scoreStr}: ${l.summary.slice(0, 100)}`;
+          })
+          .join('\n')
       : '（无相关历史内容）';
 
   return `笔记内容: ${input.content.slice(0, 2000)}
