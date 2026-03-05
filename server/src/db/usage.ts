@@ -1,6 +1,5 @@
 import { sql } from 'kysely';
 import { getDb } from './connection.js';
-import type { UserBalancesTable } from './types.js';
 
 export interface UserBalance {
   id: number;
@@ -98,5 +97,47 @@ export async function updateCycleAnchorAndReset(userId: number, newAnchor: Date,
       updated_at: sql`NOW()`,
     })
     .where('user_id', '=', userId)
+    .execute();
+}
+
+export async function getAllBalancesWithUsers(): Promise<
+  Array<UserBalance & { username: string; display_name: string | null }>
+> {
+  const rows = await getDb()
+    .selectFrom('user_balances')
+    .innerJoin('users', 'users.id', 'user_balances.user_id')
+    .select([
+      'user_balances.id',
+      'user_balances.user_id',
+      'user_balances.cycle_limit_usd',
+      'user_balances.cycle_anchor',
+      'user_balances.current_cycle_usage_usd',
+      'user_balances.current_cycle_start',
+      'user_balances.updated_at',
+      'users.username',
+      'users.display_name',
+    ])
+    .orderBy(sql`user_balances.current_cycle_usage_usd::numeric`, 'desc')
+    .execute();
+
+  return rows as any;
+}
+
+export async function getTransactionsByUserId(userId: number, limit = 200): Promise<any[]> {
+  return getDb()
+    .selectFrom('usage_transactions')
+    .selectAll()
+    .where('user_id', '=', userId)
+    .orderBy('created_at', 'desc')
+    .limit(limit)
+    .execute();
+}
+
+export async function getTransactionsByRecordId(recordId: number): Promise<any[]> {
+  return getDb()
+    .selectFrom('usage_transactions')
+    .selectAll()
+    .where('record_id', '=', recordId)
+    .orderBy('created_at', 'asc')
     .execute();
 }

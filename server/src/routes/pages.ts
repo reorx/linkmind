@@ -12,13 +12,14 @@ import {
 } from '../db/index.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
 import { renderPage, safeParseJson, getDayLabel, isAdminUser } from './helpers.js';
+import { getTransactionsByRecordId } from '../db/usage.js';
+import { logger } from '../logger.js';
 
 /** Render markdown string to HTML. Returns empty string for falsy input. */
 function renderMarkdown(text: string | null | undefined): string {
   if (!text) return '';
   return marked.parse(text, { async: false }) as string;
 }
-import { logger } from '../logger.js';
 
 const log = logger.child({ module: 'pages' });
 
@@ -102,11 +103,13 @@ export function registerPageRoutes(router: Router): void {
     // Fetch latest agent session + events for processing history (admin only)
     let latestSession = null;
     let agentEvents: any[] = [];
+    let recordTransactions: any[] = [];
     if (isAdmin) {
       latestSession = await getLatestAgentSession('record', String(record.id));
       if (latestSession) {
         agentEvents = await getAgentEventsBySessionId(latestSession.id);
       }
+      recordTransactions = await getTransactionsByRecordId(record.id!);
     }
 
     const shareRecord = await getShareByRecordId(record.id!);
@@ -123,6 +126,7 @@ export function registerPageRoutes(router: Router): void {
         relatedLinks,
         agentSession: latestSession,
         agentEvents: agentEvents,
+        recordTransactions,
         isAdmin,
         isShared: false,
         shareNanoid: shareRecord?.nanoid || null,
@@ -195,6 +199,7 @@ export function registerPageRoutes(router: Router): void {
         relatedLinks,
         agentSession: null,
         agentEvents: [],
+        recordTransactions: [],
         isAdmin: false,
         isShared: true,
         user: null,

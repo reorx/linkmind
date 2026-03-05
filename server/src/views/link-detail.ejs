@@ -594,6 +594,40 @@
   </div>
 </div>
 <% } %>
+
+<%
+  const txns = typeof recordTransactions !== 'undefined' ? recordTransactions : [];
+  if (txns.length > 0) {
+    const totalCost = txns.reduce((sum, t) => sum + Number(t.amount_usd), 0);
+%>
+<div class="section">
+  <div class="section-title">Cost Breakdown (Total: $<%= totalCost.toFixed(6) %>)</div>
+  <table style="font-size:12px;">
+    <thead>
+      <tr><th>Step</th><th>Type</th><th>Provider</th><th>Amount</th><th>Time</th></tr>
+    </thead>
+    <tbody>
+      <% for (const t of txns) { %>
+      <tr>
+        <td><%= t.step || '—' %></td>
+        <td>
+          <% if (t.type === 'llm') { %>
+            <span class="badge badge-scraped">llm</span>
+          <% } else if (t.type === 'embedding') { %>
+            <span class="badge badge-analyzed">embedding</span>
+          <% } else { %>
+            <span class="badge badge-pending"><%= t.type %></span>
+          <% } %>
+        </td>
+        <td style="font-family:monospace; font-size:11px;"><%= t.provider %></td>
+        <td style="font-family:monospace;">$<%= Number(t.amount_usd).toFixed(6) %></td>
+        <td style="font-family:monospace; font-size:11px;"><%= t.created_at ? new Date(t.created_at).toLocaleTimeString('zh-CN', { hour12: false }) : '' %></td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+<% } %>
 <% } /* end isAdmin */ %>
 
 <% if (typeof isShared === 'undefined' || !isShared) { %>

@@ -1,0 +1,39 @@
+<h2>Usage Billing</h2>
+
+<% if (rows.length === 0) { %>
+  <p class="dim">No billing data yet.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr>
+      <th>User ID</th>
+      <th>Username</th>
+      <th>Current Usage</th>
+      <th>Cycle Limit</th>
+      <th>Usage %</th>
+      <th>Cycle Start</th>
+      <th>Cycle End</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const r of rows) { %>
+    <tr>
+      <td><a href="/admin/usage/<%= r.user_id %>"><%= r.user_id %></a></td>
+      <td><%= r.username %></td>
+      <td class="mono">$<%= Number(r.current_cycle_usage_usd).toFixed(6) %></td>
+      <td class="mono">$<%= Number(r.cycle_limit_usd).toFixed(2) %></td>
+      <td>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="width:80px; height:8px; background:var(--border); border-radius:4px; overflow:hidden;">
+            <div style="width:<%= r.usage_pct %>%; height:100%; background:<%= r.usage_pct > 90 ? '#c53030' : r.usage_pct > 70 ? '#d69e2e' : 'var(--green)' %>; border-radius:4px;"></div>
+          </div>
+          <span class="mono" style="font-size:11px;"><%= r.usage_pct %>%</span>
+        </div>
+      </td>
+      <td class="mono" style="font-size:11px;"><%= r.current_cycle_start ? r.current_cycle_start.slice(0, 10) : '' %></td>
+      <td class="mono" style="font-size:11px;"><%= r.cycle_end ? r.cycle_end.slice(0, 10) : '' %></td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>

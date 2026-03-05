@@ -1,0 +1,87 @@
+<h2>Usage — <%= user.username %></h2>
+
+<%
+  const usage = Number(balance.current_cycle_usage_usd);
+  const limit = Number(balance.cycle_limit_usd);
+  const pct = balance.usage_pct;
+%>
+
+<dl>
+  <dt>User ID</dt>
+  <dd><a href="/admin/users/<%= user.id %>"><%= user.id %></a></dd>
+
+  <dt>Current Usage</dt>
+  <dd class="mono">$<%= usage.toFixed(6) %></dd>
+
+  <dt>Cycle Limit</dt>
+  <dd class="mono">$<%= limit.toFixed(2) %></dd>
+
+  <dt>Usage %</dt>
+  <dd>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div style="width:120px; height:8px; background:var(--border); border-radius:4px; overflow:hidden;">
+        <div style="width:<%= pct %>%; height:100%; background:<%= pct > 90 ? '#c53030' : pct > 70 ? '#d69e2e' : 'var(--green)' %>; border-radius:4px;"></div>
+      </div>
+      <span class="mono" style="font-size:11px;"><%= pct %>%</span>
+    </div>
+  </dd>
+
+  <dt>Cycle Anchor</dt>
+  <dd class="mono"><%= balance.cycle_anchor ? balance.cycle_anchor.slice(0, 10) : '' %></dd>
+
+  <dt>Cycle Start</dt>
+  <dd class="mono"><%= balance.current_cycle_start ? balance.current_cycle_start.slice(0, 10) : '' %></dd>
+
+  <dt>Cycle End</dt>
+  <dd class="mono"><%= balance.cycle_end ? balance.cycle_end.slice(0, 10) : '' %></dd>
+
+  <dt>Updated</dt>
+  <dd class="mono" style="font-size:11px;"><%= balance.updated_at || '' %></dd>
+</dl>
+
+<h3>Transactions</h3>
+
+<% if (transactions.length === 0) { %>
+  <p class="dim">No transactions recorded.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Record</th>
+      <th>Step</th>
+      <th>Type</th>
+      <th>Provider</th>
+      <th>Amount USD</th>
+      <th>Created</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const t of transactions) { %>
+    <tr>
+      <td><%= t.id %></td>
+      <td>
+        <% if (t.record_id) { %>
+          <a href="/admin/records/<%= t.record_id %>">#<%= t.record_id %></a>
+        <% } else { %>
+          <span class="dim">—</span>
+        <% } %>
+      </td>
+      <td><%= t.step || '—' %></td>
+      <td>
+        <% if (t.type === 'llm') { %>
+          <span class="badge badge-scraped">llm</span>
+        <% } else if (t.type === 'embedding') { %>
+          <span class="badge badge-analyzed">embedding</span>
+        <% } else { %>
+          <span class="badge badge-pending"><%= t.type %></span>
+        <% } %>
+      </td>
+      <td class="mono" style="font-size:11px;"><%= t.provider %></td>
+      <td class="mono">$<%= Number(t.amount_usd).toFixed(6) %></td>
+      <td class="mono" style="font-size:11px;"><%= t.created_at ? t.created_at.replace('T', ' ').slice(0, 19) : '' %></td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>

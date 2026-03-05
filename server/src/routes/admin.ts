@@ -7,6 +7,8 @@ import { scrapeWithFallbackChain } from '../scraper.js';
 import { retryRecord } from '../pipeline.js';
 import { getRecord, getDb, getUserById, getAllInvites, getInviteById, createInvite } from '../db/index.js';
 import { toRecordEntry, toUserRecord } from '../db/helpers.js';
+import { getAllBalancesWithUsers, getTransactionsByUserId, getBalance } from '../db/usage.js';
+import { getNextCycleStart } from '../usage.js';
 import { getCrawlerKeys } from '../crawler-keys.js';
 import { logger } from '../logger.js';
 
@@ -322,7 +324,10 @@ export function registerAdminRoutes(router: Router): void {
 
   router.post('/admin/crawler-keys/:id/toggle', requireAdminPage, async (req: Request, res: Response) => {
     const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) { res.status(400).send('Invalid id'); return; }
+    if (isNaN(id)) {
+      res.status(400).send('Invalid id');
+      return;
+    }
     const db = getDb();
     await db
       .updateTable('crawler_api_keys')
@@ -334,7 +339,10 @@ export function registerAdminRoutes(router: Router): void {
 
   router.post('/admin/crawler-keys/:id/reset', requireAdminPage, async (req: Request, res: Response) => {
     const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) { res.status(400).send('Invalid id'); return; }
+    if (isNaN(id)) {
+      res.status(400).send('Invalid id');
+      return;
+    }
     const db = getDb();
     await db
       .updateTable('crawler_api_keys')
@@ -346,10 +354,91 @@ export function registerAdminRoutes(router: Router): void {
 
   router.post('/admin/crawler-keys/:id/delete', requireAdminPage, async (req: Request, res: Response) => {
     const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) { res.status(400).send('Invalid id'); return; }
+    if (isNaN(id)) {
+      res.status(400).send('Invalid id');
+      return;
+    }
     const db = getDb();
     await db.deleteFrom('crawler_api_keys').where('id', '=', id).execute();
     res.redirect('/admin/crawler-keys');
+  });
+
+  // ── Usage Billing ──
+  router.get('/admin/usage', requireAdminPage, async (req: Request, res: Response) => {
+    const balances = await getAllBalancesWithUsers();
+
+    const rows = balances.map((b) => {
+      const anchorDay = b.cycle_anchor.getDate();
+      const cycleEnd = getNextCycleStart(b.current_cycle_start, anchorDay);
+      const usage = Number(b.current_cycle_usage_usd);
+      const limit = Number(b.cycle_limit_usd);
+      const usagePct = limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : 0;
+      return {
+        ...b,
+        usage_pct: usagePct,
+        current_cycle_start:
+          b.current_cycle_start instanceof Date ? b.current_cycle_start.toISOString() : b.current_cycle_start,
+        cycle_anchor: b.cycle_anchor instanceof Date ? b.cycle_anchor.toISOString() : b.cycle_anchor,
+        updated_at: b.updated_at instanceof Date ? b.updated_at.toISOString() : b.updated_at,
+        cycle_end: cycleEnd.toISOString(),
+      };
+    });
+
+    const html = await renderAdminPage('usage', { pageTitle: 'Usage', rows });
+    res.send(html);
+  });
+
+  router.get('/admin/usage/:userId', requireAdminPage, async (req: Request, res: Response) => {
+    const userId = parseInt(req.params.userId as string, 10);
+    if (isNaN(userId)) {
+      res.status(400).send('Invalid user id');
+      return;
+    }
+
+    const user = await getUserById(userId);
+    if (!user) {
+      res.status(404).send('User not found');
+      return;
+    }
+
+    const balance = await getBalance(userId);
+    if (!balance) {
+      res.status(404).send('No billing data for this user');
+      return;
+    }
+
+    const transactions = await getTransactionsByUserId(userId);
+
+    const anchorDay = balance.cycle_anchor.getDate();
+    const cycleEnd = getNextCycleStart(balance.current_cycle_start, anchorDay);
+    const usage = Number(balance.current_cycle_usage_usd);
+    const limit = Number(balance.cycle_limit_usd);
+    const usagePct = limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : 0;
+
+    const enrichedBalance = {
+      ...balance,
+      cycle_end: cycleEnd.toISOString(),
+      usage_pct: usagePct,
+      cycle_anchor: balance.cycle_anchor instanceof Date ? balance.cycle_anchor.toISOString() : balance.cycle_anchor,
+      current_cycle_start:
+        balance.current_cycle_start instanceof Date
+          ? balance.current_cycle_start.toISOString()
+          : balance.current_cycle_start,
+      updated_at: balance.updated_at instanceof Date ? balance.updated_at.toISOString() : balance.updated_at,
+    };
+
+    const normalizedTxns = transactions.map((t: any) => ({
+      ...t,
+      created_at: t.created_at instanceof Date ? t.created_at.toISOString() : t.created_at,
+    }));
+
+    const html = await renderAdminPage('usage-detail', {
+      pageTitle: `Usage — ${user.username}`,
+      user,
+      balance: enrichedBalance,
+      transactions: normalizedTxns,
+    });
+    res.send(html);
   });
 
   // ══════════════════════════════════════════
