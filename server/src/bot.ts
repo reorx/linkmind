@@ -204,10 +204,11 @@ export function startBot(token: string, webBaseUrl: string): Bot {
     log.info({ recordId, taskId }, 'Reprocess triggered');
 
     const recordUrl = `${webBaseUrl}/link/${recordId}`;
-    const statusMsg = await ctx.reply(
-      `🔄 开始重新处理链接 #${recordId}\n\n🔍 <a href="${escHtml(recordUrl)}">查看处理进度</a>`,
-      { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
-    );
+    const recordButtons = makeRecordButtons(recordUrl);
+    const statusMsg = await ctx.reply(`🔄 开始重新处理链接 #${recordId}`, {
+      link_preview_options: { is_disabled: true },
+      reply_markup: recordButtons,
+    });
 
     // Start polling for completion in background
     pollAndNotify(ctx, recordId, record.url!, statusMsg, webBaseUrl).catch((err) => {
@@ -463,9 +464,9 @@ async function handleForwardedChannelMessage(
   const existing = await getRecordByUrl(userId, sourceUrl);
   if (existing?.id) {
     const recordUrl = `${webBaseUrl}/link/${existing.id}`;
-    await ctx.reply(`🔄 该频道消息已存在\n\n🔍 <a href="${escHtml(recordUrl)}">查看详情</a>`, {
-      parse_mode: 'HTML',
+    await ctx.reply(`🔄 该频道消息已存在`, {
       link_preview_options: { is_disabled: true },
+      reply_markup: makeRecordButtons(recordUrl),
     });
     return existing.id;
   }
@@ -492,10 +493,11 @@ async function handleForwardedChannelMessage(
   await spawnProcessLink(userId, sourceUrl, recordId);
 
   const recordUrl = `${webBaseUrl}/link/${recordId}`;
-  const statusMsg = await ctx.reply(
-    `📨 收到频道转发，已加入处理队列...\n\n🔍 <a href="${escHtml(recordUrl)}">查看处理进度</a>`,
-    { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
-  );
+  const recordButtons = makeRecordButtons(recordUrl);
+  const statusMsg = await ctx.reply(`📨 收到频道转发，已加入处理队列...`, {
+    link_preview_options: { is_disabled: true },
+    reply_markup: recordButtons,
+  });
 
   // Extract URLs from forwarded text and create derived links
   const urls = text.match(URL_REGEX) || [];
@@ -562,11 +564,10 @@ async function handleLinkMessage(
   await spawnProcessLink(userId, mainUrl, recordId);
 
   const recordUrl = `${webBaseUrl}/link/${recordId}`;
+  const recordButtons = makeRecordButtons(recordUrl);
   const statusMsg = await ctx.reply(
-    isDuplicate
-      ? `🔄 该链接已存在，已加入处理队列...\n\n🔍 <a href="${escHtml(recordUrl)}">查看处理进度</a>`
-      : `🔗 收到链接，已加入处理队列...\n\n🔍 <a href="${escHtml(recordUrl)}">查看处理进度</a>`,
-    { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
+    isDuplicate ? `🔄 该链接已存在，已加入处理队列...` : `🔗 收到链接，已加入处理队列...`,
+    { link_preview_options: { is_disabled: true }, reply_markup: recordButtons },
   );
 
   // Create derived link records for other URLs
@@ -644,12 +645,11 @@ async function handleNoteMessage(
   });
 
   const noteUrl = `${webBaseUrl}/link/${noteId}`;
-  const statusMsg = await ctx.reply(
-    sourceUrl
-      ? `📝 收到转发笔记，正在处理...\n\n🔍 <a href="${escHtml(noteUrl)}">查看处理进度</a>`
-      : `📝 收到笔记，正在处理...\n\n🔍 <a href="${escHtml(noteUrl)}">查看处理进度</a>`,
-    { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
-  );
+  const noteButtons = makeRecordButtons(noteUrl);
+  const statusMsg = await ctx.reply(sourceUrl ? `📝 收到转发笔记，正在处理...` : `📝 收到笔记，正在处理...`, {
+    link_preview_options: { is_disabled: true },
+    reply_markup: noteButtons,
+  });
 
   // Poll for note completion
   pollNoteAndNotify(ctx, noteId, statusMsg, webBaseUrl).catch((err) => {
@@ -673,6 +673,7 @@ async function pollAndNotify(
   const interval = 3_000;
   const start = Date.now();
   let notifiedScraping = false;
+  const recordButtons = makeRecordButtons(`${webBaseUrl}/link/${recordId}`);
 
   while (Date.now() - start < maxWait) {
     await new Promise((r) => setTimeout(r, interval));
@@ -682,7 +683,7 @@ async function pollAndNotify(
 
     if (record.status === 'scraped' && !notifiedScraping) {
       notifiedScraping = true;
-      await editMessage(ctx, statusMsg, '🤖 正在分析内容...');
+      await editMessage(ctx, statusMsg, '🤖 正在分析内容...', false, recordButtons);
     }
 
     if (record.status === 'analyzed') {
@@ -719,10 +720,11 @@ async function pollAndNotify(
         const sent = await ctx.api.sendPhoto(ctx.chat.id, new InputFile(imagePath), {
           caption: resultText,
           parse_mode: 'HTML',
+          reply_markup: recordButtons,
         });
         botMsgId = sent.message_id;
       } else {
-        const sent = await editMessage(ctx, statusMsg, resultText, true);
+        const sent = await editMessage(ctx, statusMsg, resultText, true, recordButtons);
         botMsgId = sent?.message_id || statusMsg.message_id;
       }
 
@@ -735,12 +737,18 @@ async function pollAndNotify(
     }
 
     if (record.status === 'error') {
-      await editMessage(ctx, statusMsg, `❌ 处理失败: ${(record.error_message || '').slice(0, 200)}`);
+      await editMessage(
+        ctx,
+        statusMsg,
+        `❌ 处理失败: ${(record.error_message || '').slice(0, 200)}`,
+        false,
+        recordButtons,
+      );
       return;
     }
   }
 
-  await editMessage(ctx, statusMsg, '⏰ 处理超时，请稍后在网页端查看结果。');
+  await editMessage(ctx, statusMsg, '⏰ 处理超时，请稍后在网页端查看结果。', false, recordButtons);
 }
 
 /**
@@ -750,6 +758,7 @@ async function pollNoteAndNotify(ctx: any, noteId: number, statusMsg: any, webBa
   const maxWait = 300_000;
   const interval = 3_000;
   const start = Date.now();
+  const noteButtons = makeRecordButtons(`${webBaseUrl}/link/${noteId}`);
 
   while (Date.now() - start < maxWait) {
     await new Promise((r) => setTimeout(r, interval));
@@ -768,7 +777,7 @@ async function pollNoteAndNotify(ctx: any, noteId: number, statusMsg: any, webBa
         msg += `<b>💡 Insight</b>\n${renderMarkdownTelegram(record.insight)}\n`;
       }
 
-      const sent = await editMessage(ctx, statusMsg, msg, true);
+      const sent = await editMessage(ctx, statusMsg, msg, true, noteButtons);
       const botMsgId = sent?.message_id || statusMsg.message_id;
 
       // Store bot reply message_id for future reply detection
@@ -780,12 +789,18 @@ async function pollNoteAndNotify(ctx: any, noteId: number, statusMsg: any, webBa
     }
 
     if (record.status === 'error') {
-      await editMessage(ctx, statusMsg, `❌ 笔记处理失败: ${(record.error_message || '').slice(0, 200)}`);
+      await editMessage(
+        ctx,
+        statusMsg,
+        `❌ 笔记处理失败: ${(record.error_message || '').slice(0, 200)}`,
+        false,
+        noteButtons,
+      );
       return;
     }
   }
 
-  await editMessage(ctx, statusMsg, '⏰ 处理超时，请稍后查看结果。');
+  await editMessage(ctx, statusMsg, '⏰ 处理超时，请稍后查看结果。', false, noteButtons);
 }
 
 function formatResult(data: {
@@ -821,18 +836,31 @@ function formatResult(data: {
     }
   }
 
-  msg += `\n🔍 完整分析: ${escHtml(data.permanentLink)}`;
-
   return msg;
 }
 
-async function editMessage(ctx: any, statusMsg: any, text: string, parseHtml: boolean = false): Promise<any> {
+function makeRecordButtons(webUrl: string) {
+  return {
+    inline_keyboard: [[{ text: '🔍 查看详情', url: webUrl }]],
+  };
+}
+
+async function editMessage(
+  ctx: any,
+  statusMsg: any,
+  text: string,
+  parseHtml: boolean = false,
+  reply_markup?: { inline_keyboard: { text: string; url: string }[][] },
+): Promise<any> {
   try {
     const opts: Record<string, any> = {
       link_preview_options: { is_disabled: true },
     };
     if (parseHtml) {
       opts.parse_mode = 'HTML';
+    }
+    if (reply_markup) {
+      opts.reply_markup = reply_markup;
     }
     return await ctx.api.editMessageText(statusMsg.chat.id, statusMsg.message_id, text, opts);
   } catch (err) {
