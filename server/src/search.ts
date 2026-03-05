@@ -195,7 +195,7 @@ async function searchVector(query: string, userId: number, limit: number): Promi
 
   try {
     // Generate query embedding
-    const queryEmbedding = await createEmbedding(query);
+    const { embedding: queryEmbedding } = await createEmbedding(query);
     const vectorStr = `[${queryEmbedding.join(',')}]`;
 
     // Cosine distance search (lower distance = more similar)

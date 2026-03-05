@@ -52,7 +52,7 @@ async function main() {
       const text = buildEmbeddingText(link);
       console.log(`[${link.id}] Generating embedding for: ${link.og_title?.slice(0, 50)}...`);
 
-      const embedding = await createEmbedding(text);
+      const { embedding } = await createEmbedding(text);
       const vectorStr = `[${embedding.join(',')}]`;
 
       await db

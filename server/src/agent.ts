@@ -9,7 +9,7 @@
  * - generateNoteInsight: Generate insight for a note
  */
 
-import { getLLM, generateObject } from './llm.js';
+import { getLLM, generateObject, type UsageInfo } from './llm.js';
 import { getRecord } from './db/index.js';
 import { logger } from './logger.js';
 import {
@@ -38,10 +38,15 @@ export interface SummaryResult {
   tags: string[];
 }
 
+export interface WithUsage<T> {
+  result: T;
+  usage?: UsageInfo;
+}
+
 /**
  * Generate summary and extract tags from article content.
  */
-export async function generateSummary(input: SummaryPromptInput): Promise<SummaryResult> {
+export async function generateSummary(input: SummaryPromptInput): Promise<WithUsage<SummaryResult>> {
   const userPrompt = buildSummaryUserPrompt(input);
   log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'summary prompt (first 500 chars)');
 
@@ -67,7 +72,7 @@ export async function generateSummary(input: SummaryPromptInput): Promise<Summar
  * Generate summary for a Hacker News discussion thread.
  * Uses HN-specific prompts that focus on extracting discussion insights.
  */
-export async function generateHNSummary(input: HNSummaryPromptInput): Promise<SummaryResult> {
+export async function generateHNSummary(input: HNSummaryPromptInput): Promise<WithUsage<SummaryResult>> {
   const userPrompt = buildHNSummaryUserPrompt(input);
   log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'HN summary prompt (first 500 chars)');
 
@@ -99,7 +104,7 @@ export async function generateInsight(
   input: { url: string; title?: string },
   summary: string,
   relatedRecordIds: number[],
-): Promise<string> {
+): Promise<WithUsage<string>> {
   // Fetch related records details
   const relatedLinks: RelatedLinkContext[] = [];
   for (const id of relatedRecordIds) {
@@ -120,7 +125,7 @@ export async function generateInsight(
     relatedLinks,
   });
 
-  const text = await getLLM().chat(
+  const chatResult = await getLLM().chat(
     [
       { role: 'system', content: INSIGHT_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
@@ -128,13 +133,13 @@ export async function generateInsight(
     { maxTokens: 1024, label: 'insight', temperature: 0.1 },
   );
 
-  return text || '无法生成 insight';
+  return { result: chatResult.text || '无法生成 insight', usage: chatResult.usage };
 }
 
 /**
  * Generate summary and tags from note content (for notes > 200 chars).
  */
-export async function generateNoteSummary(content: string): Promise<SummaryResult> {
+export async function generateNoteSummary(content: string): Promise<WithUsage<SummaryResult>> {
   const userPrompt = buildNoteSummaryUserPrompt(content);
   log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'note summary prompt (first 500 chars)');
 
@@ -158,7 +163,7 @@ export async function generateNoteSummary(content: string): Promise<SummaryResul
 /**
  * Generate only tags from short note content (for notes <= 200 chars).
  */
-export async function generateNoteTags(content: string): Promise<string[]> {
+export async function generateNoteTags(content: string): Promise<WithUsage<string[]>> {
   const userPrompt = buildNoteTagsUserPrompt(content);
 
   return generateObject<string[]>(
@@ -181,7 +186,7 @@ export async function generateNoteInsight(
   content: string,
   summary: string,
   relatedRecordIds: number[],
-): Promise<string> {
+): Promise<WithUsage<string>> {
   const relatedLinks: RelatedLinkContext[] = [];
   for (const id of relatedRecordIds) {
     const record = await getRecord(id);
@@ -200,7 +205,7 @@ export async function generateNoteInsight(
     relatedLinks,
   });
 
-  const text = await getLLM().chat(
+  const chatResult = await getLLM().chat(
     [
       { role: 'system', content: NOTE_INSIGHT_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
@@ -208,5 +213,5 @@ export async function generateNoteInsight(
     { maxTokens: 1024, label: 'note-insight' },
   );
 
-  return text || '无法生成 insight';
+  return { result: chatResult.text || '无法生成 insight', usage: chatResult.usage };
 }

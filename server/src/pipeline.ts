@@ -39,14 +39,67 @@ import {
   generateNoteTags,
   generateNoteInsight,
 } from './agent.js';
-import { createEmbedding } from './llm.js';
+import { createEmbedding, type UsageInfo } from './llm.js';
 import { searchRelatedRecords, type RelatedRecordResult } from './search.js';
 // File export disabled for cloud deployment; renderMarkdown kept in export.ts for future use
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 import { AgentEventEmitter } from './agent-event-emitter.js';
+import { recordTransaction } from './usage.js';
 
 const log = logger.child({ module: 'pipeline' });
+
+/* ── Usage tracking helpers ── */
+
+function getLLMProviderForUsage(): string {
+  const p = process.env.LLM_PROVIDER ?? 'openai';
+  return p === 'openai' ? 'qwen' : p;
+}
+
+function getEmbeddingProviderForUsage(): string {
+  return process.env.EMBEDDING_PROVIDER ?? 'dashscope';
+}
+
+async function recordLLMStepUsage(
+  userId: number,
+  recordId: number,
+  step: string,
+  usage: UsageInfo | undefined,
+): Promise<void> {
+  if (!usage) {
+    log.warn({ recordId, step }, '[usage] Missing LLM usage data, recording with 0 tokens');
+  }
+  await recordTransaction({
+    userId,
+    recordId,
+    step,
+    type: 'llm',
+    provider: getLLMProviderForUsage(),
+    model: usage?.model ?? 'unknown',
+    inputTokens: usage?.inputTokens ?? 0,
+    outputTokens: usage?.outputTokens ?? 0,
+  });
+}
+
+async function recordEmbedStepUsage(
+  userId: number,
+  recordId: number,
+  step: string,
+  usage: { inputTokens: number; model: string } | undefined,
+): Promise<void> {
+  if (!usage) {
+    log.warn({ recordId, step }, '[usage] Missing embedding usage data, recording with 0 tokens');
+  }
+  await recordTransaction({
+    userId,
+    recordId,
+    step,
+    type: 'embedding',
+    provider: getEmbeddingProviderForUsage(),
+    model: usage?.model ?? 'unknown',
+    inputTokens: usage?.inputTokens ?? 0,
+  });
+}
 
 /* ── Absurd infrastructure ── */
 
@@ -103,6 +156,7 @@ interface ScrapeStepResult {
   siteName?: string;
   markdownLength: number;
   ocrTexts: string[];
+  scrapeSource?: string;
 }
 
 /**
@@ -167,10 +221,7 @@ async function scrapeStepWithFallback(
 ): Promise<ScrapeStepResult | null> {
   const chainResult = await scrapeWithFallbackChain(url, options);
 
-  log.info(
-    { recordId, source: chainResult.source, trace: chainResult.trace },
-    '[scrape] Fallback chain completed',
-  );
+  log.info({ recordId, source: chainResult.source, trace: chainResult.trace }, '[scrape] Fallback chain completed');
 
   if (chainResult.data && chainResult.source) {
     // A step succeeded — update record with the result
@@ -215,6 +266,7 @@ async function scrapeStepWithFallback(
       siteName: data.og.siteName,
       markdownLength: data.markdown.length,
       ocrTexts,
+      scrapeSource: chainResult.source || undefined,
     };
   }
 
@@ -256,6 +308,7 @@ interface SummarizeStepResult {
   validContent: boolean;
   summary: string;
   tags: string[];
+  usage?: UsageInfo;
 }
 
 /**
@@ -278,17 +331,17 @@ async function summarizeStep(
     markdownForSummary += '\n\n---\n**图片文字 (OCR):**\n' + scrapeData.ocrTexts.join('\n\n');
   }
 
-  let result;
+  let genResult;
   if (isHNUrl(url)) {
     // HN discussion: use specialized prompts for discussion insight extraction
     log.info({ recordId }, '[summarize] Using HN discussion prompts');
-    result = await generateHNSummary({
+    genResult = await generateHNSummary({
       url,
       title: scrapeData.title,
       markdown: markdownForSummary,
     });
   } else {
-    result = await generateSummary({
+    genResult = await generateSummary({
       url,
       title: scrapeData.title,
       ogDescription: scrapeData.ogDescription,
@@ -296,32 +349,39 @@ async function summarizeStep(
     });
   }
 
+  const result = genResult.result;
+
   await updateRecord(recordId, {
     summary: result.summary,
     tags: JSON.stringify(result.tags),
   });
 
   log.info({ recordId, tags: result.tags.length, validContent: result.validContent }, '[summarize] OK');
-  return result;
+  return { ...result, usage: genResult.usage };
+}
+
+interface EmbedStepResult {
+  embedding: number[];
+  usage?: { inputTokens: number; model: string };
 }
 
 /**
  * Step 3: Embed - generate embedding vector for summary only.
  */
-async function embedStep(recordId: number): Promise<number[]> {
+async function embedStep(recordId: number): Promise<EmbedStepResult> {
   const record = await getRecord(recordId);
   if (!record?.summary) throw new Error('Record summary not found for embedding');
 
   log.info({ recordId, title: record.og_title }, '[embed] Starting');
 
-  const embedding = await createEmbedding(record.summary);
+  const { embedding, usage } = await createEmbedding(record.summary);
 
   // Store embedding as PostgreSQL vector format
   const vectorStr = `[${embedding.join(',')}]`;
   await updateRecord(recordId, { summary_embedding: vectorStr } as any);
 
   log.info({ recordId, dimensions: embedding.length }, '[embed] OK');
-  return embedding;
+  return { embedding, usage };
 }
 
 const RELATED_SCORE_THRESHOLD = 0.65; // Minimum score to save relation
@@ -368,10 +428,10 @@ async function insightStep(
   title: string | undefined,
   summary: string,
   relatedIds: number[],
-): Promise<void> {
+): Promise<{ usage?: UsageInfo }> {
   log.info({ recordId, relatedCount: relatedIds.length }, '[insight] Starting');
 
-  const insight = await generateInsight({ url, title }, summary, relatedIds);
+  const { result: insight, usage } = await generateInsight({ url, title }, summary, relatedIds);
 
   await updateRecord(recordId, {
     insight,
@@ -379,6 +439,7 @@ async function insightStep(
   });
 
   log.info({ recordId }, '[insight] OK');
+  return { usage };
 }
 
 /**
@@ -442,7 +503,10 @@ export function registerTasks(): void {
           let ocrTexts: string[] = [];
           if (isTwitterUrl(url) && sd.raw_media?.length) {
             try {
-              const { results: mediaResults, ocrTexts: extractedOcr } = await processTwitterMedia(recordId!, sd.raw_media);
+              const { results: mediaResults, ocrTexts: extractedOcr } = await processTwitterMedia(
+                recordId!,
+                sd.raw_media,
+              );
               if (mediaResults.length > 0) {
                 log.info({ recordId, count: mediaResults.length }, '[media] Twitter images stored (from probe)');
               }
@@ -523,6 +587,18 @@ export function registerTasks(): void {
         }
         await emitter.emitStepEnd('scrape', { chars: scrapeResult.markdownLength }, Date.now() - scrapeStart);
         scrapeData = scrapeResult;
+
+        // Record scrape usage (only for paid crawlers)
+        if (scrapeData.scrapeSource === 'firecrawl' || scrapeData.scrapeSource === 'jina') {
+          await recordTransaction({
+            userId,
+            recordId: recordId!,
+            step: 'scrape',
+            type: 'crawler',
+            provider: scrapeData.scrapeSource,
+            url,
+          });
+        }
       }
 
       // Check if this is a derived link (added_by_user=false) — stop at scraped
@@ -544,6 +620,7 @@ export function registerTasks(): void {
         { validContent: summaryData.validContent, tags: summaryData.tags.length },
         Date.now() - stepStart,
       );
+      await recordLLMStepUsage(userId, recordId!, 'summary', summaryData.usage);
 
       // Step 2.5: If LLM determined content is invalid, re-scrape via Firecrawl/Probe and re-summarize
       if (!summaryData.validContent) {
@@ -563,6 +640,18 @@ export function registerTasks(): void {
         await emitter.emitStepEnd('re-scrape', { chars: reScrapeResult.markdownLength }, Date.now() - stepStart);
         scrapeData = reScrapeResult;
 
+        // Record re-scrape usage (only for paid crawlers)
+        if (scrapeData.scrapeSource === 'firecrawl' || scrapeData.scrapeSource === 'jina') {
+          await recordTransaction({
+            userId,
+            recordId: recordId!,
+            step: 're-scrape',
+            type: 'crawler',
+            provider: scrapeData.scrapeSource,
+            url,
+          });
+        }
+
         stepStart = Date.now();
         await emitter.emitStepStart('re-summarize');
         summaryData = await ctx.step('re-summarize', async () => {
@@ -573,32 +662,35 @@ export function registerTasks(): void {
           { validContent: summaryData.validContent, tags: summaryData.tags.length },
           Date.now() - stepStart,
         );
+        await recordLLMStepUsage(userId, recordId!, 're-summary', summaryData.usage);
       }
 
       // Step 3: Embed (summary only)
       stepStart = Date.now();
       await emitter.emitStepStart('embed');
-      const embedding = await ctx.step('embed', async () => {
+      const embedResult = await ctx.step('embed', async () => {
         return await embedStep(recordId!);
       });
-      await emitter.emitStepEnd('embed', { dimensions: embedding.length }, Date.now() - stepStart);
+      await emitter.emitStepEnd('embed', { dimensions: embedResult.embedding.length }, Date.now() - stepStart);
+      await recordEmbedStepUsage(userId, recordId!, 'embed', embedResult.usage);
 
       // Step 4: Related records
       stepStart = Date.now();
       await emitter.emitStepStart('related');
       const relatedRecords = await ctx.step('related', async () => {
-        return await relatedStep(recordId!, userId, embedding);
+        return await relatedStep(recordId!, userId, embedResult.embedding);
       });
       await emitter.emitStepEnd('related', { count: relatedRecords.length }, Date.now() - stepStart);
 
       // Step 5: Insight
       stepStart = Date.now();
       await emitter.emitStepStart('insight');
-      await ctx.step('insight', async () => {
+      const insightResult = await ctx.step('insight', async () => {
         const relatedIds = relatedRecords.map((r) => r.id);
-        await insightStep(recordId!, url, scrapeData.title, summaryData.summary, relatedIds);
+        return await insightStep(recordId!, url, scrapeData.title, summaryData.summary, relatedIds);
       });
       await emitter.emitStepEnd('insight', {}, Date.now() - stepStart);
+      await recordLLMStepUsage(userId, recordId!, 'insight', insightResult?.usage);
 
       // Step 6: Export
       await ctx.step('export', async () => {
@@ -663,9 +755,10 @@ export function registerTasks(): void {
       } else {
         let stepStart = Date.now();
         await emitter.emitStepStart('embed');
-        embedding = await ctx.step('embed', async () => {
+        const embedResult = await ctx.step('embed', async () => {
           return await embedStep(recordId);
         });
+        embedding = embedResult.embedding;
         await emitter.emitStepEnd('embed', { dimensions: embedding.length }, Date.now() - stepStart);
       }
 
@@ -731,31 +824,34 @@ export function registerTasks(): void {
         return await noteSummarizeStep(recordId, record.content!);
       });
       await emitter.emitStepEnd('summarize', { tags: summaryData.tags.length }, Date.now() - stepStart);
+      await recordLLMStepUsage(userId, recordId, 'summary', summaryData.usage);
 
       // Step 2: Embed (summary only)
       stepStart = Date.now();
       await emitter.emitStepStart('embed');
-      const embedding = await ctx.step('embed', async () => {
+      const embedResult = await ctx.step('embed', async () => {
         return await embedStep(recordId);
       });
-      await emitter.emitStepEnd('embed', { dimensions: embedding.length }, Date.now() - stepStart);
+      await emitter.emitStepEnd('embed', { dimensions: embedResult.embedding.length }, Date.now() - stepStart);
+      await recordEmbedStepUsage(userId, recordId, 'embed', embedResult.usage);
 
       // Step 3: Related records
       stepStart = Date.now();
       await emitter.emitStepStart('related');
       const relatedRecords = await ctx.step('related', async () => {
-        return await relatedStep(recordId, userId, embedding);
+        return await relatedStep(recordId, userId, embedResult.embedding);
       });
       await emitter.emitStepEnd('related', { count: relatedRecords.length }, Date.now() - stepStart);
 
       // Step 4: Insight
       stepStart = Date.now();
       await emitter.emitStepStart('insight');
-      await ctx.step('insight', async () => {
+      const noteInsightResult = await ctx.step('insight', async () => {
         const relatedIds = relatedRecords.map((r) => r.id);
-        await noteInsightStep(recordId, record.content!, summaryData.summary, relatedIds);
+        return await noteInsightStep(recordId, record.content!, summaryData.summary, relatedIds);
       });
       await emitter.emitStepEnd('insight', {}, Date.now() - stepStart);
+      await recordLLMStepUsage(userId, recordId, 'insight', noteInsightResult?.usage);
 
       await updateRecord(recordId, { status: 'analyzed' });
 
@@ -785,6 +881,7 @@ export function registerTasks(): void {
 interface NoteSummarizeResult {
   summary: string;
   tags: string[];
+  usage?: UsageInfo;
 }
 
 /**
@@ -796,22 +893,22 @@ async function noteSummarizeStep(recordId: number, content: string): Promise<Not
 
   if (content.length > 200) {
     // Long note: full summarize + tags via LLM
-    const result = await generateNoteSummary(content);
+    const { result, usage } = await generateNoteSummary(content);
     await updateRecord(recordId, {
       summary: result.summary,
       tags: JSON.stringify(result.tags),
     });
     log.info({ recordId, tags: result.tags.length }, '[note-summarize] OK (full)');
-    return result;
+    return { summary: result.summary, tags: result.tags, usage };
   } else {
     // Short note: content IS the summary, only generate tags
-    const tags = await generateNoteTags(content);
+    const { result: tags, usage } = await generateNoteTags(content);
     await updateRecord(recordId, {
       summary: content,
       tags: JSON.stringify(tags),
     });
     log.info({ recordId, tags: tags.length }, '[note-summarize] OK (short, tags only)');
-    return { summary: content, tags };
+    return { summary: content, tags, usage };
   }
 }
 
@@ -823,14 +920,15 @@ async function noteInsightStep(
   content: string,
   summary: string,
   relatedIds: number[],
-): Promise<void> {
+): Promise<{ usage?: UsageInfo }> {
   log.info({ recordId, relatedCount: relatedIds.length }, '[note-insight] Starting');
 
-  const insight = await generateNoteInsight(content, summary, relatedIds);
+  const { result: insight, usage } = await generateNoteInsight(content, summary, relatedIds);
 
   await updateRecord(recordId, { insight });
 
   log.info({ recordId }, '[note-insight] OK');
+  return { usage };
 }
 
 /* ── Public API: spawn tasks ── */
@@ -1018,7 +1116,8 @@ export async function refreshRelated(recordId?: number): Promise<RefreshResult[]
         embedding = JSON.parse(record.summary_embedding);
       } else {
         log.info({ recordId: id, title }, '[refresh] Generating embedding...');
-        embedding = await embedStep(id);
+        const embedResult = await embedStep(id);
+        embedding = embedResult.embedding;
       }
 
       // Search related

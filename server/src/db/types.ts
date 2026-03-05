@@ -254,6 +254,28 @@ export interface CrawlerApiKeysTable {
   updated_at: Generated<Date>;
 }
 
+export interface UserBalancesTable {
+  id: Generated<number>;
+  user_id: number;
+  cycle_limit_usd: Generated<string>;
+  cycle_anchor: Generated<Date>;
+  current_cycle_usage_usd: Generated<string>;
+  current_cycle_start: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface UsageTransactionsTable {
+  id: Generated<number>;
+  user_id: number;
+  record_id: number | null;
+  step: string | null;
+  type: string;
+  provider: string;
+  amount_usd: string;
+  metadata: any | null;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   invites: InvitesTable;
   users: UsersTable;
@@ -268,4 +290,6 @@ export interface Database {
   share_records: ShareRecordsTable;
   record_files: RecordFilesTable;
   crawler_api_keys: CrawlerApiKeysTable;
+  user_balances: UserBalancesTable;
+  usage_transactions: UsageTransactionsTable;
 }

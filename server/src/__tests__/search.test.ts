@@ -118,11 +118,7 @@ async function createTestUser(): Promise<number> {
 async function cleanupTestData(): Promise<void> {
   const db = getDb();
   // Find the test user
-  const user = await db
-    .selectFrom('users')
-    .select('id')
-    .where('telegram_id', '=', TEST_TELEGRAM_ID)
-    .executeTakeFirst();
+  const user = await db.selectFrom('users').select('id').where('telegram_id', '=', TEST_TELEGRAM_ID).executeTakeFirst();
 
   if (!user) return;
 
@@ -142,7 +138,7 @@ async function insertSampleRecords(userId: number): Promise<Map<string, number>>
     });
 
     // Generate real embedding from summary
-    const embedding = await createEmbedding(sample.summary);
+    const { embedding } = await createEmbedding(sample.summary);
     const vectorStr = `[${embedding.join(',')}]`;
 
     await updateRecord(recordId, {
@@ -264,7 +260,7 @@ describe('Hybrid Search Integration', () => {
 
   it('searchRelatedRecords should find semantically similar records', async () => {
     const idA = sampleIds.get('A (BM25-strong)')!;
-    const embeddingA = await createEmbedding(SAMPLE_A.summary);
+    const { embedding: embeddingA } = await createEmbedding(SAMPLE_A.summary);
 
     const related = await searchRelatedRecords(embeddingA, userId, idA, 5);
 

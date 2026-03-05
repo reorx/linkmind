@@ -24,6 +24,7 @@ import {
   getRelatedRecords,
 } from './db/index.js';
 import { spawnProcessLink, spawnProcessNote } from './pipeline.js';
+import { checkAndGetBudget } from './usage.js';
 import { downloadAndStorePhoto } from './telegram-photo.js';
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
@@ -188,6 +189,13 @@ export function startBot(token: string, webBaseUrl: string): Bot {
 
     if (record.user_id !== user.id) {
       await ctx.reply(`❌ 链接 #${recordId} 不属于你`);
+      return;
+    }
+
+    // Budget check
+    const budget = await checkAndGetBudget(user.id!);
+    if (!budget.allowed) {
+      await replyBudgetExceeded(ctx, budget);
       return;
     }
 
@@ -474,6 +482,13 @@ async function handleForwardedChannelMessage(
 
   log.info({ recordId, userId, sourceUrl, channel: chat.title }, 'Forwarded channel message saved as link');
 
+  // Budget check
+  const budget = await checkAndGetBudget(userId);
+  if (!budget.allowed) {
+    await replyBudgetExceeded(ctx, budget);
+    return recordId;
+  }
+
   await spawnProcessLink(userId, sourceUrl, recordId);
 
   const recordUrl = `${webBaseUrl}/link/${recordId}`;
@@ -534,6 +549,13 @@ async function handleLinkMessage(
       user_note: userNote,
       telegram_chat_id: ctx.message.chat.id,
     });
+  }
+
+  // Budget check
+  const budget = await checkAndGetBudget(userId);
+  if (!budget.allowed) {
+    await replyBudgetExceeded(ctx, budget);
+    return recordId;
   }
 
   // Spawn the durable task
@@ -607,6 +629,13 @@ async function handleNoteMessage(
         );
       });
     }
+  }
+
+  // Budget check
+  const budget = await checkAndGetBudget(userId);
+  if (!budget.allowed) {
+    await replyBudgetExceeded(ctx, budget);
+    return noteId;
   }
 
   // Spawn note processing pipeline
@@ -810,6 +839,23 @@ async function editMessage(ctx: any, statusMsg: any, text: string, parseHtml: bo
     log.error({ err: err instanceof Error ? err.message : String(err) }, 'editMessage failed');
     return null;
   }
+}
+
+function formatDateMMDD(date: Date): string {
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${m}-${d}`;
+}
+
+async function replyBudgetExceeded(
+  ctx: any,
+  budget: { usedUsd: number; limitUsd: number; cycleStart: Date; cycleEnd: Date },
+): Promise<void> {
+  const startStr = formatDateMMDD(budget.cycleStart);
+  const endStr = formatDateMMDD(budget.cycleEnd);
+  await ctx.reply(
+    `⚠️ 本周期用量已达上限\n已使用: $${budget.usedUsd.toFixed(2)} / 限额: $${budget.limitUsd.toFixed(2)}\n当前周期: ${startStr} ~ ${endStr}\n请联系管理员提升额度。`,
+  );
 }
 
 function escHtml(s: string): string {

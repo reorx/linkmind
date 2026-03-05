@@ -81,25 +81,29 @@ vi.mock('../scraper.js', () => ({
 
 // ── Mock LLM ──
 vi.mock('../llm.js', () => ({
-  createEmbedding: vi.fn().mockResolvedValue(new Array(1024).fill(0)),
-  generateObject: vi.fn().mockImplementation(async (_messages: any[], options: any) =>
-    options.parse({
+  createEmbedding: vi.fn().mockResolvedValue({ embedding: new Array(1024).fill(0), usage: undefined }),
+  generateObject: vi.fn().mockImplementation(async (_messages: any[], options: any) => ({
+    result: options.parse({
       valid_content: true,
       summary: '这是一篇关于风暴英雄（HotS）的个人回忆文章，作者分享了这款游戏对他的意义。',
       tags: ['gaming', 'HotS', 'community', 'personal-essay'],
     }),
-  ),
+    usage: undefined,
+  })),
   getLLM: vi.fn().mockReturnValue({
     name: 'mock-llm',
     chat: vi.fn().mockImplementation(async (messages: any[], opts?: any) => {
       if (opts?.jsonMode) {
-        return JSON.stringify({
-          summary: '这是一篇关于风暴英雄（HotS）的个人回忆文章，作者分享了这款游戏对他的意义。',
-          tags: ['gaming', 'HotS', 'community', 'personal-essay'],
-        });
+        return {
+          text: JSON.stringify({
+            summary: '这是一篇关于风暴英雄（HotS）的个人回忆文章，作者分享了这款游戏对他的意义。',
+            tags: ['gaming', 'HotS', 'community', 'personal-essay'],
+          }),
+          usage: undefined,
+        };
       }
       // Insight response
-      return '这篇文章很有共鸣感，作为游戏玩家能理解社区消亡的失落。值得收藏。';
+      return { text: '这篇文章很有共鸣感，作为游戏玩家能理解社区消亡的失落。值得收藏。', usage: undefined };
     }),
   }),
 }));
@@ -154,7 +158,14 @@ async function dropTestDatabase(): Promise<void> {
 
 // ── Helpers ──
 
-import { getRecord, getRecordByUrl, insertNote, insertRecord, appendUserNote, getRecordByTelegramMessage } from '../db/index.js';
+import {
+  getRecord,
+  getRecordByUrl,
+  insertNote,
+  insertRecord,
+  appendUserNote,
+  getRecordByTelegramMessage,
+} from '../db/index.js';
 import { startWorker, spawnProcessLink, spawnProcessNote } from '../pipeline.js';
 
 async function waitForLink(userId: number, url: string, timeoutMs: number = 60_000): Promise<number> {

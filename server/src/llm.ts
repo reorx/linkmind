@@ -25,9 +25,28 @@ export interface ChatOptions {
   label?: string;
 }
 
+export interface UsageInfo {
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+}
+
+export interface ChatResult {
+  text: string;
+  usage?: UsageInfo;
+}
+
+export interface EmbeddingResult {
+  embedding: number[];
+  usage?: {
+    inputTokens: number;
+    model: string;
+  };
+}
+
 export interface LLMProvider {
   name: string;
-  chat(messages: ChatMessage[], options?: ChatOptions): Promise<string>;
+  chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResult>;
 }
 
 /* ── Provider: OpenAI-compatible (Qwen via dashscope, etc.) ── */
@@ -57,7 +76,16 @@ function createOpenAIProvider(): LLMProvider {
       const text = response.choices[0]?.message?.content || '';
       const elapsed = Date.now() - startTime;
       log.info({ model, label, elapsed: `${elapsed}ms`, responseLength: text.length }, `← OpenAI: ${label} done`);
-      return text;
+
+      const usage: UsageInfo | undefined = response.usage
+        ? {
+            inputTokens: response.usage.prompt_tokens ?? 0,
+            outputTokens: response.usage.completion_tokens ?? 0,
+            model,
+          }
+        : undefined;
+
+      return { text, usage };
     },
   };
 }
@@ -98,7 +126,7 @@ function getEmbeddingConfig(): { client: OpenAI; model: string; provider: string
  * Provider is selected via EMBEDDING_PROVIDER env var ("dashscope" | "voyage").
  * Returns a 1024-dimensional vector by default.
  */
-export async function createEmbedding(text: string): Promise<number[]> {
+export async function createEmbedding(text: string): Promise<EmbeddingResult> {
   const { client, model, provider } = getEmbeddingConfig();
 
   const startTime = Date.now();
@@ -117,7 +145,9 @@ export async function createEmbedding(text: string): Promise<number[]> {
   const elapsed = Date.now() - startTime;
   log.info({ provider, model, elapsed: `${elapsed}ms`, dimensions: embedding.length }, '← Embedding done');
 
-  return embedding;
+  const usage = response.usage ? { inputTokens: response.usage.prompt_tokens ?? 0, model } : undefined;
+
+  return { embedding, usage };
 }
 
 /* ── Provider: Gemini (direct REST API) ── */
@@ -190,7 +220,17 @@ function createGeminiProvider(): LLMProvider {
 
       const elapsed = Date.now() - startTime;
       log.info({ model, label, elapsed: `${elapsed}ms`, responseLength: text.length }, `← Gemini: ${label} done`);
-      return text;
+
+      const usageMeta = data?.usageMetadata;
+      const usage: UsageInfo | undefined = usageMeta
+        ? {
+            inputTokens: usageMeta.promptTokenCount ?? 0,
+            outputTokens: usageMeta.candidatesTokenCount ?? 0,
+            model,
+          }
+        : undefined;
+
+      return { text, usage };
     },
   };
 }
@@ -209,7 +249,10 @@ export interface GenerateObjectOptions<T> extends ChatOptions {
  * On parse failure: log warning, feed the error back to LLM for one retry.
  * If retry also fails, throw the error (caller should let it propagate to fail the record).
  */
-export async function generateObject<T>(messages: ChatMessage[], options: GenerateObjectOptions<T>): Promise<T> {
+export async function generateObject<T>(
+  messages: ChatMessage[],
+  options: GenerateObjectOptions<T>,
+): Promise<{ result: T; usage?: UsageInfo }> {
   const { parse, maxRetries = 1, ...chatOptions } = options;
   const label = chatOptions.label || 'generateObject';
 
@@ -226,23 +269,38 @@ export async function generateObject<T>(messages: ChatMessage[], options: Genera
   // Build a mutable copy of messages for potential retry
   const msgs = [...messages];
 
+  // Accumulate usage across retries
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let usageModel: string | undefined;
+
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const text = await getLLM().chat(msgs, { ...chatOptions, jsonMode: true });
+    const chatResult = await getLLM().chat(msgs, { ...chatOptions, jsonMode: true });
+
+    if (chatResult.usage) {
+      totalInputTokens += chatResult.usage.inputTokens;
+      totalOutputTokens += chatResult.usage.outputTokens;
+      usageModel = chatResult.usage.model;
+    }
 
     try {
-      return tryParse(text);
+      const result = tryParse(chatResult.text);
+      const usage: UsageInfo | undefined = usageModel
+        ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: usageModel }
+        : undefined;
+      return { result, usage };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
 
       if (attempt < maxRetries) {
         log.warn(
-          { label, attempt: attempt + 1, error: lastError.message, rawText: text.slice(0, 500) },
+          { label, attempt: attempt + 1, error: lastError.message, rawText: chatResult.text.slice(0, 500) },
           `[${label}] JSON parse failed, retrying with error feedback`,
         );
         // Feed the error back to LLM so it can fix its output
         msgs.push(
-          { role: 'assistant', content: text },
+          { role: 'assistant', content: chatResult.text },
           {
             role: 'user',
             content: `Your previous response could not be parsed as valid JSON.\nError: ${lastError.message}\nPlease output the corrected JSON only, with no extra text or markdown fences.`,
@@ -250,7 +308,7 @@ export async function generateObject<T>(messages: ChatMessage[], options: Genera
         );
       } else {
         log.error(
-          { label, attempts: attempt + 1, error: lastError.message, rawText: text.slice(0, 500) },
+          { label, attempts: attempt + 1, error: lastError.message, rawText: chatResult.text.slice(0, 500) },
           `[${label}] JSON parse failed after all retries`,
         );
       }

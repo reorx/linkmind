@@ -21,9 +21,11 @@ if [ -z "$PROD_DB_URL" ]; then
   exit 1
 fi
 
-# Local DB name
+# Local DB config
+# linkmind user doesn't have createdb privilege, use reorx superuser for DDL
 LOCAL_DB="${1:-linkmind_pro_$(date +%Y%m%d)}"
 LOCAL_USER="linkmind"
+LOCAL_ADMIN="reorx"
 LOCAL_HOST="localhost"
 LOCAL_PORT="5432"
 
@@ -33,25 +35,31 @@ echo "=== Replicating production DB to local: ${LOCAL_DB} ==="
 echo ""
 
 # Step 1: Dump production database
-echo "[1/3] Dumping production database..."
+echo "[1/4] Dumping production database..."
 pg_dump "$PROD_DB_URL" --format=custom --no-owner --no-privileges -f "$DUMP_FILE"
 echo "  Dump saved to: $DUMP_FILE ($(du -h "$DUMP_FILE" | cut -f1))"
 
-# Step 2: Create local database
-echo "[2/3] Creating local database: ${LOCAL_DB}..."
-# Drop if exists (for re-runs)
-psql -U "$LOCAL_USER" -h "$LOCAL_HOST" -p "$LOCAL_PORT" -d postgres -c "DROP DATABASE IF EXISTS \"${LOCAL_DB}\";" 2>/dev/null || true
-psql -U "$LOCAL_USER" -h "$LOCAL_HOST" -p "$LOCAL_PORT" -d postgres -c "CREATE DATABASE \"${LOCAL_DB}\";"
+# Step 2: Create local database (requires superuser for CREATE DATABASE + extensions)
+echo "[2/4] Creating local database: ${LOCAL_DB}..."
+psql -U "$LOCAL_ADMIN" -h "$LOCAL_HOST" -p "$LOCAL_PORT" -d postgres -c "DROP DATABASE IF EXISTS \"${LOCAL_DB}\";" 2>/dev/null || true
+psql -U "$LOCAL_ADMIN" -h "$LOCAL_HOST" -p "$LOCAL_PORT" -d postgres -c "CREATE DATABASE \"${LOCAL_DB}\" OWNER ${LOCAL_USER};"
 
-# Step 3: Restore dump
-echo "[3/3] Restoring dump into ${LOCAL_DB}..."
-pg_restore --no-owner --no-privileges -U "$LOCAL_USER" -h "$LOCAL_HOST" -p "$LOCAL_PORT" -d "$LOCAL_DB" "$DUMP_FILE" 2>&1 || true
-# pg_restore may return non-zero for warnings (e.g., extensions), that's OK
+# Step 3: Install extensions (pgvector requires superuser)
+echo "[3/4] Installing extensions..."
+psql -U "$LOCAL_ADMIN" -h "$LOCAL_HOST" -p "$LOCAL_PORT" -d "$LOCAL_DB" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# Step 4: Restore dump
+echo "[4/4] Restoring dump into ${LOCAL_DB}..."
+pg_restore --no-owner --no-privileges -U "$LOCAL_ADMIN" -h "$LOCAL_HOST" -p "$LOCAL_PORT" -d "$LOCAL_DB" "$DUMP_FILE" 2>&1 || true
+# pg_restore may return non-zero for warnings (e.g., pg_search/BM25 not available locally), that's OK
+
+# Grant permissions to linkmind user
+psql -U "$LOCAL_ADMIN" -h "$LOCAL_HOST" -p "$LOCAL_PORT" -d "$LOCAL_DB" -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${LOCAL_USER}; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${LOCAL_USER};"
 
 echo ""
 echo "=== Done! ==="
 echo "Local replica: postgresql://${LOCAL_USER}@${LOCAL_HOST}:${LOCAL_PORT}/${LOCAL_DB}"
 echo "Dump file: ${DUMP_FILE}"
 echo ""
-echo "To test 005 migration against this replica:"
-echo "  cd server && DATABASE_URL=postgresql://${LOCAL_USER}@${LOCAL_HOST}:${LOCAL_PORT}/${LOCAL_DB} node dist/cli.js run-sql migrations/005_share_records.sql"
+echo "To run migration against this replica:"
+echo "  cd server && DATABASE_URL=postgresql://${LOCAL_USER}@${LOCAL_HOST}:${LOCAL_PORT}/${LOCAL_DB} node dist/cli.js migrate"
