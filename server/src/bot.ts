@@ -720,11 +720,10 @@ async function pollAndNotify(
         const sent = await ctx.api.sendPhoto(ctx.chat.id, new InputFile(imagePath), {
           caption: resultText,
           parse_mode: 'HTML',
-          reply_markup: recordButtons,
         });
         botMsgId = sent.message_id;
       } else {
-        const sent = await editMessage(ctx, statusMsg, resultText, true, recordButtons);
+        const sent = await editMessage(ctx, statusMsg, resultText, true);
         botMsgId = sent?.message_id || statusMsg.message_id;
       }
 
@@ -776,8 +775,10 @@ async function pollNoteAndNotify(ctx: any, noteId: number, statusMsg: any, webBa
       if (record.insight) {
         msg += `<b>💡 Insight</b>\n${renderMarkdownTelegram(record.insight)}\n`;
       }
+      const noteDetailUrl = `${webBaseUrl}/link/${noteId}`;
+      msg += `\n🔍 <a href="${escHtml(noteDetailUrl)}">查看详情</a>`;
 
-      const sent = await editMessage(ctx, statusMsg, msg, true, noteButtons);
+      const sent = await editMessage(ctx, statusMsg, msg, true);
       const botMsgId = sent?.message_id || statusMsg.message_id;
 
       // Store bot reply message_id for future reply detection
@@ -835,6 +836,8 @@ function formatResult(data: {
       msg += `• <a href="${escHtml(l.internalUrl)}">${escHtml(truncate(l.title, 45))}</a> (<a href="${escHtml(l.sourceUrl)}">Source</a>)\n`;
     }
   }
+
+  msg += `\n🔍 <a href="${escHtml(data.permanentLink)}">查看详情</a>`;
 
   return msg;
 }
