@@ -32,6 +32,7 @@ const LLM_PRICING: Record<string, { input: number; output: number; currency: 'US
   'qwen/qwen-plus': { input: 0.8, output: 2.0, currency: 'CNY' },
   'qwen/qwen-max': { input: 2.0, output: 6.0, currency: 'CNY' },
   'gemini/gemini-2.0-flash': { input: 0.1, output: 0.4, currency: 'USD' },
+  'gemini/gemini-3-flash-preview': { input: 0.5, output: 3.0, currency: 'USD' },
 };
 
 // Embedding pricing per 1M tokens (input only)
