@@ -211,15 +211,35 @@ function createGeminiProvider(): LLMProvider {
       }
 
       const data = await res.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const candidate = data?.candidates?.[0];
+      const text = candidate?.content?.parts?.[0]?.text || '';
+      const finishReason = candidate?.finishReason;
 
       if (!text) {
-        log.error({ label, response: data }, `← Gemini: ${label} empty response`);
-        throw new Error(`Gemini ${label}: empty response`);
+        log.error({ label, finishReason, response: data }, `← Gemini: ${label} empty response`);
+        throw new Error(`Gemini ${label}: empty response (finishReason: ${finishReason})`);
       }
 
       const elapsed = Date.now() - startTime;
-      log.info({ model, label, elapsed: `${elapsed}ms`, responseLength: text.length }, `← Gemini: ${label} done`);
+
+      if (finishReason && finishReason !== 'STOP') {
+        log.warn(
+          {
+            model,
+            label,
+            elapsed: `${elapsed}ms`,
+            finishReason,
+            responseLength: text.length,
+            textPreview: text.slice(0, 500),
+          },
+          `← Gemini: ${label} finished with non-STOP reason`,
+        );
+      } else {
+        log.info(
+          { model, label, elapsed: `${elapsed}ms`, finishReason, responseLength: text.length },
+          `← Gemini: ${label} done`,
+        );
+      }
 
       const usageMeta = data?.usageMetadata;
       const usage: UsageInfo | undefined = usageMeta
