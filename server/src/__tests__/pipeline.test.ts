@@ -93,11 +93,21 @@ vi.mock('../llm.js', () => ({
   getLLM: vi.fn().mockReturnValue({
     name: 'mock-llm',
     chat: vi.fn().mockImplementation(async (messages: any[], opts?: any) => {
+      if (opts?.label === 'summary' || opts?.label === 'hn-summary') {
+        // XML-tag format output matching new prompt format
+        return {
+          text: `<valid_content>true</valid_content>
+<tags>gaming, hots, community, personal-essay</tags>
+
+这是一篇关于风暴英雄（HotS）的个人回忆文章，作者分享了这款游戏对他的意义。`,
+          usage: undefined,
+        };
+      }
       if (opts?.jsonMode) {
         return {
           text: JSON.stringify({
             summary: '这是一篇关于风暴英雄（HotS）的个人回忆文章，作者分享了这款游戏对他的意义。',
-            tags: ['gaming', 'HotS', 'community', 'personal-essay'],
+            tags: ['gaming', 'hots', 'community', 'personal-essay'],
           }),
           usage: undefined,
         };

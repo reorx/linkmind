@@ -10,6 +10,39 @@
  */
 
 import { getLLM, generateObject, type UsageInfo } from './llm.js';
+
+/* ── XML-tag parser for summary output ── */
+
+function parseSummaryOutput(text: string): SummaryResult {
+  // Extract <valid_content>...</valid_content>
+  const validContentMatch = text.match(/<valid_content>\s*(true|false)\s*<\/valid_content>/i);
+  const validContent = validContentMatch ? validContentMatch[1].toLowerCase() === 'true' : true;
+
+  // Extract <tags>...</tags>
+  const tagsMatch = text.match(/<tags>([\s\S]*?)<\/tags>/);
+  const tags = tagsMatch
+    ? tagsMatch[1]
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
+    : [];
+
+  // Everything after the last closing tag is the summary
+  let summary = text;
+  const lastTagEnd = Math.max(
+    text.lastIndexOf('</valid_content>') + '</valid_content>'.length,
+    text.lastIndexOf('</tags>') + '</tags>'.length,
+  );
+  if (lastTagEnd > 0) {
+    summary = text.slice(lastTagEnd).trim();
+  }
+
+  return {
+    validContent,
+    summary: summary || '无法生成摘要',
+    tags,
+  };
+}
 import { getRecord } from './db/index.js';
 import { logger } from './logger.js';
 import {
@@ -45,26 +78,27 @@ export interface WithUsage<T> {
 
 /**
  * Generate summary and extract tags from article content.
+ * Uses XML-tag format instead of JSON for robustness against LLM output truncation.
  */
 export async function generateSummary(input: SummaryPromptInput): Promise<WithUsage<SummaryResult>> {
   const userPrompt = buildSummaryUserPrompt(input);
   log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'summary prompt (first 500 chars)');
 
-  return generateObject<SummaryResult>(
+  const chatResult = await getLLM().chat(
     [
       { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    {
-      label: 'summary',
-      temperature: 0.1,
-      parse: (raw: any) => ({
-        validContent: raw.valid_content !== false,
-        summary: raw.summary || '无法生成摘要',
-        tags: Array.isArray(raw.tags) ? raw.tags : [],
-      }),
-    },
+    { label: 'summary', temperature: 0.1 },
   );
+
+  const result = parseSummaryOutput(chatResult.text);
+  log.debug(
+    { validContent: result.validContent, tags: result.tags, summaryLength: result.summary.length },
+    'summary parsed',
+  );
+
+  return { result, usage: chatResult.usage };
 }
 
 /**
@@ -75,21 +109,21 @@ export async function generateHNSummary(input: HNSummaryPromptInput): Promise<Wi
   const userPrompt = buildHNSummaryUserPrompt(input);
   log.debug({ promptPreview: userPrompt.slice(0, 500) }, 'HN summary prompt (first 500 chars)');
 
-  return generateObject<SummaryResult>(
+  const chatResult = await getLLM().chat(
     [
       { role: 'system', content: HN_SUMMARY_SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
     ],
-    {
-      label: 'hn-summary',
-      temperature: 0.1,
-      parse: (raw: any) => ({
-        validContent: raw.valid_content !== false,
-        summary: raw.summary || '无法生成摘要',
-        tags: Array.isArray(raw.tags) ? raw.tags : [],
-      }),
-    },
+    { label: 'hn-summary', temperature: 0.1 },
   );
+
+  const result = parseSummaryOutput(chatResult.text);
+  log.debug(
+    { validContent: result.validContent, tags: result.tags, summaryLength: result.summary.length },
+    'HN summary parsed',
+  );
+
+  return { result, usage: chatResult.usage };
 }
 
 /**

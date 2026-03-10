@@ -17,22 +17,27 @@ const TAG_FORMAT_INSTRUCTION = `标签格式要求：
 /* ── Summary Prompts ── */
 
 export const SUMMARY_SYSTEM_PROMPT = `你是一个信息分析助手。用户会给你一篇文章的内容，请你：
-1. 生成摘要，具体要求遵循用户消息 (summary)
+1. 判断正文内容是否有意义 (valid_content)
 2. 提取 3-5 个关键标签 (tags)
+3. 生成摘要，具体要求遵循用户消息
 
 ${TAG_FORMAT_INSTRUCTION}
 
 重要规则：
 - 只基于实际提供的正文内容进行总结，绝对不要编造、推测或脑补原文中没有的信息
-- 如果正文内容明显不完整（如只有导航栏、占位符、"继续滑动"等提示文字），请在 summary 中如实说明"原文内容未能完整获取"，并只基于标题和描述做简要说明
+- 如果正文内容明显不完整（如只有导航栏、占位符、"继续滑动"等提示文字），请在摘要中如实说明"原文内容未能完整获取"，并只基于标题和描述做简要说明
 - 宁可输出较短的诚实摘要，也不要输出看似丰富但实际编造的内容
 
-你还需要判断正文内容是否有意义 (valid_content)：
-- 如果正文是真实的文章/帖子/讨论内容，与标题相关，有实质信息 → valid_content: true
-- 如果正文只是页面导航、占位符、无关碎片、登录提示等无意义文字，或内容极少且与标题无关 → valid_content: false
+valid_content 判断规则：
+- 如果正文是真实的文章/帖子/讨论内容，与标题相关，有实质信息 → true
+- 如果正文只是页面导航、占位符、无关碎片、登录提示等无意义文字，或内容极少且与标题无关 → false
 
-你必须以 JSON 格式输出数据：
-{"valid_content": true, "summary": "...", "tags": ["machine-learning", "api-design", ...]}
+输出格式（严格按此格式，不要添加其他内容）：
+
+<valid_content>true 或 false</valid_content>
+<tags>tag1, tag2, tag3</tags>
+
+摘要正文直接写在标签下方，使用纯文本（支持 markdown 格式）。
 `;
 
 export interface SummaryPromptInput {
@@ -66,8 +71,9 @@ ${content}
 /* ── HN Discussion Summary Prompts ── */
 
 export const HN_SUMMARY_SYSTEM_PROMPT = `你是一个信息分析助手，专门分析 Hacker News 讨论帖。用户会给你一个 HN 讨论的完整内容（帖子标题 + 评论树），请你：
-1. 从讨论中提取最有价值的洞察，生成摘要 (summary)
+1. 判断是否有真实讨论内容 (valid_content)
 2. 提取 3-5 个关键标签 (tags)
+3. 从讨论中提取最有价值的洞察，生成摘要
 
 ${TAG_FORMAT_INSTRUCTION}
 
@@ -79,8 +85,12 @@ ${TAG_FORMAT_INSTRUCTION}
 - 如果评论内容明显不足（如讨论很少），如实说明
 - valid_content: 只要有真实讨论内容就是 true，如果帖子几乎没有评论则 false
 
-你必须以 JSON 格式输出数据：
-{"valid_content": true, "summary": "...", "tags": ["machine-learning", "api-design", ...]}
+输出格式（严格按此格式，不要添加其他内容）：
+
+<valid_content>true 或 false</valid_content>
+<tags>tag1, tag2, tag3</tags>
+
+摘要正文直接写在标签下方，使用纯文本（支持 markdown 格式）。
 `;
 
 export interface HNSummaryPromptInput {
