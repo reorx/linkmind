@@ -1,5 +1,6 @@
 {
   "private": true,
+  "packageManager": "pnpm@10.25.0",
   "scripts": {
     "build": "pnpm --filter @linkmind/core run build && pnpm --filter @linkmind/server run build",
     "test": "pnpm -r run --if-present test",

@@ -1,6 +1,6 @@
 # ── Build Stage ──
 FROM node:22-slim AS builder
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.25.0 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -16,7 +16,7 @@ RUN pnpm --filter @linkmind/server run build
 
 # ── Production Stage ──
 FROM node:22-slim
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.25.0 --activate
 WORKDIR /app
 
 RUN apt-get update \
