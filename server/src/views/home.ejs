@@ -1,226 +1,208 @@
 <style>
-  .timeline { position: relative; }
-  .day-label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 16px 0 8px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 12px;
-  }
-  .day-label:first-child { padding-top: 0; }
-  .link-card {
+  .list-panel {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px 20px;
-    margin-bottom: 12px;
-    cursor: pointer;
+    border-radius: 2px;
+    overflow: hidden;
   }
-  .link-card:hover {
-    border-color: var(--hover-border);
+  .list-head {
+    display: grid;
+    grid-template-columns: 56px 1fr 140px;
+    gap: 16px;
+    padding: 8px 18px;
+    background: var(--head-bg);
+    border-bottom: 1px solid var(--border-light);
   }
-  .link-card h3 {
-    font-size: 1rem;
-    margin-bottom: 4px;
+  .list-head span {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    color: var(--dim);
+  }
+  .list-head span:last-child { text-align: right; }
+  .group-head {
+    padding: 7px 18px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .group-head .g-date {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .group-head .g-count {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--faint);
+  }
+  .list-row {
+    display: grid;
+    grid-template-columns: 56px 1fr 140px;
+    gap: 16px;
+    padding: 13px 18px;
+    border-bottom: 1px solid var(--border-row);
+    align-items: baseline;
+    background: var(--surface);
+    text-decoration: none;
+    color: inherit;
+  }
+  .list-row:hover {
+    background: var(--accent-bg);
+    text-decoration: none;
+    color: inherit;
+  }
+  .row-time {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--faint);
+  }
+  .row-main { min-width: 0; }
+  .row-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
     line-height: 1.4;
     overflow-wrap: break-word;
-    word-break: break-all;
+    word-break: break-word;
   }
-  .link-card h3 a {
-    color: var(--text);
-    text-decoration: none;
-  }
-  .link-card h3 a:hover {
-    color: var(--accent);
-  }
-  .link-card .card-meta {
-    font-size: 0.8rem;
-    color: var(--dim);
-    margin-bottom: 8px;
-    word-break: break-all;
-  }
-  .link-card .card-meta a {
-    color: var(--dim);
-  }
-  .link-card .card-meta a:hover {
-    color: var(--accent);
-  }
-  .link-card details {
-    font-size: 0.9rem;
-    color: var(--text);
+  .row-summary {
+    font-size: 12px;
+    color: #55585c;
     line-height: 1.6;
-  }
-  .link-card details summary {
-    cursor: pointer;
+    margin-top: 4px;
     display: -webkit-box;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    list-style: none;
   }
-  .link-card details summary::-webkit-details-marker { display: none; }
-  .link-card details[open] summary {
-    display: block;
-    -webkit-line-clamp: unset;
-    overflow: visible;
+  .row-error {
+    font-size: 12px;
+    color: var(--error-text);
+    line-height: 1.6;
+    margin-top: 4px;
   }
+  .row-tags {
+    font-size: 11px;
+    color: var(--accent);
+    margin-top: 5px;
+  }
+  .row-domain {
+    font-size: 11px;
+    color: var(--faint);
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .status-badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    padding: 1.5px 6px;
+    border-radius: 2px;
+    margin-left: 8px;
+    vertical-align: 1px;
+    white-space: nowrap;
+  }
+  .status-badge.error { background: var(--error-bg); color: var(--error-text); }
+  .status-badge.pending { background: var(--badge-pending-bg); color: var(--badge-pending-text); }
+  .status-badge.scraped { background: var(--badge-scraped-bg); color: var(--badge-scraped-text); }
+  .status-badge.note { background: var(--tag-bg); color: var(--dim); }
   .pagination {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     justify-content: center;
-    padding: 24px 0;
+    padding: 24px 0 0;
     flex-wrap: wrap;
   }
   .pagination a, .pagination span {
     display: inline-block;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 0.85rem;
+    padding: 4px 10px;
+    border-radius: 2px;
+    font-family: var(--mono);
+    font-size: 11px;
     text-decoration: none;
   }
   .pagination a {
     background: var(--surface);
     border: 1px solid var(--border);
-    color: var(--text);
+    color: var(--body-text);
   }
   .pagination a:hover {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: var(--text);
+    color: var(--text);
     text-decoration: none;
   }
   .pagination .current {
-    background: var(--accent);
-    color: var(--bg);
+    background: var(--text);
+    border: 1px solid var(--text);
+    color: var(--surface);
     font-weight: 600;
   }
   .empty-state {
     text-align: center;
     color: var(--dim);
     padding: 60px 0;
-    font-size: 1rem;
+    font-size: 14px;
   }
-  .link-card.is-error {
-    border-color: var(--error-bg);
-  }
-  .status-badge {
-    display: inline-block;
-    font-size: 0.75rem;
-    padding: 1px 8px;
-    border-radius: 10px;
-    margin-left: 8px;
-    vertical-align: middle;
-  }
-  .status-badge.error {
-    background: var(--error-bg);
-    color: var(--error-text);
-  }
-  .status-badge.pending {
-    background: var(--badge-pending-bg);
-    color: var(--badge-pending-text);
-  }
-  .status-badge.scraped {
-    background: var(--badge-scraped-bg);
-    color: var(--badge-scraped-text);
-  }
-  .status-badge.note {
-    background: var(--border);
-    color: var(--dim);
-  }
-  /* Card with thumbnail */
-  .link-card-inner {
-    display: flex;
-    gap: 16px;
-    align-items: flex-start;
-  }
-  .link-card-content {
-    flex: 1;
-    min-width: 0;
-  }
-  .link-card-thumb {
-    width: 80px;
-    height: 80px;
-    flex-shrink: 0;
-    border-radius: 6px;
-    overflow: hidden;
-    background: var(--bg);
-  }
-  .link-card-thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-  @media (max-width: 480px) {
-    .link-card-thumb {
-      width: 60px;
-      height: 60px;
-    }
+  @media (max-width: 600px) {
+    .list-head { grid-template-columns: 44px 1fr; }
+    .list-head span:last-child { display: none; }
+    .list-row { grid-template-columns: 44px 1fr; gap: 10px; padding: 12px 14px; }
+    .row-domain { display: none; }
   }
 </style>
 
-<% if (links.length === 0) { %>
+<% if (groups.length === 0) { %>
 <div class="empty-state">还没有收藏任何内容</div>
 <% } else { %>
-<div class="timeline">
-  <% let currentDay = ''; %>
-  <% for (const item of links) { %>
-    <% if (item._dayLabel !== currentDay) { %>
-      <% currentDay = item._dayLabel; %>
-      <div class="day-label"><%= currentDay %></div>
-    <% } %>
-    <div class="link-card<%= item.status === 'error' ? ' is-error' : '' %>">
-      <div class="link-card-inner">
-        <div class="link-card-content">
-          <h3>
-            <a href="/link/<%= item.id %>"><%= item.type === 'note' ? (item.content || '').slice(0, 60) || 'Untitled Note' : (item.og_title || item.url) %></a>
-            <% if (item.type === 'note') { %>
-            <span class="status-badge note">笔记</span>
-            <% } %>
-            <% if (item.status === 'error') { %>
-            <span class="status-badge error">失败</span>
-            <% } else if (item.status === 'enqueued' || item.status === 'pending') { %>
-            <span class="status-badge pending">处理中</span>
-            <% } else if (item.status === 'scraped') { %>
-            <span class="status-badge scraped">分析中</span>
-            <% } else if (item.status === 'waiting_probe') { %>
-            <span class="status-badge pending">等待抓取</span>
-            <% } %>
-          </h3>
-          <div class="card-meta">
-            <% if (item.type === 'note') { %>
-              <% if (item.source_url) { %><a href="<%= item.source_url %>" target="_blank">来源</a> · <% } %>
-              <% if (item.created_at) { %><%= item.created_at.slice(11, 16) %><% } %>
-            <% } else { %>
-              <a href="<%= item.url %>" target="_blank"><%= item.url.length > 80 ? item.url.slice(0, 80) + '...' : item.url %></a>
-              <% if (item.og_site_name) { %> · <%= item.og_site_name %><% } %>
-              <% if (item.created_at) { %> · <%= item.created_at.slice(11, 16) %><% } %>
-            <% } %>
-          </div>
-          <% if (item.summary) { %>
-          <details>
-            <summary><%= item.summary %></summary>
-          </details>
-          <% } else if (item.error_message) { %>
-          <div style="color: var(--error-text); font-size: 0.85rem; margin-top: 6px;"><%= item.error_message %></div>
+<div class="list-panel">
+  <div class="list-head">
+    <span>时间</span>
+    <span>标题 / 摘要</span>
+    <span>来源</span>
+  </div>
+  <% for (const g of groups) { %>
+  <div class="group-head">
+    <span class="g-date"><%= g.date %></span>
+    <span class="g-count"><%= g.items.length %> 条</span>
+  </div>
+    <% for (const item of g.items) { %>
+    <a class="list-row" href="/link/<%= item.id %>">
+      <span class="row-time"><%= item._time %></span>
+      <div class="row-main">
+        <div class="row-title">
+          <%= item.type === 'note' ? ((item.content || '').slice(0, 60) || 'Untitled Note') : (item.og_title || item.url) %>
+          <% if (item.type === 'note') { %>
+          <span class="status-badge note">笔记</span>
+          <% } %>
+          <% if (item.status === 'error') { %>
+          <span class="status-badge error">失败</span>
+          <% } else if (item.status === 'enqueued' || item.status === 'pending') { %>
+          <span class="status-badge pending">处理中</span>
+          <% } else if (item.status === 'scraped') { %>
+          <span class="status-badge scraped">分析中</span>
+          <% } else if (item.status === 'waiting_probe') { %>
+          <span class="status-badge pending">等待抓取</span>
           <% } %>
         </div>
-        <% if (item._images && item._images.length > 0) { %>
-        <div class="link-card-thumb">
-          <a href="/link/<%= item.id %>">
-            <img src="/images/<%= item.id %>/<%= item._images[0].thumbnail_path %>" loading="lazy" alt="">
-          </a>
-        </div>
-        <% } else if (item.og_image) { %>
-        <div class="link-card-thumb">
-          <a href="/link/<%= item.id %>">
-            <img src="<%= item.og_image %>" loading="lazy" alt="">
-          </a>
-        </div>
+        <% if (item._summaryText) { %>
+        <div class="row-summary"><%= item._summaryText %></div>
+        <% } else if (item.error_message) { %>
+        <div class="row-error"><%= item.error_message %></div>
+        <% } %>
+        <% if (item._tags && item._tags.length > 0) { %>
+        <div class="row-tags"><%= item._tags.join(' · ') %></div>
         <% } %>
       </div>
-    </div>
+      <span class="row-domain"><%= item._domain %></span>
+    </a>
+    <% } %>
   <% } %>
 </div>
 
@@ -235,7 +217,7 @@
     <% } else if (Math.abs(i - page) <= 2 || i === 1 || i === totalPages) { %>
     <a href="/?page=<%= i %>"><%= i %></a>
     <% } else if (Math.abs(i - page) === 3) { %>
-    <span style="color:var(--dim)">…</span>
+    <span style="color:var(--faint)">…</span>
     <% } %>
   <% } %>
   <% if (page < totalPages) { %>

@@ -49,96 +49,150 @@
   }
 %>
 <style>
-  .detail-layout {
-    display: flex;
-    gap: 24px;
-    align-items: flex-start;
-  }
-  .detail-main {
-    flex: 1;
-    min-width: 0;
-  }
-  .detail-sidebar {
-    width: 280px;
-    flex-shrink: 0;
-  }
-  .detail-main h1 {
-    font-size: 1.5rem;
-    margin-bottom: 8px;
-    line-height: 1.4;
-  }
-  .meta {
-    color: var(--dim);
-    font-size: 0.85rem;
-    margin-bottom: 24px;
-    word-break: break-all;
-  }
-  .meta a { color: var(--accent); }
-  .section {
+  .paper {
+    max-width: 880px;
+    margin: 0 auto;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 16px;
+    border-radius: 2px;
+    padding: 34px 0 48px;
   }
-  .section-title {
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+  .paper-inner {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+  .back-link {
+    font-size: 12px;
     color: var(--dim);
-    margin-bottom: 10px;
+  }
+  .back-link:hover { color: var(--text); text-decoration: none; }
+
+  /* 标题区 */
+  .title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .title-row h1 {
+    margin: 0;
+    font-size: 27px;
+    font-weight: 700;
+    line-height: 1.3;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    min-width: 0;
+  }
+  .btn-chip {
+    flex: none;
+    font-size: 11.5px;
     font-weight: 600;
+    padding: 5px 12px;
+    background: var(--surface);
+    border: 1px solid #c8c8c5;
+    border-radius: 2px;
+    cursor: pointer;
+    color: var(--text);
+    font-family: inherit;
   }
-  .insight {
-    border-left: 3px solid var(--green);
-    padding-left: 16px;
+  .btn-chip:hover { border-color: var(--text); }
+  .btn-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-chip--active { border-color: var(--accent); color: var(--accent); }
+  .source-meta {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
-  .content {
-    font-size: 0.95rem;
-    word-break: break-word;
-    max-height: 600px;
-    overflow-y: auto;
+  .source-meta .src-url {
+    font-size: 12.5px;
+    word-break: break-all;
   }
-  /* Markdown rendered content */
+  .source-meta .src-line {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--faint);
+    word-break: break-all;
+  }
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 14px;
+  }
+  .tag {
+    font-size: 11px;
+    padding: 3px 9px;
+    background: var(--tag-bg);
+    color: var(--body-text);
+    border-radius: 2px;
+  }
+  .divider {
+    height: 1px;
+    background: var(--border-light);
+    margin: 26px 0 24px;
+  }
+  .section-h2 {
+    margin: 0 0 14px;
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+  .section-h2 .h2-count {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 400;
+    color: var(--faint);
+  }
+
+  /* Markdown 内文排版 */
   .markdown-body {
-    font-size: 0.95rem;
-    line-height: 1.7;
+    font-size: 13.5px;
+    color: var(--body-text);
+    line-height: 1.8;
     word-break: break-word;
   }
+  .markdown-body > p:first-child { font-size: 14.5px; line-height: 1.9; }
   .markdown-body h1, .markdown-body h2, .markdown-body h3,
   .markdown-body h4, .markdown-body h5, .markdown-body h6 {
-    margin-top: 1em;
-    margin-bottom: 0.5em;
-    line-height: 1.3;
+    margin: 24px 0 6px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.5;
   }
-  .markdown-body h1 { font-size: 1.3rem; }
-  .markdown-body h2 { font-size: 1.15rem; }
-  .markdown-body h3 { font-size: 1.05rem; }
   .markdown-body p { margin: 0.6em 0; }
-  .markdown-body ul, .markdown-body ol { padding-left: 1.5em; margin: 0.5em 0; }
-  .markdown-body li { margin: 0.25em 0; }
+  .markdown-body ul, .markdown-body ol { padding-left: 1.4em; margin: 0.5em 0; }
+  .markdown-body li { margin: 0.45em 0; }
+  .markdown-body li::marker { color: var(--fainter); }
   .markdown-body code {
-    background: var(--border);
+    background: var(--tag-bg);
     padding: 1px 5px;
-    border-radius: 3px;
+    border-radius: 2px;
+    font-family: var(--mono);
     font-size: 0.88em;
   }
   .markdown-body pre {
-    background: var(--border);
+    background: var(--head-bg);
+    border: 1px solid var(--border-light);
     padding: 12px 16px;
-    border-radius: 6px;
+    border-radius: 2px;
     overflow-x: auto;
     margin: 0.8em 0;
   }
-  .markdown-body pre code {
-    background: none;
-    padding: 0;
-  }
+  .markdown-body pre code { background: none; padding: 0; }
   .markdown-body blockquote {
-    border-left: 3px solid var(--dim);
-    padding-left: 12px;
-    margin: 0.6em 0;
+    border-left: 2px solid var(--border);
+    padding: 2px 0 2px 12px;
+    margin: 6px 0;
+  }
+  .markdown-body blockquote p {
+    font-size: 12px;
     color: var(--dim);
+    line-height: 1.65;
+    margin: 0.3em 0;
   }
   .markdown-body table {
     border-collapse: collapse;
@@ -146,69 +200,84 @@
     margin: 0.8em 0;
   }
   .markdown-body th, .markdown-body td {
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-light);
     padding: 6px 10px;
     text-align: left;
   }
   .markdown-body th { font-weight: 600; }
-  .markdown-body img { max-width: 100%; border-radius: 4px; }
-  .markdown-body a { color: var(--accent); }
-  .markdown-body hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
-  /* Sidebar styles */
-  .og-image {
-    width: 100%;
-    border-radius: 6px;
-    margin-bottom: 16px;
+  .markdown-body img { max-width: 100%; border-radius: 2px; }
+  .markdown-body hr { border: none; border-top: 1px solid var(--border-light); margin: 1em 0; }
+
+  /* INSIGHT */
+  .insight-box {
+    background: var(--accent-bg);
+    border-left: 2px solid var(--accent);
+    padding: 18px 22px 20px;
+    margin-top: 30px;
   }
-  .tags {
+  .insight-box .box-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    color: var(--accent-dark);
+    margin-bottom: 11px;
+  }
+  .insight-box .markdown-body { line-height: 1.85; }
+  .insight-box .markdown-body > p:first-child { font-size: 13.5px; line-height: 1.85; }
+
+  /* 折叠面板（原文内容 / 处理记录） */
+  .fold {
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    margin-top: 30px;
+    overflow: hidden;
+  }
+  .fold > summary {
     display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    background: var(--head-bg);
+    cursor: pointer;
+    list-style: none;
   }
-  .tag {
-    background: var(--border);
+  .fold > summary::-webkit-details-marker { display: none; }
+  .fold > summary:hover { background: #f4f4f2; }
+  .fold-title { font-size: 13px; font-weight: 700; }
+  .fold-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fold-toggle {
+    margin-left: auto;
+    flex: none;
+    font-size: 11.5px;
     color: var(--dim);
-    padding: 2px 10px;
-    border-radius: 12px;
-    font-size: 0.8rem;
   }
-  .related-item {
-    padding: 6px 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.9rem;
-    overflow-wrap: break-word;
-    word-break: break-all;
+  .fold .when-open { display: none; }
+  .fold[open] .when-open { display: inline; }
+  .fold[open] .when-closed { display: none; }
+  .fold-body {
+    padding: 18px 22px 22px;
+    border-top: 1px solid var(--border-light);
   }
-  .related-item:last-child { border-bottom: none; }
-  .related-item a { color: var(--accent); }
-  .related-heading {
-    color: var(--dim);
-    font-size: 0.8rem;
-    margin-left: 4px;
-  }
-  .related-snippet {
-    color: var(--dim);
-    font-size: 0.8rem;
-  }
-  .related-tags {
-    color: var(--dim);
-    font-size: 0.75rem;
-  }
-  .related-score {
-    color: var(--dim);
-    font-size: 0.75rem;
-    margin-left: 6px;
-  }
-  /* Image gallery */
+
+  /* 图片 */
   .image-gallery {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
   }
   .image-gallery figure {
     margin: 0;
-    background: var(--bg);
-    border-radius: 6px;
+    background: var(--head-bg);
+    border: 1px solid var(--border-light);
+    border-radius: 2px;
     overflow: hidden;
   }
   .image-gallery img {
@@ -216,419 +285,466 @@
     height: auto;
     display: block;
     cursor: pointer;
-    transition: transform 0.2s;
-  }
-  .image-gallery img:hover {
-    transform: scale(1.02);
   }
   .image-gallery figcaption {
     padding: 8px 12px;
-    font-size: 0.8rem;
+    font-size: 11px;
     color: var(--dim);
-    background: var(--surface);
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-light);
     white-space: pre-wrap;
     max-height: 120px;
     overflow-y: auto;
   }
 
-  /* Rerun button */
-  .rerun-bar {
+  /* 相关链接 / 相关笔记 */
+  .related-item {
+    padding: 16px 0;
+    border-bottom: 1px solid #f0f0ee;
+  }
+  .related-item:last-child { border-bottom: none; }
+  .related-title-row {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
   }
-  .btn-rerun {
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    padding: 6px 16px;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    cursor: pointer;
-  }
-  .btn-rerun:hover { opacity: 0.9; }
-  .btn-rerun:disabled { opacity: 0.5; cursor: not-allowed; }
-  .rerun-status {
-    font-size: 0.85rem;
-    color: var(--dim);
-  }
-
-  /* Share button */
-  .share-bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  .btn-share {
-    background: var(--green);
-    color: #fff;
-    border: none;
-    padding: 6px 16px;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    cursor: pointer;
-  }
-  .btn-share:hover { opacity: 0.9; }
-  .btn-share--active {
-    background: var(--dim);
-  }
-  .share-url {
-    font-size: 0.85rem;
-  }
-  .share-url a {
-    color: var(--accent);
-  }
-
-  /* Processing history */
-  .event-timeline {
-    font-size: 0.85rem;
-  }
-  .event-item {
-    display: flex;
-    gap: 10px;
-    padding: 4px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .event-item:last-child { border-bottom: none; }
-  .event-time {
-    color: var(--dim);
-    white-space: nowrap;
-    font-family: monospace;
-    font-size: 0.8rem;
-  }
-  .event-body { flex: 1; }
-  .event-type {
-    display: inline-block;
-    padding: 1px 6px;
-    border-radius: 4px;
-    font-size: 0.75rem;
+  .related-title-row a, .related-title-row .related-title {
+    font-size: 13.5px;
     font-weight: 600;
-    text-transform: uppercase;
+    line-height: 1.5;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    min-width: 0;
+  }
+  .related-score {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--faint);
+  }
+  .related-quote {
+    border-left: 2px solid var(--border);
+    padding: 1px 0 1px 12px;
+    margin-top: 9px;
+  }
+  .related-quote p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--dim);
+    line-height: 1.7;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+  .related-quote .q-label {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--fainter);
     margin-right: 6px;
   }
-  .event-type-step_start { background: var(--badge-scraped-bg); color: var(--badge-scraped-text); }
-  .event-type-step_end { background: #e8f5e9; color: #2e7d32; }
-  .event-type-message { background: var(--badge-pending-bg); color: var(--badge-pending-text); }
-  .event-type-session_start { background: #e3f2fd; color: #1565c0; }
-  .event-type-session_end { background: #fce4ec; color: #c62828; }
-  @media (prefers-color-scheme: dark) {
-    .event-type-step_end { background: #1b3a1b; color: #6ec86e; }
-    .event-type-session_start { background: #1a2a3a; color: #4ea8de; }
-    .event-type-session_end { background: #3a1a1a; color: #e88; }
+  .related-foot {
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--faint);
+    word-break: break-all;
   }
-  .event-duration {
-    color: var(--dim);
-    font-size: 0.8rem;
-    margin-left: 4px;
-  }
-  .session-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-  .session-running { background: #fff3e0; color: #e65100; }
-  .session-completed { background: #e8f5e9; color: #2e7d32; }
-  .session-failed { background: var(--error-bg); color: var(--error-text); }
-  @media (prefers-color-scheme: dark) {
-    .session-running { background: #3a2a10; color: #ffb74d; }
-    .session-completed { background: #1b3a1b; color: #6ec86e; }
-  }
+  .related-foot a { font-size: 10px; }
 
-  @media (max-width: 768px) {
-    .detail-layout {
-      flex-direction: column;
-    }
-    .detail-sidebar {
-      width: 100%;
-    }
+  /* 处理记录 */
+  .pipe-badge {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    padding: 3px 8px;
+    background: var(--tag-bg);
+    color: #55585c;
+    border-radius: 2px;
+    flex: none;
+  }
+  .pipe-badge.running { background: #fff3e0; color: #e65100; }
+  .pipe-badge.failed { background: var(--error-bg); color: var(--error-text); }
+  .mono-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    color: var(--faint);
+    margin-bottom: 8px;
+  }
+  .btn-solid {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 5px 14px;
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-solid:hover { background: var(--accent-dark); }
+  .btn-solid:disabled { opacity: 0.5; cursor: not-allowed; }
+  .rerun-status { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+  .event-item {
+    display: grid;
+    grid-template-columns: 74px 108px 1fr;
+    gap: 12px;
+    align-items: baseline;
+    padding: 3.5px 0;
+  }
+  .event-time {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--faint);
+    white-space: nowrap;
+  }
+  .event-type {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    padding: 1.5px 6px;
+    border-radius: 2px;
+    white-space: nowrap;
+    background: var(--tag-bg);
+    color: #55585c;
+  }
+  .event-type.is-session { background: var(--text); color: #ffffff; }
+  .event-text {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--body-text);
+    word-break: break-word;
+  }
+  .cost-row {
+    display: grid;
+    grid-template-columns: 90px 100px 110px 1fr;
+    gap: 10px;
+    padding: 4.5px 0;
+    border-bottom: 1px solid #f4f4f2;
+  }
+  .cost-row span {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--body-text);
+  }
+  .cost-row .c-dim { color: var(--dim); }
+
+  @media (max-width: 600px) {
+    .paper { padding: 24px 0 36px; }
+    .paper-inner { padding: 0 18px; }
+    .title-row h1 { font-size: 22px; }
+    .event-item { grid-template-columns: 58px 92px 1fr; gap: 8px; }
+    .cost-row { grid-template-columns: 70px 80px 90px 1fr; gap: 8px; }
   }
 </style>
 
-<div class="detail-layout">
-  <div class="detail-main">
+<div class="paper">
+  <div class="paper-inner">
+
     <% if (typeof isShared === 'undefined' || !isShared) { %>
-    <div class="share-bar">
-      <% if (typeof shareNanoid !== 'undefined' && shareNanoid) { %>
-        <button class="btn-share btn-share--active" id="shareBtn" onclick="stopSharing()">Stop Sharing</button>
-        <span class="share-url" id="shareUrl"><a href="/shared/<%= shareNanoid %>" target="_blank">/shared/<%= shareNanoid %></a></span>
-      <% } else { %>
-        <button class="btn-share" id="shareBtn" onclick="shareRecord()">Share</button>
-      <% } %>
+    <div style="margin-bottom:20px">
+      <a class="back-link" href="/">← 返回列表</a>
     </div>
     <% } %>
-    <% if (link.type === 'note') { %>
-    <h1>笔记</h1>
-    <div class="meta">
-      <% if (link.source_url) { %><a href="<%= link.source_url %>" target="_blank">来源链接</a> · <% } %>
-      <%= link.created_at || '' %>
-    </div>
 
-    <div class="section">
-      <div class="section-title">内容</div>
-      <div class="content markdown-body"><%- contentHtml %></div>
+    <% if (link.type === 'note') { %>
+
+    <div class="title-row">
+      <h1>笔记</h1>
+      <% if (typeof isShared === 'undefined' || !isShared) { %>
+        <% if (typeof shareNanoid !== 'undefined' && shareNanoid) { %>
+        <button class="btn-chip btn-chip--active" id="shareBtn" onclick="stopSharing()">Stop Sharing</button>
+        <% } else { %>
+        <button class="btn-chip" id="shareBtn" onclick="shareRecord()">Share</button>
+        <% } %>
+      <% } %>
     </div>
+    <div class="source-meta">
+      <% if (link.source_url) { %>
+      <a class="src-url" href="<%= link.source_url %>" target="_blank"><%= link.source_url %></a>
+      <% } %>
+      <span class="src-line"><%= link.created_at || '' %></span>
+    </div>
+    <% if (typeof shareNanoid !== 'undefined' && shareNanoid) { %>
+    <div style="margin-top:8px;font-size:12px"><a href="/shared/<%= shareNanoid %>" target="_blank">/shared/<%= shareNanoid %></a></div>
+    <% } %>
+
+    <div class="divider"></div>
+
+    <h2 class="section-h2">内容</h2>
+    <div class="markdown-body"><%- contentHtml %></div>
 
     <% if (link.user_note) { %>
-    <div class="section">
-      <div class="section-title">备注</div>
-      <div class="content"><%= link.user_note %></div>
-    </div>
+    <div class="divider"></div>
+    <h2 class="section-h2">备注</h2>
+    <div class="markdown-body"><p><%= link.user_note %></p></div>
     <% } %>
 
     <% if (link.summary && link.summary !== link.content) { %>
-    <div class="section">
-      <div class="section-title">摘要</div>
-      <div class="markdown-body"><%- summaryHtml %></div>
-    </div>
+    <div class="divider"></div>
+    <h2 class="section-h2">摘要</h2>
+    <div class="markdown-body"><%- summaryHtml %></div>
     <% } %>
 
     <% if (link.insight) { %>
-    <div class="section">
-      <div class="section-title">Insight</div>
-      <div class="insight markdown-body"><%- insightHtml %></div>
+    <div class="insight-box">
+      <div class="box-label">INSIGHT</div>
+      <div class="markdown-body"><%- insightHtml %></div>
     </div>
     <% } %>
 
     <% } else { %>
-    <h1><%= link.og_title || 'Untitled' %></h1>
-    <div class="meta">
-      <a href="<%= link.url %>" target="_blank"><%= link.url %></a>
-      <% if (link.og_site_name) { %>· <%= link.og_site_name %><% } %>
-      · <%= link.created_at || '' %>
+
+    <div class="title-row">
+      <h1><%= link.og_title || 'Untitled' %></h1>
+      <% if (typeof isShared === 'undefined' || !isShared) { %>
+        <% if (typeof shareNanoid !== 'undefined' && shareNanoid) { %>
+        <button class="btn-chip btn-chip--active" id="shareBtn" onclick="stopSharing()">Stop Sharing</button>
+        <% } else { %>
+        <button class="btn-chip" id="shareBtn" onclick="shareRecord()">Share</button>
+        <% } %>
+      <% } %>
     </div>
+    <div class="source-meta">
+      <a class="src-url" href="<%= link.url %>" target="_blank"><%= link.url %></a>
+      <span class="src-line"><%= typeof domain !== 'undefined' && domain ? domain : (link.og_site_name || '') %><%= link.created_at ? ' · ' + link.created_at : '' %></span>
+    </div>
+    <% if (typeof shareNanoid !== 'undefined' && shareNanoid) { %>
+    <div style="margin-top:8px;font-size:12px"><a href="/shared/<%= shareNanoid %>" target="_blank">/shared/<%= shareNanoid %></a></div>
+    <% } %>
+
+    <% if (tags.length > 0) { %>
+    <div class="tags">
+      <% for (const t of tags) { %>
+      <span class="tag"><%= t %></span>
+      <% } %>
+    </div>
+    <% } %>
+
+    <div class="divider"></div>
 
     <% if (link.user_note) { %>
-    <div class="section">
-      <div class="section-title">备注</div>
-      <div class="content"><%= link.user_note %></div>
-    </div>
+    <h2 class="section-h2">备注</h2>
+    <div class="markdown-body" style="margin-bottom:24px"><p><%= link.user_note %></p></div>
     <% } %>
 
     <% if (link.summary) { %>
-    <div class="section">
-      <div class="section-title">摘要</div>
-      <div class="markdown-body"><%- summaryHtml %></div>
-    </div>
+    <h2 class="section-h2">摘要</h2>
+    <div class="markdown-body"><%- summaryHtml %></div>
     <% } %>
 
     <% if (link.insight) { %>
-    <div class="section">
-      <div class="section-title">Insight</div>
-      <div class="insight markdown-body"><%- insightHtml %></div>
+    <div class="insight-box">
+      <div class="box-label">INSIGHT</div>
+      <div class="markdown-body"><%- insightHtml %></div>
     </div>
     <% } %>
 
     <% if (recordFiles && recordFiles.length > 0) { %>
-    <div class="section">
-      <div class="section-title">图片</div>
-      <div class="image-gallery">
-        <% for (const rf of recordFiles) { %>
-        <figure>
-          <a href="/files/<%= rf.storage_key %>" target="_blank">
-            <img src="/files/<%= rf.storage_key %>" loading="lazy" alt="">
-          </a>
-        </figure>
-        <% } %>
-      </div>
-    </div>
-    <% } else if (images && images.length > 0) { %>
-    <div class="section">
-      <div class="section-title">图片</div>
-      <div class="image-gallery">
-        <% for (const img of images) { %>
-        <figure>
-          <a href="/images/<%= link.id %>/<%= img.local_path %>" target="_blank">
-            <img src="/images/<%= link.id %>/<%= img.local_path %>" loading="lazy" alt="">
-          </a>
-          <% if (img.ocr_text) { %>
-          <figcaption><%= img.ocr_text %></figcaption>
+    <details class="fold">
+      <summary>
+        <span class="fold-title">图片</span>
+        <span class="fold-meta"><%= recordFiles.length %> 张</span>
+        <span class="fold-toggle"><span class="when-closed">展开 ▾</span><span class="when-open">收起 ▴</span></span>
+      </summary>
+      <div class="fold-body">
+        <div class="image-gallery">
+          <% for (const rf of recordFiles) { %>
+          <figure>
+            <a href="/files/<%= rf.storage_key %>" target="_blank">
+              <img src="/files/<%= rf.storage_key %>" loading="lazy" alt="">
+            </a>
+          </figure>
           <% } %>
-        </figure>
-        <% } %>
+        </div>
       </div>
-    </div>
+    </details>
+    <% } else if (images && images.length > 0) { %>
+    <details class="fold">
+      <summary>
+        <span class="fold-title">图片</span>
+        <span class="fold-meta"><%= images.length %> 张</span>
+        <span class="fold-toggle"><span class="when-closed">展开 ▾</span><span class="when-open">收起 ▴</span></span>
+      </summary>
+      <div class="fold-body">
+        <div class="image-gallery">
+          <% for (const img of images) { %>
+          <figure>
+            <a href="/images/<%= link.id %>/<%= img.local_path %>" target="_blank">
+              <img src="/images/<%= link.id %>/<%= img.local_path %>" loading="lazy" alt="">
+            </a>
+            <% if (img.ocr_text) { %>
+            <figcaption><%= img.ocr_text %></figcaption>
+            <% } %>
+          </figure>
+          <% } %>
+        </div>
+      </div>
+    </details>
     <% } %>
 
     <% if (link.markdown) { %>
-    <div class="section">
-      <div class="section-title">原文内容</div>
-      <div class="content markdown-body"><%- markdownHtml %></div>
-    </div>
-    <% } %>
-    <% } %>
-  </div>
-
-  <div class="detail-sidebar">
-    <% if (link.og_image) { %>
-    <img class="og-image" src="<%= link.og_image %>" alt="">
-    <% } %>
-
-    <% if (tags.length > 0) { %>
-    <div class="section">
-      <div class="section-title">标签</div>
-      <div class="tags">
-        <% for (const t of tags) { %>
-        <span class="tag"><%= t %></span>
-        <% } %>
+    <details class="fold">
+      <summary>
+        <span class="fold-title">原文内容</span>
+        <span class="fold-meta"><%= typeof domain !== 'undefined' && domain ? domain : (link.og_site_name || '') %></span>
+        <span class="fold-toggle"><span class="when-closed">展开 ▾</span><span class="when-open">收起 ▴</span></span>
+      </summary>
+      <div class="fold-body">
+        <div class="markdown-body"><%- markdownHtml %></div>
       </div>
-    </div>
+    </details>
     <% } %>
 
-    <% if (relatedNotes.length > 0) { %>
-    <div class="section">
-      <div class="section-title">相关笔记</div>
-      <% for (const n of relatedNotes) { %>
-      <div class="related-item">
-        <%
-          const noteName = noteFilename(n.path);
-          // heading: prefer dedicated field, fall back to title if it differs from filename
-          const heading = n.heading || (n.title && n.title !== noteName ? n.title : '');
-        %>
-        <% if (n.noteUrl) { %>
-        📝 <a href="<%= textFragmentUrl(n.noteUrl, n.snippet) %>"><%= noteName %></a>
-        <% } else { %>
-        📝 <%= noteName %>
-        <% } %>
-        <% if (heading) { %>
-        <br><span class="related-heading">§ <%= heading %></span>
-        <% } %>
-        <% if (n.snippet) { %>
-        <br><span class="related-snippet"><%= n.snippet.slice(0, 150) %></span>
-        <% } %>
-      </div>
-      <% } %>
-    </div>
+    <% } %>
+
+    <% if (relatedLinks.length > 0 || relatedNotes.length > 0) { %>
+    <div class="divider"></div>
     <% } %>
 
     <% if (relatedLinks.length > 0) { %>
-    <div class="section">
-      <div class="section-title">相关链接</div>
-      <% for (const l of relatedLinks) { %>
-      <div class="related-item">
+    <h2 class="section-h2" style="margin-bottom:4px">相关链接 <span class="h2-count">· <%= relatedLinks.length %></span></h2>
+    <% for (const l of relatedLinks) { %>
+    <div class="related-item">
+      <div class="related-title-row">
         <% if (typeof isShared !== 'undefined' && isShared) { %>
-          🔗 <%= l.title || l.sourceUrl || '' %> (<a href="<%= l.sourceUrl %>" target="_blank">Source</a>)
+        <span class="related-title"><%= l.title || l.sourceUrl || '' %></span>
         <% } else { %>
-          🔗 <a href="<%= l.url %>"><%= l.title || l.url || '' %></a> (<a href="<%= l.sourceUrl %>" target="_blank">Source</a>)<% if (l.score) { %><span class="related-score">[<%= l.score %>]</span><% } %>
-          <% if (l.tags && l.tags.length > 0) { %>
-          <br><span class="related-tags"><%= l.tags.map(t => '#' + t).join(' ') %></span>
-          <% } %>
+        <a href="<%= l.url %>"><%= l.title || l.url || '' %></a>
         <% } %>
+        <% if (l.score) { %>
+        <span class="related-score">[<%= Math.round(l.score * 100) / 100 %>]</span>
+        <% } %>
+      </div>
+      <% if (l.snippet) { %>
+      <div class="related-quote">
+        <p><span class="q-label">摘要</span><%= l.snippet %></p>
+      </div>
+      <% } %>
+      <div class="related-foot">
+        <a href="<%= l.sourceUrl %>" target="_blank"><%= l.sourceUrl %></a>
+        <% if (l.tags && l.tags.length > 0 && (typeof isShared === 'undefined' || !isShared)) { %>
+        · <%= l.tags.join(' · ') %>
+        <% } %>
+      </div>
+    </div>
+    <% } %>
+    <% } %>
+
+    <% if (relatedNotes.length > 0) { %>
+    <h2 class="section-h2" style="margin:24px 0 4px">相关笔记 <span class="h2-count">· <%= relatedNotes.length %></span></h2>
+    <% for (const n of relatedNotes) { %>
+    <div class="related-item">
+      <%
+        const noteName = noteFilename(n.path);
+        // heading: prefer dedicated field, fall back to title if it differs from filename
+        const heading = n.heading || (n.title && n.title !== noteName ? n.title : '');
+      %>
+      <div class="related-title-row">
+        <% if (n.noteUrl) { %>
+        <a href="<%= textFragmentUrl(n.noteUrl, n.snippet) %>"><%= noteName %></a>
+        <% } else { %>
+        <span class="related-title"><%= noteName %></span>
+        <% } %>
+        <% if (heading) { %>
+        <span class="related-score">§ <%= heading %></span>
+        <% } %>
+      </div>
+      <% if (n.snippet) { %>
+      <div class="related-quote">
+        <p><span class="q-label">片段</span><%= n.snippet.slice(0, 150) %></p>
       </div>
       <% } %>
     </div>
     <% } %>
-  </div>
-</div>
-
-<% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
-<%
-  const session = typeof agentSession !== 'undefined' ? agentSession : null;
-  const events = typeof agentEvents !== 'undefined' ? agentEvents : [];
-
-  function formatEventTime(dateStr) {
-    if (!dateStr) return '';
-    const d = new Date(dateStr);
-    return d.toLocaleTimeString('zh-CN', { hour12: false });
-  }
-
-  function formatDuration(ms) {
-    if (ms == null) return '';
-    if (ms < 1000) return ms + 'ms';
-    return (ms / 1000).toFixed(1) + 's';
-  }
-
-  function eventLabel(evt) {
-    if (evt.event_type === 'step_start') return evt.name || 'step';
-    if (evt.event_type === 'step_end') return evt.name || 'step';
-    if (evt.event_type === 'message') {
-      const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
-      return data?.message || 'message';
-    }
-    if (evt.event_type === 'session_start') return 'Session started';
-    if (evt.event_type === 'session_end') {
-      const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
-      return data?.status === 'failed' ? 'Session failed' : 'Session completed';
-    }
-    return evt.event_type;
-  }
-
-  function eventDuration(evt) {
-    if (evt.event_type !== 'step_end') return null;
-    const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
-    return data?.durationMs;
-  }
-%>
-
-<div class="rerun-bar">
-  <button class="btn-rerun" id="rerunBtn" style="touch-action:manipulation">Rerun</button>
-  <span class="rerun-status" id="rerunStatus">
-    <% if (session) { %>
-      <span class="session-badge session-<%= session.status %>"><%= session.status %></span>
-      <%= session.agent_name %> &middot; <%= formatEventTime(session.created_at) %>
     <% } %>
-  </span>
-</div>
 
-<% if (events.length > 0 || (session && session.status === 'running')) { %>
-<div class="section">
-  <div class="section-title">Processing History</div>
-  <div class="event-timeline" id="eventTimeline">
-    <% for (const evt of events) { %>
-    <div class="event-item">
-      <span class="event-time"><%= formatEventTime(evt.created_at) %></span>
-      <span class="event-body">
-        <span class="event-type event-type-<%= evt.event_type %>"><%= evt.event_type.replace('_', ' ') %></span>
-        <%= eventLabel(evt) %>
-        <% const dur = eventDuration(evt); if (dur != null) { %>
-          <span class="event-duration">(<%= formatDuration(dur) %>)</span>
-        <% } %>
-      </span>
-    </div>
-    <% } %>
-  </div>
-</div>
-<% } %>
+    <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
+    <%
+      const session = typeof agentSession !== 'undefined' ? agentSession : null;
+      const events = typeof agentEvents !== 'undefined' ? agentEvents : [];
+      const txns = typeof recordTransactions !== 'undefined' ? recordTransactions : [];
+      const totalCost = txns.reduce((sum, t) => sum + Number(t.amount_usd), 0);
 
-<%
-  const txns = typeof recordTransactions !== 'undefined' ? recordTransactions : [];
-  if (txns.length > 0) {
-    const totalCost = txns.reduce((sum, t) => sum + Number(t.amount_usd), 0);
-%>
-<div class="section">
-  <div class="section-title">Cost Breakdown (Total: $<%= totalCost.toFixed(6) %>)</div>
-  <table style="font-size:12px;">
-    <thead>
-      <tr><th>Step</th><th>Type</th><th>Provider</th><th>Amount</th><th>Time</th></tr>
-    </thead>
-    <tbody>
-      <% for (const t of txns) { %>
-      <tr>
-        <td><%= t.step || '—' %></td>
-        <td>
-          <% if (t.type === 'llm') { %>
-            <span class="badge badge-scraped">llm</span>
-          <% } else if (t.type === 'embedding') { %>
-            <span class="badge badge-analyzed">embedding</span>
-          <% } else { %>
-            <span class="badge badge-pending"><%= t.type %></span>
+      function formatEventTime(dateStr) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        return d.toLocaleTimeString('zh-CN', { hour12: false });
+      }
+
+      function formatDuration(ms) {
+        if (ms == null) return '';
+        if (ms < 1000) return ms + 'ms';
+        return (ms / 1000).toFixed(1) + 's';
+      }
+
+      function eventLabel(evt) {
+        if (evt.event_type === 'step_start') return evt.name || 'step';
+        if (evt.event_type === 'step_end') return evt.name || 'step';
+        if (evt.event_type === 'message') {
+          const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+          return data?.message || 'message';
+        }
+        if (evt.event_type === 'session_start') return 'Session started';
+        if (evt.event_type === 'session_end') {
+          const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+          return data?.status === 'failed' ? 'Session failed' : 'Session completed';
+        }
+        return evt.event_type;
+      }
+
+      function eventDuration(evt) {
+        if (evt.event_type !== 'step_end') return null;
+        const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
+        return data?.durationMs;
+      }
+    %>
+    <details class="fold" id="pipelineFold">
+      <summary>
+        <span class="pipe-badge <%= session ? session.status : '' %>" id="pipeStatusBadge"><%= session ? String(session.status).toUpperCase() : 'PIPELINE' %></span>
+        <span class="fold-meta" id="pipeMeta">
+          <% if (session) { %><%= session.agent_name %> · <%= formatEventTime(session.created_at) %><% } %>
+          <% if (txns.length > 0) { %> · $<%= totalCost.toFixed(6) %><% } %>
+        </span>
+        <span class="fold-toggle"><span class="when-closed">展开处理记录 ▾</span><span class="when-open">收起 ▴</span></span>
+      </summary>
+      <div class="fold-body">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+          <button class="btn-solid" id="rerunBtn" style="touch-action:manipulation">Rerun</button>
+          <span class="rerun-status" id="rerunStatus"></span>
+        </div>
+        <div class="mono-label">PROCESSING HISTORY</div>
+        <div id="eventTimeline">
+          <% for (const evt of events) { %>
+          <div class="event-item">
+            <span class="event-time"><%= formatEventTime(evt.created_at) %></span>
+            <span><span class="event-type<%= evt.event_type.indexOf('session') === 0 ? ' is-session' : '' %>"><%= evt.event_type.replace('_', ' ').toUpperCase() %></span></span>
+            <span class="event-text">
+              <%= eventLabel(evt) %><% const dur = eventDuration(evt); if (dur != null) { %> (<%= formatDuration(dur) %>)<% } %>
+            </span>
+          </div>
           <% } %>
-        </td>
-        <td style="font-family:monospace; font-size:11px;"><%= t.provider %></td>
-        <td style="font-family:monospace;">$<%= Number(t.amount_usd).toFixed(6) %></td>
-        <td style="font-family:monospace; font-size:11px;"><%= t.created_at ? new Date(t.created_at).toLocaleTimeString('zh-CN', { hour12: false }) : '' %></td>
-      </tr>
-      <% } %>
-    </tbody>
-  </table>
+        </div>
+        <% if (txns.length > 0) { %>
+        <div class="mono-label" style="margin:18px 0 8px">COST BREAKDOWN (TOTAL: $<%= totalCost.toFixed(6) %>)</div>
+        <% for (const t of txns) { %>
+        <div class="cost-row">
+          <span><%= t.step || '—' %></span>
+          <span class="c-dim"><%= t.type %></span>
+          <span class="c-dim"><%= t.provider %></span>
+          <span>$<%= Number(t.amount_usd).toFixed(6) %></span>
+        </div>
+        <% } %>
+        <% } %>
+      </div>
+    </details>
+    <% } /* end isAdmin */ %>
+
+  </div>
 </div>
-<% } %>
-<% } /* end isAdmin */ %>
 
 <% if (typeof isShared === 'undefined' || !isShared) { %>
 <script>
@@ -684,6 +800,13 @@
   const initialSessionId = '<%= typeof agentSession !== 'undefined' && agentSession ? agentSession.id : '' %>';
   const initialSessionStatus = '<%= typeof agentSession !== 'undefined' && agentSession ? agentSession.status : '' %>';
 
+  function setPipeBadge(status) {
+    const badge = document.getElementById('pipeStatusBadge');
+    if (!badge) return;
+    badge.textContent = String(status).toUpperCase();
+    badge.className = 'pipe-badge ' + status;
+  }
+
   function rerunRecord(attempt) {
     attempt = attempt || 1;
     const btn = document.getElementById('rerunBtn');
@@ -717,6 +840,7 @@
       .then(r => r.json())
       .then(data => {
         if (data.session && data.session.status === 'running') {
+          setPipeBadge('running');
           startSSE(data.session.id);
         } else {
           // Session not ready yet, keep polling
@@ -726,16 +850,10 @@
   }
 
   function startSSE(sessionId) {
-    const timeline = document.getElementById('eventTimeline');
-    if (!timeline) {
-      // Create timeline section if it doesn't exist yet
-      const section = document.createElement('div');
-      section.className = 'section';
-      section.innerHTML = '<div class="section-title">Processing History</div><div class="event-timeline" id="eventTimeline"></div>';
-      document.querySelector('.rerun-bar').after(section);
-    }
     const tl = document.getElementById('eventTimeline');
     tl.innerHTML = '';
+    const fold = document.getElementById('pipelineFold');
+    if (fold) fold.open = true;
 
     const es = new EventSource('/api/agent-events/stream?session_id=' + sessionId + '&cursor=0');
     es.addEventListener('agent_event', function(e) {
@@ -744,8 +862,8 @@
       item.className = 'event-item';
 
       const time = new Date(evt.created_at).toLocaleTimeString('zh-CN', { hour12: false });
-      const typeClass = 'event-type-' + evt.event_type;
-      const typeLabel = evt.event_type.replace('_', ' ');
+      const isSession = evt.event_type.indexOf('session') === 0;
+      const typeLabel = evt.event_type.replace('_', ' ').toUpperCase();
 
       let label = '';
       if (evt.event_type === 'step_start' || evt.event_type === 'step_end') {
@@ -760,32 +878,42 @@
         label = data?.status === 'failed' ? 'Session failed' : 'Session completed';
       }
 
-      let durHtml = '';
       if (evt.event_type === 'step_end') {
         const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
         if (data?.durationMs != null) {
           const ms = data.durationMs;
-          durHtml = ' <span class="event-duration">(' + (ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(1) + 's') + ')</span>';
+          label += ' (' + (ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(1) + 's') + ')';
         }
       }
 
-      item.innerHTML = '<span class="event-time">' + time + '</span>' +
-        '<span class="event-body"><span class="event-type ' + typeClass + '">' + typeLabel + '</span> ' +
-        label + durHtml + '</span>';
+      const timeEl = document.createElement('span');
+      timeEl.className = 'event-time';
+      timeEl.textContent = time;
+      const badgeWrap = document.createElement('span');
+      const badge = document.createElement('span');
+      badge.className = 'event-type' + (isSession ? ' is-session' : '');
+      badge.textContent = typeLabel;
+      badgeWrap.appendChild(badge);
+      const textEl = document.createElement('span');
+      textEl.className = 'event-text';
+      textEl.textContent = label;
+      item.appendChild(timeEl);
+      item.appendChild(badgeWrap);
+      item.appendChild(textEl);
 
       tl.appendChild(item);
       tl.scrollTop = tl.scrollHeight;
 
-      // Update status bar on session_end
+      // Update status on session_end
       if (evt.event_type === 'session_end') {
         es.close();
         const btn = document.getElementById('rerunBtn');
         btn.disabled = false;
         btn.textContent = 'Rerun';
         const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data;
-        const statusEl = document.getElementById('rerunStatus');
-        const statusClass = data?.status === 'failed' ? 'session-failed' : 'session-completed';
-        statusEl.innerHTML = '<span class="session-badge ' + statusClass + '">' + (data?.status || 'done') + '</span>';
+        const status = data?.status === 'failed' ? 'failed' : 'completed';
+        setPipeBadge(status);
+        document.getElementById('rerunStatus').textContent = status;
       }
     });
 
