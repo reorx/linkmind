@@ -28,6 +28,10 @@ COPY core/package.json core/
 COPY server/package.json server/
 RUN pnpm install --frozen-lockfile --prod
 
+# Playwright — before source COPYs so the ~500MB chromium layer
+# survives code-only changes and deploys pull only the small layers below
+RUN npx --prefix server playwright install --with-deps chromium
+
 # Build artifacts
 COPY --from=builder /app/core/dist/ core/dist/
 COPY --from=builder /app/server/dist/ server/dist/
@@ -38,9 +42,6 @@ COPY server/migrations/ server/migrations/
 COPY server/scripts/ server/scripts/
 # Source needed for tsx scripts
 COPY server/src/ server/src/
-
-# Playwright
-RUN npx --prefix server playwright install --with-deps chromium
 
 ENV NODE_ENV=production
 EXPOSE 3456
