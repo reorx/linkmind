@@ -275,17 +275,17 @@ async function scrapeStepWithFallback(
   log.info({ recordId, url }, '[scrape] All server-side methods failed, falling back to probe');
   const { pushEventToProbe } = await import('./web.js');
   const eventId = crypto.randomBytes(8).toString('hex');
-  await createProbeEvent(eventId, userId, recordId, url, 'browser');
+  await createProbeEvent(eventId, userId, recordId, url, 'web');
   await updateRecord(recordId, { status: 'waiting_probe' });
 
   pushEventToProbe(userId, 'scrape_request', {
     event_id: eventId,
     url,
-    url_type: 'browser',
+    url_type: 'web',
     link_id: recordId,
   });
 
-  log.info({ recordId, url, eventId }, '[scrape] Waiting for probe (browser), returning early');
+  log.info({ recordId, url, eventId }, '[scrape] Waiting for probe (web), returning early');
   return null;
 }
 

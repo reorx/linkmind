@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import type { UrlType } from '@linkmind/core';
 import { getDb } from './connection.js';
 import { toProbeEventRecord, toDeviceAuthRecord } from './helpers.js';
 import type { ProbeDeviceRecord, ProbeEventRecord, DeviceAuthRequestRecord } from './types.js';
@@ -71,7 +72,7 @@ export async function createProbeEvent(
   userId: number,
   linkId: number | undefined,
   url: string,
-  urlType: string,
+  urlType: UrlType,
 ): Promise<ProbeEventRecord> {
   const row = await getDb()
     .insertInto('probe_events')

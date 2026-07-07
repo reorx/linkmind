@@ -40,7 +40,7 @@ tags:
 
 ## 遗留问题
 
-- **probe daemon 不认识 `browser` url_type**（既有 bug）：server 的 scrape fallback 创建 `url_type: 'browser'` 事件，而 `probe/src/daemon.ts` 只处理 `twitter`/`web`，收到 browser 事件会报 "Unknown url_type" 并回传失败。生产 6 条 browser backlog 走 probe 会失败，需单独修（统一命名或 daemon 增加分支）
+- ~~**probe daemon 不认识 `browser` url_type**（既有 bug）~~ **已修复（2026-07-08 后续 session）**：server fallback 改为创建 `url_type: 'web'`（统一到 core 的 `UrlType`），`createProbeEvent` 参数收紧为 `UrlType` 防复发；daemon 增加 `browser` → `web` 兼容分支消化生产 6 条 backlog 事件，无需改生产数据
 - **`~/.linkmind-probe/config.json` 当前指向 localhost**（验收时种的临时 device `local-e2e-device`，仅存在于本地 DB）：后续连生产消化 backlog 前需重新 `login` 做 device auth
 - 生产上线后需执行计划第 6 节的存量 backlog 运维步骤（reorx 本机 probe 连生产消化 25 条 twitter pending；6 条 browser 事件先走 admin retry）
 - 本地 `.env` 的 bot token 与生产相同的问题未根治，建议创建独立 dev bot

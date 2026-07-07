@@ -36,7 +36,9 @@ async function uploadResult(config: Config, payload: ScrapeResultPayload): Promi
 }
 
 async function processEvent(config: Config, event: ScrapeRequestEvent): Promise<void> {
-  const { event_id, url, url_type } = event;
+  const { event_id, url } = event;
+  // Treat as string: events come over the wire; older servers sent 'browser' for web scrapes
+  const url_type: string = event.url_type;
   log('INFO', `Processing event ${event_id}: ${url_type} ${url}`);
 
   let payload: ScrapeResultPayload;
@@ -44,7 +46,7 @@ async function processEvent(config: Config, event: ScrapeRequestEvent): Promise<
     let data;
     if (url_type === 'twitter') {
       data = await scrapeTwitter(url);
-    } else if (url_type === 'web') {
+    } else if (url_type === 'web' || url_type === 'browser') {
       data = await scrapeWeb(url);
     } else {
       throw new Error(`Unknown url_type: ${url_type}`);

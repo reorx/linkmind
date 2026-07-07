@@ -71,6 +71,7 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 - [x] 旧 `records.images` 数据迁移 → 已完成（遗留数据 0 条）
 - [ ] 验证 Web 端图片展示正常（发一张带图记录实测）
 - [ ] Phase 6 清理：删除 `image-handler.ts`、`backfill-images.ts`、`records.images` 字段（写新 migration）、旧 `/images` 静态路由、模板 fallback
+- [ ] Phase 6 补充（2026-07-08 调研发现）：`bot.ts` 的 `pollAndNotify` 仍在读 `images[0].local_path` 从 `data/images/` 发图（record-files-progress 清单漏了这处），改为从 `record_files` 取 R2 URL 发图
 
 #### 3. 清理积压数据 + Probe 可用性策略
 
@@ -78,8 +79,10 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 - [x] ~~决策：生产 LLM 长期方案~~ → **已定：在 tc-sg-01 部署 LLM Gateway**（gemini/openai/anthropic 请求统一经 gateway 发出），见 TODO.md 2026-07-07 条目。背景：Gemini 被 ali-hk-01 地理封锁，现临时跑 qwen-plus，详见 [审计结果](../notes/2026-07-07-prod-audit-findings.md)
 - [ ] 落地 LLM Gateway：tc-sg-01 部署（deploy workspace）+ `llm.ts` 给 `GEMINI_API_BASE` 加 env 覆盖 + 生产切回 `LLM_PROVIDER=gemini`
 - [x] ~~决策：多用户场景下 Twitter 抓取怎么办~~ → **已定（2026-07-07）：用户在自己设备上跑 probe 进程**，服务端不提供共享 probe；未处理的等待超时后明确告知失败
-- [ ] 实施 [probe 超时机制 + 用户告知](2026-07-07-probe-timeout-and-notify.md)：超时清扫 cron、Bot waiting_probe 即时反馈（当前 bot 对该状态零处理，5 分钟后显示误导性"处理超时"）、probe 迟到结果的完成通知、probe 安装教程页
-- [ ] 处理积压：31 条 pending probe_events / 24 条 `waiting_probe` records（审计实测全部属于 user 1，25 twitter + 6 browser，最早 2026-01-31）。reorx 本机跑 probe 消化 twitter 事件；6 条 browser 类型先 admin retry（Firecrawl 已修复）；残余靠超时清扫收尾
+- [x] 实施 [probe 超时机制 + 用户告知](2026-07-07-probe-timeout-and-notify.md) → **代码完成**（commit `2f756e4`，2026-07-08）：超时清扫 cron、notify 通道、Bot waiting_probe 即时反馈、`/probe` 教程页
+- [ ] 部署上线：push master 触发 CD → 确认生产容器更新、timeout cron 启动日志正常
+- [ ] 修复已知问题：probe daemon（`probe/src/daemon.ts`）只认 `twitter`/`web`，server fallback 创建的是 `browser` 类型事件，probe 收到会报错（见 AGENTS.md 已知问题）⏳ 修复中（2026-07-08 另一 session）
+- [ ] 处理积压：31 条 pending probe_events / 24 条 `waiting_probe` records（全部属于 user 1，25 twitter + 6 browser）。reorx 本机跑 probe 消化 twitter 事件；6 条 browser 类型先 admin retry（Firecrawl 已修复）；残余靠超时清扫收尾
 
 #### 4. Bug 验证：insight 截断
 
@@ -87,6 +90,7 @@ TODO.md Bugs 记录"insight 会被截断"。相关修复（`2b78b0a` 移除 maxT
 
 - [ ] 在生产日志/Sentry 中搜索非 STOP 的 finishReason 记录
 - [ ] 跑几条真实链接验证 insight 完整性；若仍截断，参照 [2026-03-11-insight-thinking-footnotes.md](2026-03-11-insight-thinking-footnotes.md) 中的 prompt 调整一并处理
+- [ ] 注意：生产已切到 qwen-plus（2026-07-07），验证要在 qwen 上做；同时观察 qwen 的 summary/insight 质量，作为"是否急着做 LLM Gateway 切回 gemini"的决策依据
 
 #### 5. 计费限额上线验证
 
@@ -141,7 +145,21 @@ TODO.md 2026-03-05 条目。用户积累内容后没有搜索会明显影响留�
 
 ---
 
-## 建议执行顺序
+## 当前状态与下一步顺序（2026-07-08 更新）
+
+**已完成**：P0-1 审计（含两个附带生产修复）；P0-2 大部分；P0-3 代码（commit `2f756e4`，未 push）；三个关键决策（probe 用户自跑 / LLM Gateway on tc-sg-01 / 超时告知）。
+
+**下个 session 按此顺序逐个解决**：
+
+1. **P0-3 收尾**：等 probe daemon `browser` bug 修完（另一 session 进行中）→ push master 触发 CD 部署 → 验证超时 cron 启动 → 本机跑 probe 清 25 条 twitter 积压 → admin retry 6 条 browser records
+2. **P0-4 insight 截断验证**：积压清完、有新流量后查日志；顺带评估 qwen 质量（影响 LLM Gateway 的紧迫度）
+3. **P0-5 计费验证**：补齐缺失的 CLI 命令（`set-limit`/`usage-report`/`reset-cycle`/`reconcile-usage`）+ 实测超限拦截 + 定默认限额
+4. **P0-2 剩余**：实测带图记录的 Web 展示 → Phase 6 清理（含 bot.ts `local_path` 漏网项）
+5. **LLM Gateway 落地**（可与 3/4 并行，deploy workspace 工作）：tc-sg-01 部署 gateway → `llm.ts` 加 `GEMINI_API_BASE` env 覆盖 → 生产切回 gemini
+6. **P1 功能**：评分（9）→ insight thinking/脚注（10）→ 落地页（8）→ 搜索（11，范围待拍板）
+7. **收官**：P0-6 端到端走查 → P0-7 运维基线（Sentry DSN、备份确认、部署演练）→ 上线
+
+## 原始排期参考（2026-07-07 制定，供对照）
 
 ```
 第 1 周   P0-1 生产审计 → P0-2 record files 收尾 → P0-3 积压清理 + probe 策略
@@ -149,8 +167,6 @@ TODO.md 2026-03-05 条目。用户积累内容后没有搜索会明显影响留�
 第 3 周   P1-10 insight thinking/脚注 → P1-8 落地页
 第 4 周   P1-11 搜索（最小版）→ P0-6 端到端走查 → P0-7 运维基线 → 上线
 ```
-
-> 以上排期为推测性估计（每周按业余时间投入折算），实际以 P0-1 审计结果为准——若生产环境偏离预期（如 migration 落后较多），第 1 周会拉长。
 
 ## 未决问题（需要用户拍板）
 

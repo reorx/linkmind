@@ -86,7 +86,7 @@ Probe 等待机制：record 进入 `waiting_probe` 状态，probe 端通过 SSE 
 - probe 回传恢复的 pipeline（带 `scrapeData` 的任务）在 analyzed 后主动调用 `notifyRecordProcessed` 推送结果；普通任务仍由 bot 轮询报告
 - 结果消息格式化函数 `formatResultTelegram` 在 `src/telegram-render.ts`（bot 与 notify 共用）
 
-**已知问题：** probe daemon（`probe/src/daemon.ts`）只处理 `twitter`/`web` 两种 url_type，而 server fallback 创建的是 `browser` 类型事件，probe 收到会报错回传失败，待修。
+**url_type 约定：** 统一使用 core 的 `UrlType`（`twitter` | `web`），`createProbeEvent` 参数已收紧为该类型。server fallback 创建 `web` 类型事件；probe daemon 额外兼容旧值 `browser`（按 `web` 处理），用于消化历史 backlog 事件。
 
 ## Common Commands
 
