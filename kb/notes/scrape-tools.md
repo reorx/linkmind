@@ -31,6 +31,8 @@ linkmind 项目相关的抓取工具整理。
 - **[Crawlee](https://github.com/apify/crawlee)** — Apify 出品的 Node.js 爬虫框架，支持 Playwright/Puppeteer/Cheerio 多种后端
   - [Crawler Plugins 示例](https://crawlee.dev/js/docs/examples/crawler-plugins)
 - **[Scrapling](https://github.com/D4Vinci/Scrapling)** — Python 爬虫库，自动适应网站变化，智能选择器
+  - https://scrapling.readthedocs.io/en/latest/ai/mcp-server.html?h=stea#stealth-scraping
+  - https://github.com/shirenchuang/web-content-fetcher/blob/main/scripts/fetch.py
 - **[undetected-chromedriver](https://github.com/ultrafunkamsterdam/undetected-chromedriver)** — 绕过 Cloudflare 等反爬检测的 Chrome driver，Python
 
 ## X / Twitter

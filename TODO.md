@@ -14,6 +14,21 @@
 - [ ] search in web and telegram
 
 
+2026-03-16:
+- [ ] **热门内容预加载 (Pre-fetch Popular Content)**
+    - 定期爬取 Hacker News 和 Twitter 上的热门文章，提前完成内容抓取
+    - 预先提取正文内容，用户添加链接时直接命中缓存，跳过抓取步骤，大幅提升速度
+    - Summary 只需生成一次，存储在专门的预抓取数据表中，多用户复用同一份摘要
+    - 一旦有用户触发过摘要生成，后续用户直接复用，不再重复调用 LLM
+
+2026-03-17:
+- [ ] **Crawler 能力开放给用户**
+    - 基于预抓取表存储的页面内容，将 Crawler 能力作为独立功能暴露
+    - **CLI 功能**：类似 PureMD，用户给一个 URL，返回 Markdown 正文内容
+    - **开放 API 接口**：类似 Jina Reader API，提供 URL → Markdown 的 HTTP 接口
+    - **抓取历史**：用户可以在 Web 界面的 "Crawl History" 导航中查看最近抓取的内容
+    - 核心价值：帮用户把任意链接的内容作为 Markdown 下载下来
+
 ## Bugs
 
 - 观测到 insight 会被截断，有时候会产生不完整的内容
