@@ -24,6 +24,30 @@ function renderMarkdown(text: string | null | undefined): string {
 
 const log = logger.child({ module: 'pages' });
 
+/** Extract hostname from a URL for display. Returns empty string when invalid. */
+function urlDomain(url: string | null | undefined): string {
+  if (!url) return '';
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+/** Strip markdown syntax and produce a short plain-text snippet. */
+function summarySnippet(text: string | null | undefined, maxLen = 120): string {
+  if (!text) return '';
+  const plain = text
+    .replace(/^#+\s*/gm, '')
+    .replace(/^\s*[->*+]\s*/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/`/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return plain.length > maxLen ? plain.slice(0, maxLen) + '…' : plain;
+}
+
 export function registerPageRoutes(router: Router): void {
   // GET / — homepage with timeline
   router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -34,12 +58,27 @@ export function registerPageRoutes(router: Router): void {
       const linksWithDay = records.map((l) => ({
         ...l,
         _dayLabel: getDayLabel(l.created_at),
-        _images: safeParseJson(l.images),
+        _time: l.created_at ? l.created_at.slice(11, 16) : '',
+        _domain: l.type === 'note' ? '笔记' : urlDomain(l.url),
+        _tags: safeParseJson(l.tags),
+        _summaryText: summarySnippet(l.summary, 200),
       }));
+
+      // Group consecutive records by day label for the grouped list view
+      const groups: { date: string; items: typeof linksWithDay }[] = [];
+      for (const item of linksWithDay) {
+        const last = groups[groups.length - 1];
+        if (last && last.date === item._dayLabel) {
+          last.items.push(item);
+        } else {
+          groups.push({ date: item._dayLabel, items: [item] });
+        }
+      }
 
       const html = await renderPage('home', {
         pageTitle: 'LinkMind',
         links: linksWithDay,
+        groups,
         page: safePage,
         total,
         totalPages,
@@ -92,6 +131,7 @@ export function registerPageRoutes(router: Router): void {
       sourceUrl: string;
       tags: string[];
       score: number;
+      snippet: string;
     }[] = [];
     for (const item of relatedLinkData) {
       const relatedRecord = await getRecord(item.relatedRecordId);
@@ -103,6 +143,7 @@ export function registerPageRoutes(router: Router): void {
           sourceUrl: relatedRecord.url || '',
           tags: safeParseJson(relatedRecord.tags),
           score: item.score,
+          snippet: summarySnippet(relatedRecord.summary),
         });
       }
     }
@@ -140,6 +181,7 @@ export function registerPageRoutes(router: Router): void {
         isAdmin,
         isShared: false,
         shareNanoid: shareRecord?.nanoid || null,
+        domain: urlDomain(record.url),
         user: req.user,
         summaryHtml: renderMarkdown(record.summary),
         insightHtml: renderMarkdown(record.insight),
@@ -181,6 +223,7 @@ export function registerPageRoutes(router: Router): void {
       sourceUrl: string;
       tags: string[];
       score: number;
+      snippet: string;
     }[] = [];
     for (const item of relatedLinkData) {
       const relatedRecord = await getRecord(item.relatedRecordId);
@@ -192,6 +235,7 @@ export function registerPageRoutes(router: Router): void {
           sourceUrl: relatedRecord.url || '',
           tags: safeParseJson(relatedRecord.tags),
           score: item.score,
+          snippet: summarySnippet(relatedRecord.summary),
         });
       }
     }
@@ -212,6 +256,7 @@ export function registerPageRoutes(router: Router): void {
         recordTransactions: [],
         isAdmin: false,
         isShared: true,
+        domain: urlDomain(record.url),
         user: null,
         summaryHtml: renderMarkdown(record.summary),
         insightHtml: renderMarkdown(record.insight),
