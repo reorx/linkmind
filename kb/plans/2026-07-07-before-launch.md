@@ -80,9 +80,12 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 - [ ] 落地 LLM Gateway：tc-sg-01 部署（deploy workspace）+ `llm.ts` 给 `GEMINI_API_BASE` 加 env 覆盖 + 生产切回 `LLM_PROVIDER=gemini`
 - [x] ~~决策：多用户场景下 Twitter 抓取怎么办~~ → **已定（2026-07-07）：用户在自己设备上跑 probe 进程**，服务端不提供共享 probe；未处理的等待超时后明确告知失败
 - [x] 实施 [probe 超时机制 + 用户告知](2026-07-07-probe-timeout-and-notify.md) → **代码完成**（commit `2f756e4`，2026-07-08）：超时清扫 cron、notify 通道、Bot waiting_probe 即时反馈、`/probe` 教程页
-- [ ] 部署上线：push master 触发 CD → 确认生产容器更新、timeout cron 启动日志正常
-- [ ] 修复已知问题：probe daemon（`probe/src/daemon.ts`）只认 `twitter`/`web`，server fallback 创建的是 `browser` 类型事件，probe 收到会报错（见 AGENTS.md 已知问题）⏳ 修复中（2026-07-08 另一 session）
-- [ ] 处理积压：31 条 pending probe_events / 24 条 `waiting_probe` records（全部属于 user 1，25 twitter + 6 browser）。reorx 本机跑 probe 消化 twitter 事件；6 条 browser 类型先 admin retry（Firecrawl 已修复）；残余靠超时清扫收尾
+- [ ] 部署上线：push master 触发 CD → 确认生产容器更新、timeout cron 启动日志正常 ⏳ 2026-07-08 进行中：master 已 push（`5a05fad` + CI 修复 ×2 + `16b9afb`），CI 绿，webhook 自动触发 deploy，镜像拉取中（服务器带宽 ~1Mbps，全量 2.1GB 需数小时）。**注意：生产 `.env` 临时加了 `PROBE_WAIT_TTL_HOURS=8760` 防止 cron 首扫误杀积压，验证后需移除并重启**
+  - 附带修复 ①：CI 构建失败——Docker 内 `pnpm@latest` 升到 v11 不再读 `package.json` 的 `pnpm.onlyBuiltDependencies`。配置迁到 `pnpm-workspace.yaml`（`289769d`）+ pin `pnpm@10.25.0`（`47460f1`）
+  - 附带修复 ②：**CD 静默失效**——ali-hk-01 `/etc/webhook/hooks.json` 的 token 被 7/7 某次未带 `WEBHOOK_SECRET` 的 ansible run 打回 `CHANGEME`。已重新生成 token 同步 GitHub secrets（linkmind/vocalflow-rt）+ webhook role 加 assert 防复发（详见 deploy workspace 迁移文档 §5）
+  - 附带修复 ③：部署带宽优化——Playwright 层挪到源码 COPY 前 + CI 加 buildx GHA cache（`16b9afb`），以后代码变更部署只拉小层
+- [x] 修复已知问题：probe daemon（`probe/src/daemon.ts`）只认 `twitter`/`web`，server fallback 创建的是 `browser` 类型事件 → **已修复**（`5a05fad`，2026-07-08）：server 统一创建 `web`，daemon 兼容旧值 `browser`
+- [x] 处理积压：31 条 pending probe_events / 24 条 `waiting_probe` records → **2026-07-08 全部清完**：本机 probe 经 device auth 连生产（curl 自动完成授权），一次性消化全部 31 条事件（browser→web 兼容生效，0 错误）；24 条 waiting_probe 中 23 条 analyzed（nytimes #96 经 admin retry 后成功）、#164 为衍生链接终态 scraped。另 admin retry 清查了 7 条历史 scraped records，确认均为 `added_by_user=false` 衍生链接，scraped 即设计终态，无积压残留
 
 #### 4. Bug 验证：insight 截断
 
@@ -151,7 +154,7 @@ TODO.md 2026-03-05 条目。用户积累内容后没有搜索会明显影响留�
 
 **下个 session 按此顺序逐个解决**：
 
-1. **P0-3 收尾**：等 probe daemon `browser` bug 修完（另一 session 进行中）→ push master 触发 CD 部署 → 验证超时 cron 启动 → 本机跑 probe 清 25 条 twitter 积压 → admin retry 6 条 browser records
+1. **P0-3 收尾**（2026-07-08 基本完成）：积压已全部清完；剩余收尾：等镜像拉完 → 验证新容器 + timeout cron 启动日志 → 移除生产 `.env` 的临时 `PROBE_WAIT_TTL_HOURS=8760` 并重启。另：生产实例（ecs.e-c1m2.large）公网带宽仅 ~1Mbps，建议在阿里云控制台评估调整计费方式/带宽
 2. **P0-4 insight 截断验证**：积压清完、有新流量后查日志；顺带评估 qwen 质量（影响 LLM Gateway 的紧迫度）
 3. **P0-5 计费验证**：补齐缺失的 CLI 命令（`set-limit`/`usage-report`/`reset-cycle`/`reconcile-usage`）+ 实测超限拦截 + 定默认限额
 4. **P0-2 剩余**：实测带图记录的 Web 展示 → Phase 6 清理（含 bot.ts `local_path` 漏网项）
