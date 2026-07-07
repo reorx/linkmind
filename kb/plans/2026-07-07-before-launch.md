@@ -80,7 +80,7 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 - [ ] 落地 LLM Gateway：tc-sg-01 部署（deploy workspace）+ `llm.ts` 给 `GEMINI_API_BASE` 加 env 覆盖 + 生产切回 `LLM_PROVIDER=gemini`
 - [x] ~~决策：多用户场景下 Twitter 抓取怎么办~~ → **已定（2026-07-07）：用户在自己设备上跑 probe 进程**，服务端不提供共享 probe；未处理的等待超时后明确告知失败
 - [x] 实施 [probe 超时机制 + 用户告知](2026-07-07-probe-timeout-and-notify.md) → **代码完成**（commit `2f756e4`，2026-07-08）：超时清扫 cron、notify 通道、Bot waiting_probe 即时反馈、`/probe` 教程页
-- [ ] 部署上线：push master 触发 CD → 确认生产容器更新、timeout cron 启动日志正常 ⏳ 2026-07-08 进行中：master 已 push（`5a05fad` + CI 修复 ×2 + `16b9afb`），CI 绿，webhook 自动触发 deploy，镜像拉取中（服务器带宽 ~1Mbps，全量 2.1GB 需数小时）。**注意：生产 `.env` 临时加了 `PROBE_WAIT_TTL_HOURS=8760` 防止 cron 首扫误杀积压，验证后需移除并重启**
+- [x] 部署上线：push master 触发 CD → 确认生产容器更新、timeout cron 启动日志正常 → **完成（2026-07-08）**：容器已更新到 `16b9afb`（webhook 自动部署），cron 启动日志正常（ttlHours=24, interval=10min），`GET /probe` 教程页公网 200。清积压期间临时加的 `PROBE_WAIT_TTL_HOURS=8760` 已移除并重启验证
   - 附带修复 ①：CI 构建失败——Docker 内 `pnpm@latest` 升到 v11 不再读 `package.json` 的 `pnpm.onlyBuiltDependencies`。配置迁到 `pnpm-workspace.yaml`（`289769d`）+ pin `pnpm@10.25.0`（`47460f1`）
   - 附带修复 ②：**CD 静默失效**——ali-hk-01 `/etc/webhook/hooks.json` 的 token 被 7/7 某次未带 `WEBHOOK_SECRET` 的 ansible run 打回 `CHANGEME`。已重新生成 token 同步 GitHub secrets（linkmind/vocalflow-rt）+ webhook role 加 assert 防复发（详见 deploy workspace 迁移文档 §5）
   - 附带修复 ③：部署带宽优化——Playwright 层挪到源码 COPY 前 + CI 加 buildx GHA cache（`16b9afb`），以后代码变更部署只拉小层
@@ -154,7 +154,7 @@ TODO.md 2026-03-05 条目。用户积累内容后没有搜索会明显影响留�
 
 **下个 session 按此顺序逐个解决**：
 
-1. **P0-3 收尾**（2026-07-08 基本完成）：积压已全部清完；剩余收尾：等镜像拉完 → 验证新容器 + timeout cron 启动日志 → 移除生产 `.env` 的临时 `PROBE_WAIT_TTL_HOURS=8760` 并重启。另：生产实例（ecs.e-c1m2.large）公网带宽仅 ~1Mbps，建议在阿里云控制台评估调整计费方式/带宽
+1. ~~**P0-3 收尾**~~ ✅ **2026-07-08 全部完成**（部署验证 + 积压清零）。遗留建议：生产实例（ecs.e-c1m2.large）公网带宽仅 ~1Mbps，建议在阿里云控制台评估调整计费方式/带宽；本机 probe 需用 `linkmind-probe run` 常驻（当前 device token 已连生产）
 2. **P0-4 insight 截断验证**：积压清完、有新流量后查日志；顺带评估 qwen 质量（影响 LLM Gateway 的紧迫度）
 3. **P0-5 计费验证**：补齐缺失的 CLI 命令（`set-limit`/`usage-report`/`reset-cycle`/`reconcile-usage`）+ 实测超限拦截 + 定默认限额
 4. **P0-2 剩余**：实测带图记录的 Web 展示 → Phase 6 清理（含 bot.ts `local_path` 漏网项）
