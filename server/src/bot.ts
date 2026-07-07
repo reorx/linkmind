@@ -4,7 +4,9 @@
  */
 
 import { Bot, InputFile } from 'grammy';
-import { renderMarkdownTelegram, renderTagsTelegram } from './telegram-render.js';
+import { renderMarkdownTelegram, renderTagsTelegram, formatResultTelegram, escHtml } from './telegram-render.js';
+import { setNotifier, fetchRelatedRecordsInfo } from './notify.js';
+import { getProbeWaitTtlHours } from './probe-timeout-cron.js';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import { existsSync } from 'fs';
@@ -21,7 +23,6 @@ import {
   getInviteByCode,
   useInvite,
   getUserByTelegramId,
-  getRelatedRecords,
 } from './db/index.js';
 import { spawnProcessLink, spawnProcessNote } from './pipeline.js';
 import { checkAndGetBudget } from './usage.js';
@@ -33,35 +34,6 @@ const log = logger.child({ module: 'bot' });
 
 const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
 
-interface RelatedRecordInfo {
-  recordId: number;
-  title: string;
-  sourceUrl: string; // Original URL
-  internalUrl: string; // Our link detail page URL
-}
-
-/**
- * Fetch related records from record_relations table with their details.
- */
-async function fetchRelatedRecordsInfo(recordId: number, webBaseUrl: string): Promise<RelatedRecordInfo[]> {
-  const relatedData = await getRelatedRecords(recordId);
-  const results: RelatedRecordInfo[] = [];
-
-  for (const item of relatedData) {
-    const related = await getRecord(item.relatedRecordId);
-    if (related) {
-      results.push({
-        recordId: item.relatedRecordId,
-        title: related.og_title || related.url || related.summary || 'Untitled',
-        sourceUrl: related.url || '',
-        internalUrl: `${webBaseUrl}/link/${item.relatedRecordId}`,
-      });
-    }
-  }
-
-  return results;
-}
-
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is required');
@@ -70,6 +42,14 @@ function getJwtSecret(): string {
 
 export function startBot(token: string, webBaseUrl: string): Bot {
   const bot = new Bot(token);
+
+  // Register the notify channel so pipeline / cron code can message users
+  setNotifier(async (chatId, text, opts) => {
+    const sendOpts: Record<string, any> = { link_preview_options: { is_disabled: true } };
+    if (opts?.html) sendOpts.parse_mode = 'HTML';
+    if (opts?.recordUrl) sendOpts.reply_markup = makeRecordButtons(opts.recordUrl);
+    await bot.api.sendMessage(chatId, text, sendOpts);
+  });
 
   // /start command — handle invite deep links and plain start
   bot.command('start', async (ctx) => {
@@ -686,6 +666,22 @@ async function pollAndNotify(
       await editMessage(ctx, statusMsg, '🤖 正在分析内容...', false, recordButtons);
     }
 
+    if (record.status === 'waiting_probe') {
+      // Ensure chat id is stored so probe completion / timeout notifications can reach the user
+      await updateRecord(recordId, { telegram_chat_id: ctx.chat.id });
+      await editMessage(
+        ctx,
+        statusMsg,
+        `🛰 此链接需要通过你的本地 Probe 抓取（如 Twitter/X）。\n` +
+          `已进入等待队列——如果你的 probe 在线会自动处理并回复结果；\n` +
+          `尚未安装请看教程：${webBaseUrl}/probe\n` +
+          `超过 ${getProbeWaitTtlHours()} 小时未处理将自动标记失败。`,
+        false,
+        recordButtons,
+      );
+      return;
+    }
+
     if (record.status === 'analyzed') {
       const tags: string[] = safeParseJson(record.tags);
       const relatedNotes: any[] = safeParseJson(record.related_notes);
@@ -693,7 +689,7 @@ async function pollAndNotify(
       const images: any[] = safeParseJson(record.images);
       const permanentLink = `${webBaseUrl}/link/${recordId}`;
 
-      const resultText = formatResult({
+      const resultText = formatResultTelegram({
         title: record.og_title || url,
         url,
         summary: record.summary || '',
@@ -804,44 +800,6 @@ async function pollNoteAndNotify(ctx: any, noteId: number, statusMsg: any, webBa
   await editMessage(ctx, statusMsg, '⏰ 处理超时，请稍后查看结果。', false, noteButtons);
 }
 
-function formatResult(data: {
-  title: string;
-  url: string;
-  summary: string;
-  insight: string;
-  tags: string[];
-  relatedNotes: any[];
-  relatedRecords: RelatedRecordInfo[];
-  permanentLink: string;
-}): string {
-  let msg = `📄 <b>${escHtml(data.title)}</b>\n`;
-  msg += `<a href="${escHtml(data.url)}">${escHtml(truncate(data.url, 60))}</a>\n\n`;
-
-  msg += renderTagsTelegram(data.tags);
-
-  msg += `<b>📝 摘要</b>\n${renderMarkdownTelegram(data.summary)}\n\n`;
-  msg += `<b>💡 Insight</b>\n${renderMarkdownTelegram(data.insight)}\n`;
-
-  if (data.relatedNotes.length > 0) {
-    msg += `\n<b>📓 相关笔记</b>\n`;
-    for (const n of data.relatedNotes.slice(0, 3)) {
-      const noteTitle = n.title || n.path || '';
-      msg += `• ${escHtml(noteTitle)}\n`;
-    }
-  }
-
-  if (data.relatedRecords.length > 0) {
-    msg += `\n<b>🔗 相关链接</b>\n`;
-    for (const l of data.relatedRecords.slice(0, 3)) {
-      msg += `• <a href="${escHtml(l.internalUrl)}">${escHtml(truncate(l.title, 45))}</a> (<a href="${escHtml(l.sourceUrl)}">Source</a>)\n`;
-    }
-  }
-
-  msg += `\n🔍 <a href="${escHtml(data.permanentLink)}">查看详情</a>`;
-
-  return msg;
-}
-
 function makeRecordButtons(webUrl: string) {
   return {
     inline_keyboard: [[{ text: '🔍 查看详情', url: webUrl }]],
@@ -887,14 +845,6 @@ async function replyBudgetExceeded(
   await ctx.reply(
     `⚠️ 本周期用量已达上限\n已使用: $${budget.usedUsd.toFixed(2)} / 限额: $${budget.limitUsd.toFixed(2)}\n当前周期: ${startStr} ~ ${endStr}\n请联系管理员提升额度。`,
   );
-}
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + '...' : s;
 }
 
 function safeParseJson(s?: string): any[] {

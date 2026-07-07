@@ -12,6 +12,7 @@ import {
 } from '../db/index.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
 import { renderPage, safeParseJson, getDayLabel, isAdminUser } from './helpers.js';
+import { getProbeWaitTtlHours } from '../probe-timeout-cron.js';
 import { getTransactionsByRecordId } from '../db/usage.js';
 import { logger } from '../logger.js';
 
@@ -49,6 +50,15 @@ export function registerPageRoutes(router: Router): void {
       log.error({ err: err instanceof Error ? err.message : String(err) }, 'Home render failed');
       res.status(500).send('Internal error');
     }
+  });
+
+  // GET /probe — probe installation guide (public, no auth)
+  router.get('/probe', async (_req: Request, res: Response) => {
+    const html = await renderPage('probe', {
+      pageTitle: '安装 Probe - LinkMind',
+      ttlHours: getProbeWaitTtlHours(),
+    });
+    res.type('html').send(html);
   });
 
   // GET /link/:id — link detail page

@@ -10,6 +10,7 @@ import { startBot } from './bot.js';
 import { startWebServer } from './web.js';
 import { startWorker } from './pipeline.js';
 import { startEnqueueCron } from './enqueue-cron.js';
+import { startProbeTimeoutCron } from './probe-timeout-cron.js';
 
 // Initialize logger after dotenv has loaded
 initLogger();
@@ -42,6 +43,9 @@ startWorker().catch((err) => {
 
 // Start enqueue cron (processes imported links)
 startEnqueueCron();
+
+// Start probe timeout cron (expires stale probe events)
+startProbeTimeoutCron();
 
 process.on('unhandledRejection', (reason) => {
   Sentry.captureException(reason);

@@ -46,6 +46,7 @@ import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 import { AgentEventEmitter } from './agent-event-emitter.js';
 import { recordTransaction } from './usage.js';
+import { notifyRecordProcessed } from './notify.js';
 
 const log = logger.child({ module: 'pipeline' });
 
@@ -697,6 +698,15 @@ export function registerTasks(): void {
       });
 
       await emitter.endSession('completed');
+
+      // Probe-resumed tasks finish after the bot's polling window — notify the user directly.
+      // Normal tasks are reported by the bot's own polling, so skip them to avoid double messages.
+      if (params.scrapeData) {
+        notifyRecordProcessed(recordId!).catch((err) => {
+          log.warn({ recordId, err: err instanceof Error ? err.message : String(err) }, 'notifyRecordProcessed failed');
+        });
+      }
+
       return { recordId, title: scrapeData.title, status: 'analyzed' };
     } catch (err) {
       // Update record status to error with error message

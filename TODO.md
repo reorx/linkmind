@@ -1,5 +1,12 @@
 # LinkMind TODO
 
+2026-07-07:
+- [ ] **在 tc-sg-01 部署 LLM Gateway**，gemini/openai/anthropic 的 LLM 请求统一通过 gateway 发出
+    - 背景：Gemini API 地理封锁 ali-hk-01（阿里云香港出口 IP），迁移后生产 LLM 步骤故障，临时切到 qwen-plus 止血（见 kb/notes/2026-07-07-prod-audit-findings.md）
+    - gateway 部署在 tc-sg-01（新加坡，Gemini 支持的地区），配置属于 deploy workspace
+    - server 侧配套改动：`llm.ts` 的 `GEMINI_API_BASE` 目前硬编码，需支持 env 覆盖指向 gateway；OpenAI 兼容 provider 已有 `OPENAI_BASE_URL` 可直接指向 gateway
+    - 完成后把 `LLM_PROVIDER` 切回 gemini
+
 2026-03-05:
 - [ ] 回复消息来进行AI问答,提供调整 insight prompt 和记录个人 memory 的工具.如果用户觉得 insight 内容不够好的话，可以再跟 AI 对话，让他思考，并且在这个过程中去调整 insight 的 prompt，使之后的 insight 分析更加准确。
     regular reply is adding notes, only /ai talks to ai

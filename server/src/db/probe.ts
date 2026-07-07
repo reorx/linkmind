@@ -107,6 +107,20 @@ export async function updateProbeEventStatus(id: string, status: string, result?
   await getDb().updateTable('probe_events').set(update).where('id', '=', id).execute();
 }
 
+/**
+ * Events still waiting on a probe (pending or sent) whose age exceeds the TTL.
+ */
+export async function getExpiredProbeEvents(ttlHours: number): Promise<ProbeEventRecord[]> {
+  const rows = await getDb()
+    .selectFrom('probe_events')
+    .selectAll()
+    .where('status', 'in', ['pending', 'sent'])
+    .where(sql<boolean>`created_at < NOW() - INTERVAL '1 hour' * ${ttlHours}`)
+    .orderBy('created_at', 'asc')
+    .execute();
+  return rows.map(toProbeEventRecord);
+}
+
 export async function getPendingProbeEvents(userId: number): Promise<ProbeEventRecord[]> {
   const rows = await getDb()
     .selectFrom('probe_events')

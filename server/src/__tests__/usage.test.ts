@@ -1,7 +1,7 @@
 /**
  * Usage billing tests: cost calculation, cycle dates, and full lifecycle.
  *
- * Uses a separate test database (linkmind_test) with the same bootstrap
+ * Uses a separate test database (linkmind_usage_test) with the same bootstrap
  * pattern as pipeline.test.ts.
  *
  * Usage:
@@ -13,7 +13,7 @@ dotenv.config({ override: true });
 
 // Override DATABASE_URL to use test database BEFORE any imports that use it
 const PROD_DB_URL = process.env.DATABASE_URL!;
-const TEST_DB_URL = PROD_DB_URL.replace(/\/[^/]+$/, '/linkmind_test');
+const TEST_DB_URL = PROD_DB_URL.replace(/\/[^/]+$/, '/linkmind_usage_test');
 process.env.DATABASE_URL = TEST_DB_URL;
 const TEST_DB_ADMIN_URL =
   process.env.TEST_DB_ADMIN_DATABASE_URL ??
@@ -216,7 +216,7 @@ describe('Usage billing lifecycle', () => {
 
     const adminPool = new pg.Pool({ connectionString: TEST_DB_ADMIN_URL });
     try {
-      await adminPool.query('DROP DATABASE IF EXISTS "linkmind_test" WITH (FORCE)');
+      await adminPool.query('DROP DATABASE IF EXISTS "linkmind_usage_test" WITH (FORCE)');
     } finally {
       await adminPool.end();
     }

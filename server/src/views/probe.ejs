@@ -1,0 +1,130 @@
+<style>
+  .probe-container {
+    max-width: 760px;
+    margin: 40px auto;
+    padding: 0 20px;
+  }
+  .probe-container h1 {
+    font-size: 1.8rem;
+    margin-bottom: 12px;
+  }
+  .probe-container h2 {
+    font-size: 1.2rem;
+    margin: 32px 0 12px;
+  }
+  .probe-container p, .probe-container li {
+    color: var(--text);
+    line-height: 1.8;
+  }
+  .probe-container ul, .probe-container ol {
+    padding-left: 24px;
+    margin: 8px 0 16px;
+  }
+  .probe-intro {
+    color: var(--dim);
+    margin-bottom: 24px;
+  }
+  .probe-container pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 12px 0 16px;
+    font-size: 0.88rem;
+    line-height: 1.6;
+  }
+  .probe-container code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .probe-container p code, .probe-container li code {
+    background: var(--border);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  .probe-note {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 16px 0;
+    color: var(--dim);
+    font-size: 0.92rem;
+  }
+</style>
+
+<div class="probe-container">
+  <h1>🛰 安装 LinkMind Probe</h1>
+  <p class="probe-intro">
+    Twitter/X 等站点需要登录才能抓取。Probe 是运行在你自己电脑上的本地抓取进程，
+    使用你浏览器里的登录状态抓取你发给 Bot 的链接，抓取结果回传云端继续分析。
+    未连接 Probe 时，Twitter 链接将在等待 <%= ttlHours %> 小时后自动标记失败。
+  </p>
+
+  <h2>1. 前置要求</h2>
+  <ul>
+    <li>Node.js ≥ 22 与 <code>pnpm</code></li>
+    <li>Chrome 浏览器，且已登录 Twitter/X</li>
+    <li><a href="https://github.com/nichochar/bird-cli" target="_blank">bird CLI</a>（用于抓取 Twitter，读取 Chrome cookies）</li>
+  </ul>
+
+  <h2>2. 安装</h2>
+  <pre><code>git clone https://github.com/reorx/linkmind.git
+cd linkmind
+pnpm install
+
+# 设备授权登录（类似 GitHub CLI 的 device auth 流程）
+pnpm --filter @linkmind/probe run dev -- login</code></pre>
+  <p><code>login</code> 会显示一个验证码和授权链接，在已登录 LinkMind 的浏览器中打开并确认即可。</p>
+
+  <h2>3. 运行</h2>
+  <pre><code># 前台运行（调试用）
+pnpm --filter @linkmind/probe run dev -- run --foreground
+
+# 后台运行
+pnpm --filter @linkmind/probe run dev -- run</code></pre>
+
+  <p>macOS 上可用 launchd 常驻（保存为 <code>~/Library/LaunchAgents/com.linkmind.probe.plist</code> 后 <code>launchctl load</code>）：</p>
+  <pre><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"&gt;
+&lt;plist version="1.0"&gt;
+&lt;dict&gt;
+  &lt;key&gt;Label&lt;/key&gt;&lt;string&gt;com.linkmind.probe&lt;/string&gt;
+  &lt;key&gt;ProgramArguments&lt;/key&gt;
+  &lt;array&gt;
+    &lt;string&gt;/usr/local/bin/pnpm&lt;/string&gt;
+    &lt;string&gt;--filter&lt;/string&gt;&lt;string&gt;@linkmind/probe&lt;/string&gt;
+    &lt;string&gt;run&lt;/string&gt;&lt;string&gt;dev&lt;/string&gt;&lt;string&gt;--&lt;/string&gt;
+    &lt;string&gt;run&lt;/string&gt;&lt;string&gt;--foreground&lt;/string&gt;
+  &lt;/array&gt;
+  &lt;key&gt;WorkingDirectory&lt;/key&gt;&lt;string&gt;/path/to/linkmind&lt;/string&gt;
+  &lt;key&gt;KeepAlive&lt;/key&gt;&lt;true/&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;</code></pre>
+
+  <p>Linux 上可用 systemd user service（<code>~/.config/systemd/user/linkmind-probe.service</code>）：</p>
+  <pre><code>[Unit]
+Description=LinkMind Probe
+
+[Service]
+WorkingDirectory=/path/to/linkmind
+ExecStart=/usr/bin/pnpm --filter @linkmind/probe run dev -- run --foreground
+Restart=always
+
+[Install]
+WantedBy=default.target</code></pre>
+
+  <h2>4. 验证</h2>
+  <ol>
+    <li>确认 probe 正在运行（前台模式能看到 SSE 已连接的日志）</li>
+    <li>给 Bot 发送一条 Twitter/X 链接</li>
+    <li>Probe 会自动收到抓取任务并回传，Bot 随后回复分析结果</li>
+  </ol>
+
+  <div class="probe-note">
+    Probe 离线时发送的链接会进入等待队列，probe 上线后自动补抓；
+    超过 <%= ttlHours %> 小时未处理会标记失败，届时可在链接详情页 Rerun。
+  </div>
+</div>

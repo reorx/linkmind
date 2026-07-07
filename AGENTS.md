@@ -78,6 +78,16 @@ Step 5: insight (LLM，基于 summary + related links)
 
 Probe 等待机制：record 进入 `waiting_probe` 状态，probe 端通过 SSE 接收任务，抓取后 POST 回结果，触发 `handleProbeResult()` 恢复 pipeline。
 
+**Probe 超时与通知（2026-07-08）：**
+
+- `src/probe-timeout-cron.ts` — 每 10 分钟清扫 `pending`/`sent` 且超过 `PROBE_WAIT_TTL_HOURS`（默认 24，支持小数）的 probe_events：event 标 `expired`；关联 record 仍在 `waiting_probe` 才标 `error` 并通知用户
+- `src/notify.ts` — 解耦的通知通道：bot.ts 启动时 `setNotifier()` 注册发送函数，pipeline/cron 通过 `notifyUser()`/`notifyRecordProcessed()` 给用户发 Telegram 消息（不 import bot，避免循环依赖；未注册时仅 log）
+- Bot `pollAndNotify` 检测到 `waiting_probe` 会立即结束轮询并提示用户安装 probe（教程页 `GET /probe`，无需登录）
+- probe 回传恢复的 pipeline（带 `scrapeData` 的任务）在 analyzed 后主动调用 `notifyRecordProcessed` 推送结果；普通任务仍由 bot 轮询报告
+- 结果消息格式化函数 `formatResultTelegram` 在 `src/telegram-render.ts`（bot 与 notify 共用）
+
+**已知问题：** probe daemon（`probe/src/daemon.ts`）只处理 `twitter`/`web` 两种 url_type，而 server fallback 创建的是 `browser` 类型事件，probe 收到会报错回传失败，待修。
+
 ## Common Commands
 
 ```bash
@@ -114,10 +124,11 @@ cd server && node dist/cli.js
 
 ## 部署
 
-- 部署配置**不在本仓库**，位于 OpenClaw workspace 的 `deploy/` 目录下
-- 使用 **Ansible** 管理所有部署操作，playbook 和 roles 都在 `deploy/ansible/`
-- 服务器：hh-hk-01 (103.69.129.33:1122)
-- 所有与部署相关的改动都在 workspace 的 `deploy/` 目录进行，不要在本仓库创建部署文件
+- 部署配置**不在本仓库**，位于 deploy workspace（`~/Library/Mobile Documents/com~apple~CloudDocs/deploy/`），部署文档见其中 `kb/docs/linkmind.md`
+- 使用 **Ansible** 管理所有部署操作，playbook 和 roles 都在 `deploy/ansible/`（role: `ansible/roles/linkmind/`）
+- 服务器：**ali-hk-01**（2026-07-03 从 hh-hk-01 迁移），应用目录 `/opt/apps/linkmind/`，Caddy 反代 `linkmind.reorx.com` → localhost:3456
+- CD：push master → GitHub Actions 构建镜像推 ghcr → webhook 自动 pull & up
+- 所有与部署相关的改动都在 deploy workspace 进行，不要在本仓库创建部署文件
 
 ### Deployment — launchd (本地开发)
 
@@ -196,9 +207,9 @@ psql -U linkmind -h localhost -p 5432 -d ${LOCAL_DB} -c "\d <new_table>"
 # 以及测试 CLI 等功能是否正常
 
 # 4. 确认无误后，在生产环境执行
-ssh hh-hk-01 "cd /opt/apps/linkmind && docker compose exec -w /app/server server node dist/cli.js run-sql migrations/005_xxx.sql"
+ssh ali-hk-01 "cd /opt/apps/linkmind && docker compose exec -w /app/server server node dist/cli.js run-sql migrations/005_xxx.sql"
 # 或 Kysely migration:
-ssh hh-hk-01 "cd /opt/apps/linkmind && docker compose exec -w /app/server server node dist/cli.js migrate"
+ssh ali-hk-01 "cd /opt/apps/linkmind && docker compose exec -w /app/server server node dist/cli.js migrate"
 ```
 
 ### 注意事项

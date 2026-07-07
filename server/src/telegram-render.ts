@@ -2,8 +2,12 @@
  * Telegram-friendly rendering utilities for markdown content.
  */
 
-function escHtml(s: string): string {
+export function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) + '...' : s;
 }
 
 /**
@@ -110,4 +114,53 @@ export function renderMarkdownTelegram(md: string): string {
 export function renderTagsTelegram(tags: string[]): string {
   if (tags.length === 0) return '';
   return tags.map((t) => `<code>${escHtml(t)}</code>`).join(' ') + '\n\n';
+}
+
+export interface RelatedRecordInfo {
+  recordId: number;
+  title: string;
+  sourceUrl: string; // Original URL
+  internalUrl: string; // Our link detail page URL
+}
+
+/**
+ * Format the final processing result message for a link record (Telegram HTML).
+ * Shared by bot polling and pipeline completion notification.
+ */
+export function formatResultTelegram(data: {
+  title: string;
+  url: string;
+  summary: string;
+  insight: string;
+  tags: string[];
+  relatedNotes: any[];
+  relatedRecords: RelatedRecordInfo[];
+  permanentLink: string;
+}): string {
+  let msg = `📄 <b>${escHtml(data.title)}</b>\n`;
+  msg += `<a href="${escHtml(data.url)}">${escHtml(truncate(data.url, 60))}</a>\n\n`;
+
+  msg += renderTagsTelegram(data.tags);
+
+  msg += `<b>📝 摘要</b>\n${renderMarkdownTelegram(data.summary)}\n\n`;
+  msg += `<b>💡 Insight</b>\n${renderMarkdownTelegram(data.insight)}\n`;
+
+  if (data.relatedNotes.length > 0) {
+    msg += `\n<b>📓 相关笔记</b>\n`;
+    for (const n of data.relatedNotes.slice(0, 3)) {
+      const noteTitle = n.title || n.path || '';
+      msg += `• ${escHtml(noteTitle)}\n`;
+    }
+  }
+
+  if (data.relatedRecords.length > 0) {
+    msg += `\n<b>🔗 相关链接</b>\n`;
+    for (const l of data.relatedRecords.slice(0, 3)) {
+      msg += `• <a href="${escHtml(l.internalUrl)}">${escHtml(truncate(l.title, 45))}</a> (<a href="${escHtml(l.sourceUrl)}">Source</a>)\n`;
+    }
+  }
+
+  msg += `\n🔍 <a href="${escHtml(data.permanentLink)}">查看详情</a>`;
+
+  return msg;
 }
