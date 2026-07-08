@@ -34,6 +34,8 @@ export interface UsageInfo {
 export interface ChatResult {
   text: string;
   usage?: UsageInfo;
+  /** Provider finish reason (e.g. "stop"/"STOP", "length"/"MAX_TOKENS"). Non-stop means truncation. */
+  finishReason?: string;
 }
 
 export interface EmbeddingResult {
@@ -67,15 +69,35 @@ function createOpenAIProvider(): LLMProvider {
 
       const response = await client.chat.completions.create({
         model,
-        max_tokens: options.maxTokens ?? 2048,
+        ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
         temperature: options.temperature,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
         ...(options.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
       });
 
-      const text = response.choices[0]?.message?.content || '';
+      const choice = response.choices[0];
+      const text = choice?.message?.content || '';
+      const finishReason = choice?.finish_reason ?? undefined;
       const elapsed = Date.now() - startTime;
-      log.info({ model, label, elapsed: `${elapsed}ms`, responseLength: text.length }, `← OpenAI: ${label} done`);
+
+      if (finishReason && finishReason !== 'stop') {
+        log.warn(
+          {
+            model,
+            label,
+            elapsed: `${elapsed}ms`,
+            finishReason,
+            responseLength: text.length,
+            textPreview: text.slice(0, 500),
+          },
+          `← OpenAI: ${label} finished with non-stop reason`,
+        );
+      } else {
+        log.info(
+          { model, label, elapsed: `${elapsed}ms`, finishReason, responseLength: text.length },
+          `← OpenAI: ${label} done`,
+        );
+      }
 
       const usage: UsageInfo | undefined = response.usage
         ? {
@@ -85,7 +107,7 @@ function createOpenAIProvider(): LLMProvider {
           }
         : undefined;
 
-      return { text, usage };
+      return { text, usage, finishReason };
     },
   };
 }
@@ -186,7 +208,7 @@ function createGeminiProvider(): LLMProvider {
         contents,
         generationConfig: {
           temperature: options.temperature ?? 0.3,
-          maxOutputTokens: options.maxTokens ?? 2048,
+          ...(options.maxTokens !== undefined ? { maxOutputTokens: options.maxTokens } : {}),
           ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
         },
       };
@@ -250,7 +272,7 @@ function createGeminiProvider(): LLMProvider {
           }
         : undefined;
 
-      return { text, usage };
+      return { text, usage, finishReason };
     },
   };
 }
