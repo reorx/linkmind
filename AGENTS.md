@@ -120,16 +120,11 @@ curl -X POST <api_base>/api/auth/token -H "Content-Type: application/json" -d '{
 
 **E2E 测试流程：** `gen-token` 生成 JWT → `POST /api/links` 提交 twitter 链接 → record 进 `waiting_probe`，SSE 立即推送给在线 probe（连接时也会推送全部历史 pending 事件）→ probe 回传后 pipeline 自动恢复。观察工具：`npx tsx --env-file=<env> src/cli.ts admin-probe-stats --list`（probe_events/records 状态分布）。也可在本地 DB 直接种 `probe_devices` 行跳过 device auth（见 sessions/2026-07-08-probe-timeout-and-notify.md）。
 
-⚠️ **本地起 server 的 bot token 坑（2026-07-08 踩过）：** 本地 `.env` 与生产共用同一个 bot token，本地起 server 会与生产抢 Telegram getUpdates 轮询。且**命令行传 `TELEGRAM_BOT_TOKEN=dummy` 无效**——`index.ts` 的 `dotenv.config({ override: true })` 会用 cwd 下的 `.env` 文件反向覆盖已有环境变量。正确做法：把修改过的 `.env` 副本（dummy token + 独立 `WEB_PORT`）放进一个临时目录，从那个目录启动：
+**Bot token 隔离（2026-07-08 起）：** 本地 `server/.env` 使用独立的 dev bot **@linkmind_dev_bot**，生产 token 只存在于 `.env.prod`。本地起 server 可以直接 `pnpm --filter @linkmind/server run dev`，bot 交互（邀请、超限提示、/probe 引导）都在 dev bot 上端到端可测。
 
-```bash
-mkdir -p /tmp/lm-test && cd /tmp/lm-test
-sed -e 's|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=123456:dummy-local-test|' \
-    -e 's|^WEB_PORT=.*|WEB_PORT=3999|' <repo>/server/.env > .env
-npx --prefix <repo>/server tsx <repo>/server/src/index.ts
-```
-
-dummy token 下 bot 轮询会 401，但 `index.ts` 有 unhandledRejection 兜底不会崩，web/API 正常可测。如果误用生产 token 启动了本地实例，立即 kill——生产 bot 的轮询会在冲突实例退出后自动恢复。
+⚠️ 两条纪律：
+- **永远不要把生产 bot token 写进本地 `.env`**。同一 token 只允许一个 getUpdates 消费者——真实用户消息会被本地实例吃进开发库，且本地 pipeline 的 notify 可能给真实用户发消息。误启动了就立即 kill，生产轮询会自动恢复。
+- **命令行传 `TELEGRAM_BOT_TOKEN=xxx` 覆盖无效**——`index.ts` 的 `dotenv.config({ override: true })` 会用 cwd 下的 `.env` 反向覆盖环境变量。需要临时改配置时，改 `.env` 副本并从副本所在目录启动，或直接编辑 `server/.env`。
 
 ## Common Commands
 
