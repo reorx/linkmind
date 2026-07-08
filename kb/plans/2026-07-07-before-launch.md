@@ -69,9 +69,10 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 - [x] 生产执行 `006_record_files.sql` → 已执行（审计确认）
 - [x] R2 环境变量 → 已配置（2026-07-07 修复迁移时的丢失）
 - [x] 旧 `records.images` 数据迁移 → 已完成（遗留数据 0 条）
-- [ ] 验证 Web 端图片展示正常（发一张带图记录实测）
+- [x] 验证 Web 端图片展示正常 → **2026-07-08 生产实测通过**：清积压产生了 5 条带图记录（twitter/telegram），`/link/172` 页面 `<img>` 指向 `/files/records/172/0_twitter.jpg`，该端点从 R2 返回 image/jpeg 200。⚠️ 顺带发现 #58/#41 的 record_files 有重复行（同 storage_key 两条，疑似 retry 未去重），Phase 6 清理时一并处理
 - [ ] Phase 6 清理：删除 `image-handler.ts`、`backfill-images.ts`、`records.images` 字段（写新 migration）、旧 `/images` 静态路由、模板 fallback
 - [ ] Phase 6 补充（2026-07-08 调研发现）：`bot.ts` 的 `pollAndNotify` 仍在读 `images[0].local_path` 从 `data/images/` 发图（record-files-progress 清单漏了这处），改为从 `record_files` 取 R2 URL 发图
+- [ ] Phase 6 补充 ②（2026-07-08 发现）：record_files 写入需防重（retry 场景同 key 重复插入），清理重复行 + 加唯一约束或 upsert
 
 #### 3. 清理积压数据 + Probe 可用性策略
 
@@ -87,22 +88,25 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 - [x] 修复已知问题：probe daemon（`probe/src/daemon.ts`）只认 `twitter`/`web`，server fallback 创建的是 `browser` 类型事件 → **已修复**（`5a05fad`，2026-07-08）：server 统一创建 `web`，daemon 兼容旧值 `browser`
 - [x] 处理积压：31 条 pending probe_events / 24 条 `waiting_probe` records → **2026-07-08 全部清完**：本机 probe 经 device auth 连生产（curl 自动完成授权），一次性消化全部 31 条事件（browser→web 兼容生效，0 错误）；24 条 waiting_probe 中 23 条 analyzed（nytimes #96 经 admin retry 后成功）、#164 为衍生链接终态 scraped。另 admin retry 清查了 7 条历史 scraped records，确认均为 `added_by_user=false` 衍生链接，scraped 即设计终态，无积压残留
 
-#### 4. Bug 验证：insight 截断
+#### 4. Bug 验证：insight 截断 ✅ 2026-07-08 完成
 
-TODO.md Bugs 记录"insight 会被截断"。相关修复（`2b78b0a` 移除 maxTokens、`200c3c8` summary 改 XML 格式、`2629676` 记录 finishReason）已提交，但**未确认 insight 本身是否仍会截断**：
+TODO.md Bugs 记录"insight 会被截断"。相关修复（`2b78b0a` 移除 maxTokens、`200c3c8` summary 改 XML 格式、`2629676` 记录 finishReason）已提交，验证结论：
 
-- [ ] 在生产日志/Sentry 中搜索非 STOP 的 finishReason 记录
-- [ ] 跑几条真实链接验证 insight 完整性；若仍截断，参照 [2026-03-11-insight-thinking-footnotes.md](2026-03-11-insight-thinking-footnotes.md) 中的 prompt 调整一并处理
-- [ ] 注意：生产已切到 qwen-plus（2026-07-07），验证要在 qwen 上做；同时观察 qwen 的 summary/insight 质量，作为"是否急着做 LLM Gateway 切回 gemini"的决策依据
+- [x] 数据验证（生产日志因容器重建已清零，改用 usage_transactions 的 output_tokens）：新增 `admin-llm-audit` CLI，150 天全历史 **0 条调用顶到 2048 cap**——insight 最大 351 tokens（prompt 限 500 字生效）、summary 最大 1071。**截断 bug 自 3 月修复后未再发生**
+- [x] 抽查昨天 qwen 处理的 3 条 insight（#201/#56/#172）：结尾均为完整句子，无截断
+- [x] 附带发现并修复（`461ddd9`）：`2b78b0a` 只删了调用处参数，`llm.ts` 两个 provider 里 `?? 2048` 默认 cap 一直还在（qwen 生产同样被限）；且 OpenAI 路径不记录 finish_reason，qwen 上截断不可观测。已改为不显式传参就不发 max_tokens，ChatResult 增加 `finishReason` 字段，OpenAI 路径非 stop 时 log.warn（对齐 Gemini 路径），带单测
+- [x] qwen 质量评估：抽查的 summary/insight 中文流畅、结构好、能自然关联相关链接，质量可接受 → **LLM Gateway 切回 gemini 不紧迫**，可按原计划排期不提前
+- 注：修复尚未部署（未 push；push 队列里还有未验证的 web 重设计 `03520b5`，部署时机待定）。上线后真实链接的端到端确认并入 P0-6 走查
 
-#### 5. 计费限额上线验证
+#### 5. 计费限额上线验证 ✅ 2026-07-08 完成（默认限额留一个确认项）
 
-Usage billing 代码已合入，但作为收费/限额的守门功能，上线前需实测（参照 [usage-billing-design.md](usage-billing-design.md) 的管理接口一节）：
+Usage billing 代码已合入，上线前实测结果（commit `efc1401`）：
 
-- [ ] 确认 `checkAndGetBudget` 在 bot 和 API 两个入口都生效（发链接超限 → 收到拒绝提示）
-- [ ] 确认 admin billing 页面数据正确（commit `4b477a6`）
-- [ ] 补齐/确认 CLI 管理命令：`set-limit`、`usage-report`、`reset-cycle`、`reconcile-usage`（design 中列出，`server/src/cli/` 下目前未见对应文件——需实现或确认替代入口）
-- [ ] 设定合理的默认限额 `DEFAULT_CYCLE_LIMIT_USD`
+- [x] 入口检查：**发现并修复实现缺口**——design 要求 bot + API 双入口，实际只有 bot.ts 有（4 处）；`POST /api/links`、`/api/retry`、`/api/retry/:id` 完全绕过限额。已补上（超限返回 402 + usage 详情），本地实测：限额 0 → 402 拒绝；恢复限额 → 200 放行。bot 入口经代码确认（同一 `checkAndGetBudget` + `replyBudgetExceeded`，不再用真实 bot 实测以免与生产抢 getUpdates）
+- [x] admin billing 页面（`/admin/usage`、`/admin/usage/:id`）本地实测数据正确，消费实时入账
+- [x] CLI 命令已补齐（按项目规范加 `admin-` 前缀）：`admin-set-limit`、`admin-usage-report`、`admin-reset-cycle`、`admin-reconcile-usage`；新增 `setUserLimit`/`reconcileUsage` 函数带生命周期测试（Phase 6/7，20 tests 全过）。生产只读验证通过：reorx $0.072/$1.00，reconcile 账目同步
+- [x] 默认限额：**建议维持代码默认 $1.00/周期，不配 env**。依据生产实测：单条 record ≈ $0.002（31 条积压花 $0.072），$1.00 ≈ 500 条/月，免费邀请制足够。⚠️ 如要改，生产 `.env.prod` 加 `DEFAULT_CYCLE_LIMIT_USD` 即可（未决问题 #3 可据此关闭）
+- 注：本地测试 server 需绕开 `dotenv override`（cwd 放修改过的 `.env`，dummy bot token + 独立端口），直接 env var 覆盖无效——已踩坑（短暂用生产 token 起了本地 bot，~30s，已杀，生产轮询自动恢复）
 
 #### 6. 新用户端到端体验走查（Dogfooding）
 
@@ -155,9 +159,9 @@ TODO.md 2026-03-05 条目。用户积累内容后没有搜索会明显影响留�
 **下个 session 按此顺序逐个解决**：
 
 1. ~~**P0-3 收尾**~~ ✅ **2026-07-08 全部完成**（部署验证 + 积压清零）。遗留建议：生产实例（ecs.e-c1m2.large）公网带宽仅 ~1Mbps，建议在阿里云控制台评估调整计费方式/带宽；本机 probe 需用 `linkmind-probe run` 常驻（当前 device token 已连生产）
-2. **P0-4 insight 截断验证**：积压清完、有新流量后查日志；顺带评估 qwen 质量（影响 LLM Gateway 的紧迫度）
-3. **P0-5 计费验证**：补齐缺失的 CLI 命令（`set-limit`/`usage-report`/`reset-cycle`/`reconcile-usage`）+ 实测超限拦截 + 定默认限额
-4. **P0-2 剩余**：实测带图记录的 Web 展示 → Phase 6 清理（含 bot.ts `local_path` 漏网项）
+2. ~~**P0-4 insight 截断验证**~~ ✅ **2026-07-08 完成**：150 天数据 0 截断；顺手修掉 llm.ts 隐藏的 2048 默认 cap + qwen 路径 finish_reason 盲区（`461ddd9`，未 push）；qwen 质量可接受，LLM Gateway 不紧迫
+3. ~~**P0-5 计费验证**~~ ✅ **2026-07-08 完成**：修掉 API 入口无限额检查的实现缺口 + 4 个 admin CLI + 实测通过（`efc1401`，未 push）；默认限额建议维持 $1.00（待你确认）
+4. **P0-2 剩余**：~~实测带图记录的 Web 展示~~（✅ 2026-07-08 生产实测通过）→ Phase 6 清理（含 bot.ts `local_path` 漏网项 + record_files 重复行去重防重）
 5. **LLM Gateway 落地**（可与 3/4 并行，deploy workspace 工作）：tc-sg-01 部署 gateway → `llm.ts` 加 `GEMINI_API_BASE` env 覆盖 → 生产切回 gemini
 6. **P1 功能**：评分（9）→ insight thinking/脚注（10）→ 落地页（8）→ 搜索（11，范围待拍板）
 7. **收官**：P0-6 端到端走查 → P0-7 运维基线（Sentry DSN、备份确认、部署演练）→ 上线
