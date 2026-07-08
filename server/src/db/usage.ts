@@ -87,6 +87,48 @@ export async function updateBalanceCycleReset(userId: number, newCycleStart: Dat
     .execute();
 }
 
+export async function updateCycleLimit(userId: number, limitUsd: number): Promise<void> {
+  await getDb()
+    .updateTable('user_balances')
+    .set({
+      cycle_limit_usd: String(limitUsd),
+      updated_at: sql`NOW()`,
+    })
+    .where('user_id', '=', userId)
+    .execute();
+}
+
+export interface ReconcileBalanceRow {
+  user_id: number;
+  username: string;
+  current_cycle_start: Date;
+  current_cycle_usage_usd: string;
+  tx_sum_usd: string;
+}
+
+/** Per-user sum of usage_transactions within the current cycle window, alongside the balance counter. */
+export async function getBalancesWithTxSums(userId?: number): Promise<ReconcileBalanceRow[]> {
+  let q = getDb()
+    .selectFrom('user_balances as b')
+    .innerJoin('users as u', 'u.id', 'b.user_id')
+    .select([
+      'b.user_id',
+      'u.username',
+      'b.current_cycle_start',
+      'b.current_cycle_usage_usd',
+      sql<string>`COALESCE((
+        SELECT SUM(t.amount_usd) FROM usage_transactions t
+        WHERE t.user_id = b.user_id AND t.created_at >= b.current_cycle_start
+      ), 0)`.as('tx_sum_usd'),
+    ])
+    .orderBy('b.user_id');
+  if (userId !== undefined) {
+    q = q.where('b.user_id', '=', userId);
+  }
+  const rows = await q.execute();
+  return rows as ReconcileBalanceRow[];
+}
+
 export async function updateCycleAnchorAndReset(userId: number, newAnchor: Date, newCycleStart: Date): Promise<void> {
   await getDb()
     .updateTable('user_balances')

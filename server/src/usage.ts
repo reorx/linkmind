@@ -13,6 +13,8 @@ import {
   insertTransactionAndUpdateBalance,
   updateBalanceCycleReset,
   updateCycleAnchorAndReset,
+  updateCycleLimit,
+  getBalancesWithTxSums,
 } from './db/usage.js';
 
 export { getBalance } from './db/usage.js';
@@ -213,4 +215,39 @@ export async function recordTransaction(params: RecordTransactionParams): Promis
 
 export async function resetUserCycle(userId: number, newAnchorDate: Date): Promise<void> {
   await updateCycleAnchorAndReset(userId, newAnchorDate, newAnchorDate);
+}
+
+export async function setUserLimit(userId: number, limitUsd: number): Promise<void> {
+  if (!Number.isFinite(limitUsd) || limitUsd < 0) {
+    throw new Error(`Invalid limit: ${limitUsd}`);
+  }
+  // Ensure the balance row exists so the limit sticks for users who never triggered a check
+  await getOrCreateBalance(userId, DEFAULT_CYCLE_LIMIT_USD);
+  await updateCycleLimit(userId, limitUsd);
+}
+
+export interface ReconcileResult {
+  userId: number;
+  username: string;
+  cycleStart: Date;
+  balanceUsd: number;
+  txSumUsd: number;
+  /** txSumUsd - balanceUsd; non-zero means the balance counter drifted from the transaction log */
+  diffUsd: number;
+}
+
+export async function reconcileUsage(userId?: number): Promise<ReconcileResult[]> {
+  const rows = await getBalancesWithTxSums(userId);
+  return rows.map((r) => {
+    const balanceUsd = Number(r.current_cycle_usage_usd);
+    const txSumUsd = Number(r.tx_sum_usd);
+    return {
+      userId: r.user_id,
+      username: r.username,
+      cycleStart: r.current_cycle_start,
+      balanceUsd,
+      txSumUsd,
+      diffUsd: txSumUsd - balanceUsd,
+    };
+  });
 }

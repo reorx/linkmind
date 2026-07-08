@@ -79,6 +79,11 @@ export async function getUserByTelegramId(telegramId: number): Promise<UserRecor
   return row ? toUserRecord(row) : undefined;
 }
 
+export async function getUserByUsername(username: string): Promise<UserRecord | undefined> {
+  const row = await getDb().selectFrom('users').selectAll().where('username', '=', username).executeTakeFirst();
+  return row ? toUserRecord(row) : undefined;
+}
+
 function toInviteRecord(row: any): InviteRecord {
   return {
     ...row,

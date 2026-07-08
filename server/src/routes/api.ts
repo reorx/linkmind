@@ -16,11 +16,28 @@ import {
   deleteShareByRecordId,
 } from '../db/index.js';
 import { spawnProcessLink, retryRecord, deleteRecordFull } from '../pipeline.js';
+import { checkAndGetBudget } from '../usage.js';
 import { requireAuth, type AuthRequest } from './middleware.js';
 import { safeParseJson, csvEscape, parseCsvLine } from './helpers.js';
 import { logger } from '../logger.js';
 
 const log = logger.child({ module: 'api' });
+
+/** Soft-limit gate for cost-incurring endpoints. Sends 402 and returns true when over budget. */
+async function rejectIfOverBudget(userId: number, res: Response): Promise<boolean> {
+  const budget = await checkAndGetBudget(userId);
+  if (budget.allowed) return false;
+  res.status(402).json({
+    error: 'Usage limit exceeded for current cycle',
+    usage: {
+      used_usd: budget.usedUsd,
+      limit_usd: budget.limitUsd,
+      cycle_start: budget.cycleStart,
+      cycle_end: budget.cycleEnd,
+    },
+  });
+  return true;
+}
 
 export function registerApiRoutes(router: Router): void {
   // POST /api/links — add a new link and process it
@@ -30,6 +47,8 @@ export function registerApiRoutes(router: Router): void {
       res.status(400).json({ error: "Missing or invalid 'url' field" });
       return;
     }
+
+    if (await rejectIfOverBudget(req.userId!, res)) return;
 
     try {
       const { taskId } = await spawnProcessLink(req.userId!, url);
@@ -99,6 +118,8 @@ export function registerApiRoutes(router: Router): void {
 
   // POST /api/retry — retry all failed links
   router.post('/api/retry', requireAuth, async (req: AuthRequest, res: Response) => {
+    if (await rejectIfOverBudget(req.userId!, res)) return;
+
     const failed = await getFailedRecords(req.userId!);
     if (failed.length === 0) {
       res.json({ message: 'No failed links to retry', retried: 0 });
@@ -131,6 +152,8 @@ export function registerApiRoutes(router: Router): void {
       res.status(404).json({ error: 'Not found' });
       return;
     }
+
+    if (await rejectIfOverBudget(req.userId!, res)) return;
 
     log.info({ linkId: id, url: record.url }, 'Retrying single link');
     const { taskId } = await retryRecord(id);

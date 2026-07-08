@@ -42,6 +42,8 @@ import {
   recordTransaction,
   resetUserCycle,
   getBalance,
+  setUserLimit,
+  reconcileUsage,
 } from '../usage.js';
 
 // ── Helpers ──
@@ -419,5 +421,69 @@ describe('Usage billing lifecycle', () => {
     // Assert: balance unchanged
     const afterBalance = await getBalance(userId);
     expect(Number(afterBalance!.current_cycle_usage_usd)).toBe(beforeUsage);
+  });
+
+  it('Phase 6: setUserLimit raises the cap and unblocks the user', async () => {
+    const now = localDate('2028-02-29');
+
+    // Still over the $1.00 limit from Phase 4 (~$1.92)
+    let check = await checkAndGetBudget(userId, now);
+    expect(check.allowed).toBe(false);
+
+    await setUserLimit(userId, 5.0);
+
+    const balance = await getBalance(userId);
+    expect(Number(balance!.cycle_limit_usd)).toBe(5.0);
+
+    check = await checkAndGetBudget(userId, now);
+    expect(check.allowed).toBe(true);
+    expect(check.limitUsd).toBe(5.0);
+  });
+
+  it('Phase 7: reconcileUsage detects balance drift', async () => {
+    // Reset cycle to a past date so real created_at timestamps fall inside the window,
+    // and clear earlier phases' transactions (their real created_at would otherwise leak
+    // into the window — production resets always use today's date, so this can't happen there)
+    const cleanupPool = new pg.Pool({ connectionString: TEST_DB_URL });
+    try {
+      await cleanupPool.query(`DELETE FROM usage_transactions WHERE user_id = $1`, [userId]);
+    } finally {
+      await cleanupPool.end();
+    }
+    await resetUserCycle(userId, localDate('2026-01-01'));
+
+    await recordTransaction({
+      userId,
+      recordId: recordId1,
+      step: 'reconcile-probe',
+      type: 'llm',
+      provider: 'qwen',
+      model: 'qwen-plus',
+      inputTokens: 1000,
+      outputTokens: 200,
+    });
+
+    // In sync: tx sum within cycle equals balance counter
+    let rows = await reconcileUsage(userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].diffUsd).toBeCloseTo(0, 6);
+
+    // Corrupt the balance counter, drift must be reported
+    const pool = new pg.Pool({ connectionString: TEST_DB_URL });
+    try {
+      await pool.query(
+        `UPDATE user_balances SET current_cycle_usage_usd = current_cycle_usage_usd + 0.5 WHERE user_id = $1`,
+        [userId],
+      );
+    } finally {
+      await pool.end();
+    }
+
+    rows = await reconcileUsage(userId);
+    expect(rows[0].diffUsd).toBeCloseTo(-0.5, 6);
+
+    // No filter → includes our user
+    const all = await reconcileUsage();
+    expect(all.some((r) => r.userId === userId)).toBe(true);
   });
 });
