@@ -88,6 +88,40 @@ Probe 等待机制：record 进入 `waiting_probe` 状态，probe 端通过 SSE 
 
 **url_type 约定：** 统一使用 core 的 `UrlType`（`twitter` | `web`），`createProbeEvent` 参数已收紧为该类型。server fallback 创建 `web` 类型事件；probe daemon 额外兼容旧值 `browser`（按 `web` 处理），用于消化历史 backlog 事件。
 
+**衍生链接终态是 scraped：** `added_by_user=false` 的 records（related 步骤发现的链接）流水线在 scrape 后有意停止，不做 summarize/insight（`pipeline.ts` "Derived link, stopping at scraped"）。排查"卡在 scraped"的 records 时先查 `added_by_user`。同理，Absurd 任务 completed ≠ record analyzed（waiting_probe 转移、衍生链接提前返回都会正常 complete）。
+
+## Probe 运行与测试
+
+本机 probe daemon 的配置在 `~/.linkmind-probe/config.json`（`api_base` / `access_token` / `user_id`）。依赖：Twitter 抓取需要 `bird` CLI（brew 安装，用 Chrome cookies）；Web 抓取用 Playwright。
+
+```bash
+# 交互式登录（device auth，会打开浏览器授权页）
+cd probe && npx tsx src/cli.ts login --api-base https://linkmind.reorx.com
+
+# 前台运行（开发/调试）
+pnpm --filter @linkmind/probe run dev run --foreground
+
+# daemon 模式 / 状态 / 停止
+cd probe && npx tsx src/cli.ts run    # 后台 daemon，日志 ~/.linkmind-probe/probe.log
+cd probe && npx tsx src/cli.ts status
+cd probe && npx tsx src/cli.ts stop
+```
+
+**非交互式 device auth（agent/脚本用，无需浏览器）：**
+
+```bash
+# 1. 拿 device_code + user_code
+curl -X POST <api_base>/api/auth/device
+# 2. 用 gen-token 生成的 JWT 作为 lm_session cookie 完成授权
+curl -X POST <api_base>/auth/device/authorize -b "lm_session=<jwt>" -d "user_code=<USER-CODE>"
+# 3. 换取 probe access_token，手写进 ~/.linkmind-probe/config.json
+curl -X POST <api_base>/api/auth/token -H "Content-Type: application/json" -d '{"device_code":"<device_code>"}'
+```
+
+**E2E 测试流程：** `gen-token` 生成 JWT → `POST /api/links` 提交 twitter 链接 → record 进 `waiting_probe`，SSE 立即推送给在线 probe（连接时也会推送全部历史 pending 事件）→ probe 回传后 pipeline 自动恢复。观察工具：`npx tsx --env-file=<env> src/cli.ts admin-probe-stats --list`（probe_events/records 状态分布）。也可在本地 DB 直接种 `probe_devices` 行跳过 device auth（见 sessions/2026-07-08-probe-timeout-and-notify.md）。
+
+⚠️ 本地 `.env` 与生产共用同一个 bot token：本地起 server 会与生产抢 Telegram getUpdates 轮询。本地验收时换 dummy token 或只测 web/API 路径。
+
 ## Common Commands
 
 ```bash
@@ -129,6 +163,9 @@ cd server && node dist/cli.js
 - 服务器：**ali-hk-01**（2026-07-03 从 hh-hk-01 迁移），应用目录 `/opt/apps/linkmind/`，Caddy 反代 `linkmind.reorx.com` → localhost:3456
 - CD：push master → GitHub Actions 构建镜像推 ghcr → webhook 自动 pull & up
 - 所有与部署相关的改动都在 deploy workspace 进行，不要在本仓库创建部署文件
+- **CD 排查**：CI 全绿但容器没更新 → `ssh ali-hk-01 journalctl -u webhook` 查是否 "trigger rules were not satisfied"（token 被 ansible 打回 `CHANGEME` 的坑，见 deploy workspace 迁移文档 §5）
+- **带宽**：生产实例公网带宽仅 ~1Mbps，全量拉镜像需数小时；Dockerfile 已做层优化 + CI 用 GHA buildx cache，常规代码变更只拉小层。服务器上手动跑长任务（如 `docker compose pull`）必须 `nohup ... &`，ssh 断连会杀掉前台进程
+- **pnpm 版本三处一致**：本地、`package.json` 的 `packageManager`、Dockerfile 均为 `10.25.0`，升级时三处同步（`pnpm@latest` 漂移曾导致构建失败）
 
 ### Deployment — launchd (本地开发)
 
