@@ -43,7 +43,6 @@ export interface RecordEntry {
   related_notes?: string;
   related_links?: string;
   tags?: string;
-  images?: string;
   summary_embedding?: string;
   status: 'enqueued' | 'pending' | 'scraped' | 'analyzed' | 'error' | 'waiting_probe';
   error_message?: string;
@@ -142,7 +141,6 @@ export interface RecordsTable {
   related_notes: string | null;
   related_links: string | null;
   tags: string | null;
-  images: string | null;
   summary_embedding: string | null;
   status: string;
   error_message: string | null;

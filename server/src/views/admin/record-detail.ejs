@@ -78,13 +78,6 @@
 <p class="dim" style="font-size:13px;">—</p>
 <% } %>
 
-<h3>Images</h3>
-<% if (record.images) { %>
-<pre class="data mono"><%= JSON.stringify(JSON.parse(record.images), null, 2) %></pre>
-<% } else { %>
-<p class="dim" style="font-size:13px;">—</p>
-<% } %>
-
 <h3>Markdown <span class="dim" style="font-weight:400;font-size:12px;">(<%= record.markdown ? record.markdown.length + ' chars' : 'empty' %>)</span></h3>
 <% if (record.markdown) { %>
 <pre class="data" style="max-height:600px;"><%= record.markdown.length > 5000 ? record.markdown.substring(0, 5000) + '\n\n... [truncated, ' + record.markdown.length + ' chars total]' : record.markdown %></pre>

@@ -8,12 +8,11 @@ import { renderMarkdownTelegram, renderTagsTelegram, formatResultTelegram, escHt
 import { setNotifier, fetchRelatedRecordsInfo } from './notify.js';
 import { getProbeWaitTtlHours } from './probe-timeout-cron.js';
 import jwt from 'jsonwebtoken';
-import path from 'path';
-import { existsSync } from 'fs';
 import {
   getRecord,
   getRecordByUrl,
   getRecordByTelegramMessage,
+  getRecordFiles,
   insertRecord,
   insertNote,
   updateRecord,
@@ -27,6 +26,7 @@ import {
 import { spawnProcessLink, spawnProcessNote } from './pipeline.js';
 import { checkAndGetBudget } from './usage.js';
 import { downloadAndStorePhoto } from './telegram-photo.js';
+import { getStorage } from './storage/index.js';
 import { Sentry } from './sentry.js';
 import { logger } from './logger.js';
 
@@ -686,7 +686,6 @@ async function pollAndNotify(
       const tags: string[] = safeParseJson(record.tags);
       const relatedNotes: any[] = safeParseJson(record.related_notes);
       const relatedRecords = await fetchRelatedRecordsInfo(recordId, webBaseUrl);
-      const images: any[] = safeParseJson(record.images);
       const permanentLink = `${webBaseUrl}/link/${recordId}`;
 
       const resultText = formatResultTelegram({
@@ -700,20 +699,29 @@ async function pollAndNotify(
         permanentLink,
       });
 
-      // Check if we have a local image to send
-      const firstImage = images[0];
-      const imagePath = firstImage?.local_path
-        ? path.resolve(import.meta.dirname, '../data/images', String(recordId), firstImage.local_path)
-        : null;
+      // Send the first stored image (if any) as a photo, with the result as caption
+      const recordFiles = await getRecordFiles(recordId);
+      const firstFile = recordFiles[0];
+      let photoBuffer: Buffer | null = null;
+      if (firstFile) {
+        try {
+          photoBuffer = await getStorage().get(firstFile.storage_key);
+        } catch (err) {
+          log.warn(
+            { recordId, storageKey: firstFile.storage_key, err: err instanceof Error ? err.message : String(err) },
+            'Failed to load record file for photo; falling back to text',
+          );
+        }
+      }
 
       let botMsgId: number;
-      if (imagePath && existsSync(imagePath)) {
+      if (photoBuffer) {
         try {
           await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
         } catch {
           // Ignore delete errors
         }
-        const sent = await ctx.api.sendPhoto(ctx.chat.id, new InputFile(imagePath), {
+        const sent = await ctx.api.sendPhoto(ctx.chat.id, new InputFile(photoBuffer), {
           caption: resultText,
           parse_mode: 'HTML',
         });

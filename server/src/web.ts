@@ -2,7 +2,6 @@
  * Web server: composes all route modules and starts Express.
  */
 
-import path from 'path';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { Sentry } from './sentry.js';
@@ -37,10 +36,6 @@ export function startWebServer(port: number): void {
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
   app.use(cookieParser());
-
-  // Serve images from data/images directory (legacy)
-  const imagesDir = path.resolve(import.meta.dirname, '../data/images');
-  app.use('/images', express.static(imagesDir));
 
   // Serve files from object storage
   app.get('/files/{*key}', async (req, res) => {

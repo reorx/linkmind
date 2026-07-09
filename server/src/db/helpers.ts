@@ -33,7 +33,6 @@ export function toRecordEntry(row: any): RecordEntry {
     markdown: row.markdown ?? undefined,
     summary: row.summary ?? undefined,
     insight: row.insight ?? undefined,
-    images: row.images ?? undefined,
     error_message: row.error_message ?? undefined,
     telegram_message_id: row.telegram_message_id ?? undefined,
     telegram_chat_id: row.telegram_chat_id ?? undefined,

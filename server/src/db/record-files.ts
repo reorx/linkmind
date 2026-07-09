@@ -15,6 +15,10 @@ export interface InsertRecordFile {
 
 export async function insertRecordFile(file: InsertRecordFile): Promise<number> {
   const db = getDb();
+  // Upsert on (record_id, storage_key): re-processing a record regenerates the
+  // same deterministic storage_key, so refresh the existing row instead of
+  // inserting a duplicate. Requires the record_files_record_storage_uniq
+  // constraint (migration 2026-07-10T0012).
   const row = await db
     .insertInto('record_files')
     .values({
@@ -29,6 +33,18 @@ export async function insertRecordFile(file: InsertRecordFile): Promise<number> 
       height: file.height ?? null,
       metadata: file.metadata ? JSON.stringify(file.metadata) : '{}',
     })
+    .onConflict((oc) =>
+      oc.columns(['record_id', 'storage_key']).doUpdateSet({
+        source: file.source,
+        source_ref: file.source_ref ?? null,
+        storage_provider: file.storage_provider,
+        mime_type: file.mime_type ?? null,
+        size_bytes: file.size_bytes ?? null,
+        width: file.width ?? null,
+        height: file.height ?? null,
+        metadata: file.metadata ? JSON.stringify(file.metadata) : '{}',
+      }),
+    )
     .returning('id')
     .executeTakeFirstOrThrow();
   return row.id;

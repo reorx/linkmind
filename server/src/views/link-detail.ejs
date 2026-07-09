@@ -562,28 +562,6 @@
         </div>
       </div>
     </details>
-    <% } else if (images && images.length > 0) { %>
-    <details class="fold">
-      <summary>
-        <span class="fold-title">图片</span>
-        <span class="fold-meta"><%= images.length %> 张</span>
-        <span class="fold-toggle"><span class="when-closed">展开 ▾</span><span class="when-open">收起 ▴</span></span>
-      </summary>
-      <div class="fold-body">
-        <div class="image-gallery">
-          <% for (const img of images) { %>
-          <figure>
-            <a href="/images/<%= link.id %>/<%= img.local_path %>" target="_blank">
-              <img src="/images/<%= link.id %>/<%= img.local_path %>" loading="lazy" alt="">
-            </a>
-            <% if (img.ocr_text) { %>
-            <figcaption><%= img.ocr_text %></figcaption>
-            <% } %>
-          </figure>
-          <% } %>
-        </div>
-      </div>
-    </details>
     <% } %>
 
     <% if (link.markdown) { %>
