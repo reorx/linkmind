@@ -70,9 +70,10 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 - [x] R2 环境变量 → 已配置（2026-07-07 修复迁移时的丢失）
 - [x] 旧 `records.images` 数据迁移 → 已完成（遗留数据 0 条）
 - [x] 验证 Web 端图片展示正常 → **2026-07-08 生产实测通过**：清积压产生了 5 条带图记录（twitter/telegram），`/link/172` 页面 `<img>` 指向 `/files/records/172/0_twitter.jpg`，该端点从 R2 返回 image/jpeg 200。⚠️ 顺带发现 #58/#41 的 record_files 有重复行（同 storage_key 两条，疑似 retry 未去重），Phase 6 清理时一并处理
-- [ ] Phase 6 清理：删除 `image-handler.ts`、`backfill-images.ts`、`records.images` 字段（写新 migration）、旧 `/images` 静态路由、模板 fallback
-- [ ] Phase 6 补充（2026-07-08 调研发现）：`bot.ts` 的 `pollAndNotify` 仍在读 `images[0].local_path` 从 `data/images/` 发图（record-files-progress 清单漏了这处），改为从 `record_files` 取 R2 URL 发图
-- [ ] Phase 6 补充 ②（2026-07-08 发现）：record_files 写入需防重（retry 场景同 key 重复插入），清理重复行 + 加唯一约束或 upsert
+- [x] Phase 6 清理 → **代码完成**（commit `8d7f8f2`，2026-07-10）：删除 `image-handler.ts` + `backfill-images.ts`（stale，查的是不存在的 `links` 表）；移除 `/images` 静态路由、`RecordEntry/RecordsTable.images` 类型、helpers mapper、pages.ts（详情页+分享页）的 images 变量/模板参数、link-detail.ejs + admin record-detail.ejs 的 fallback；migration `2026-07-10T0013` DROP `records.images` 列
+- [x] Phase 6 补充：`bot.ts` `pollAndNotify` 发图 → **改用 `getRecordFiles()` 从 storage 取首图 buffer 发送**（`new InputFile(buffer)`），取不到/失败回退纯文本
+- [x] Phase 6 补充 ②：record_files 防重 → migration `2026-07-10T0012` 清重复行（保留最小 id）+ 加 `UNIQUE(record_id, storage_key)`；`insertRecordFile` 改 `onConflict.doUpdateSet` upsert；新增 `record-files.test.ts`（2 tests 过）
+- [ ] **生产收尾（待办）**：① 用 copy-prod-db 安全流程验证后，在生产依次执行 migration `2026-07-10T0012`（唯一约束，**必须先于新代码部署**，否则 onConflict 报错）+ `2026-07-10T0013`（drop 列）；② 部署本次代码。生产实测已确认 #58/#41 有重复行，migration 会清掉。本地验证：typecheck 过、dedup test 过、dev DB migrate 过（列已删、约束已建）
 
 #### 3. 清理积压数据 + Probe 可用性策略
 
@@ -161,7 +162,7 @@ TODO.md 2026-03-05 条目。用户积累内容后没有搜索会明显影响留�
 1. ~~**P0-3 收尾**~~ ✅ **2026-07-08 全部完成**（部署验证 + 积压清零）。遗留建议：生产实例（ecs.e-c1m2.large）公网带宽仅 ~1Mbps，建议在阿里云控制台评估调整计费方式/带宽；本机 probe 需用 `linkmind-probe run` 常驻（当前 device token 已连生产）
 2. ~~**P0-4 insight 截断验证**~~ ✅ **2026-07-08 完成**：150 天数据 0 截断；顺手修掉 llm.ts 隐藏的 2048 默认 cap + qwen 路径 finish_reason 盲区（`461ddd9`，未 push）；qwen 质量可接受，LLM Gateway 不紧迫
 3. ~~**P0-5 计费验证**~~ ✅ **2026-07-08 完成**：修掉 API 入口无限额检查的实现缺口 + 4 个 admin CLI + 实测通过（`efc1401`，未 push）；默认限额建议维持 $1.00（待你确认）
-4. **P0-2 剩余**：~~实测带图记录的 Web 展示~~（✅ 2026-07-08 生产实测通过）→ Phase 6 清理（含 bot.ts `local_path` 漏网项 + record_files 重复行去重防重）
+4. ~~**P0-2 剩余**~~ ✅ **2026-07-10 代码完成**（commit `8d7f8f2`）：Phase 6 清理 + bot.ts 发图改 record_files + record_files 去重防重（upsert + 唯一约束），本地全验证通过。**唯一遗留**：生产两个 migration + 部署（见 P0-2 清单末条，migration 顺序有约束）
 5. **LLM Gateway 落地**（可与 3/4 并行，deploy workspace 工作）：tc-sg-01 部署 gateway → `llm.ts` 加 `GEMINI_API_BASE` env 覆盖 → 生产切回 gemini
 6. **P1 功能**：评分（9）→ insight thinking/脚注（10）→ 落地页（8）→ 搜索（11，范围待拍板）
 7. **收官**：P0-6 端到端走查 → P0-7 运维基线（Sentry DSN、备份确认、部署演练）→ 上线
