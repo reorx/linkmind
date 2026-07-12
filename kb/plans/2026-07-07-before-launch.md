@@ -29,7 +29,7 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 | WeChat / HN 专用提取器（Substance） | — （见 sessions/2026-03-04） | ✅ 已实现 |
 | Kysely migration 框架 | [2026-02-26-kysely-migration.md](2026-02-26-kysely-migration.md) | ✅ 已实现 |
 | Share 公开分享 | [2026-02-26-share-feature-design.md](2026-02-26-share-feature-design.md) | ✅ 已实现 |
-| Record Files + 对象存储（S3/R2/MinIO/Local） | [2026-02-26-record-files-storage.md](2026-02-26-record-files-storage.md) | ✅ Phase 1-5 完成；**Phase 6 清理 + 生产部署清单未做** |
+| Record Files + 对象存储（S3/R2/MinIO/Local） | [2026-02-26-record-files-storage.md](2026-02-26-record-files-storage.md) | ✅ 全部完成（Phase 6 清理 + 生产 migration + 部署，2026-07-13） |
 | Usage Billing（用量计费 + 软限额 + admin 页面） | [usage-billing-design.md](usage-billing-design.md), [usage-billing-review.md](usage-billing-review.md) | ✅ 已实现（migration `2026-03-04T1200-usage-billing.ts`） |
 | CSV 导出/导入 + Settings 页 | [export-import-plan](../notes/export-import-plan.md) | ✅ 已实现 |
 | Sentry/GlitchTip 错误追踪 | [sentry-integration-plan](../notes/sentry-integration-plan.md) | ✅ 已实现 |
@@ -73,7 +73,7 @@ Telegram Bot + Web 的链接收藏分析 SaaS，**邀请制注册、免费使用
 - [x] Phase 6 清理 → **代码完成**（commit `8d7f8f2`，2026-07-10）：删除 `image-handler.ts` + `backfill-images.ts`（stale，查的是不存在的 `links` 表）；移除 `/images` 静态路由、`RecordEntry/RecordsTable.images` 类型、helpers mapper、pages.ts（详情页+分享页）的 images 变量/模板参数、link-detail.ejs + admin record-detail.ejs 的 fallback；migration `2026-07-10T0013` DROP `records.images` 列
 - [x] Phase 6 补充：`bot.ts` `pollAndNotify` 发图 → **改用 `getRecordFiles()` 从 storage 取首图 buffer 发送**（`new InputFile(buffer)`），取不到/失败回退纯文本
 - [x] Phase 6 补充 ②：record_files 防重 → migration `2026-07-10T0012` 清重复行（保留最小 id）+ 加 `UNIQUE(record_id, storage_key)`；`insertRecordFile` 改 `onConflict.doUpdateSet` upsert；新增 `record-files.test.ts`（2 tests 过）
-- [ ] **生产收尾（待办）**：① 用 copy-prod-db 安全流程验证后，在生产依次执行 migration `2026-07-10T0012`（唯一约束，**必须先于新代码部署**，否则 onConflict 报错）+ `2026-07-10T0013`（drop 列）；② 部署本次代码。生产实测已确认 #58/#41 有重复行，migration 会清掉。本地验证：typecheck 过、dedup test 过、dev DB migrate 过（列已删、约束已建）
+- [x] **生产收尾** → **2026-07-13 完成**：① 本地副本（`linkmind_pro_20260713`）预演通过——实际重复行为 #41/#56/#58 共 5 组（比预期多 #56 的 3 组），0012 清后 12→7 行、约束建成，0013 列已删；② 生产 migration 从本地直连 Neon 执行（部署前，无窗口期），只读抽查一致；③ push master（`16b9afb..f55f037`，13 commits 含 redesign `03520b5`，用户拍板一起上）→ CI 74s 绿 → webhook 自动部署，容器启动无错误；④ 上线抽查：`/link/56`、`/link/118` 图片走 `/files/records/...` 从 R2 出图（image/jpeg 200），部署后日志无 error/conflict。⚠️ 待用户手动验证：Telegram 发一条带图链接，确认 bot 发图走 record_files buffer 路径
 
 #### 3. 清理积压数据 + Probe 可用性策略
 
@@ -162,7 +162,7 @@ TODO.md 2026-03-05 条目。用户积累内容后没有搜索会明显影响留�
 1. ~~**P0-3 收尾**~~ ✅ **2026-07-08 全部完成**（部署验证 + 积压清零）。遗留建议：生产实例（ecs.e-c1m2.large）公网带宽仅 ~1Mbps，建议在阿里云控制台评估调整计费方式/带宽；本机 probe 需用 `linkmind-probe run` 常驻（当前 device token 已连生产）
 2. ~~**P0-4 insight 截断验证**~~ ✅ **2026-07-08 完成**：150 天数据 0 截断；顺手修掉 llm.ts 隐藏的 2048 默认 cap + qwen 路径 finish_reason 盲区（`461ddd9`，未 push）；qwen 质量可接受，LLM Gateway 不紧迫
 3. ~~**P0-5 计费验证**~~ ✅ **2026-07-08 完成**：修掉 API 入口无限额检查的实现缺口 + 4 个 admin CLI + 实测通过（`efc1401`，未 push）；默认限额建议维持 $1.00（待你确认）
-4. ~~**P0-2 剩余**~~ ✅ **2026-07-10 代码完成**（commit `8d7f8f2`）：Phase 6 清理 + bot.ts 发图改 record_files + record_files 去重防重（upsert + 唯一约束），本地全验证通过。**唯一遗留**：生产两个 migration + 部署（见 P0-2 清单末条，migration 顺序有约束）
+4. ~~**P0-2 剩余**~~ ✅ **2026-07-13 全部完成**：代码（`8d7f8f2`）+ 生产 migration（先于部署执行，无窗口期）+ 部署（含 redesign `03520b5` 一并上线，用户拍板）。详见 P0-2 清单末条
 5. **LLM Gateway 落地**（可与 3/4 并行，deploy workspace 工作）：tc-sg-01 部署 gateway → `llm.ts` 加 `GEMINI_API_BASE` env 覆盖 → 生产切回 gemini
 6. **P1 功能**：评分（9）→ insight thinking/脚注（10）→ 落地页（8）→ 搜索（11，范围待拍板）
 7. **收官**：P0-6 端到端走查 → P0-7 运维基线（Sentry DSN、备份确认、部署演练）→ 上线

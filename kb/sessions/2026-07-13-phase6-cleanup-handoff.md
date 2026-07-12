@@ -10,6 +10,8 @@ tags:
 # Handoff — P0-2 Phase 6 图片清理 + 生产收尾
 
 > 承接 [before-launch plan](../plans/2026-07-07-before-launch.md) 的 **P0-2 剩余**。本 session 完成了 Phase 6 的**全部代码 + 本地验证**;**生产 migration + 部署未做**,需下个 session 接手。给新 session 的自洽交接。
+>
+> **✅ 2026-07-13 已全部完成**:Step 1 预演(实际重复行 #41/#56/#58 共 5 组,比预期多 #56)→ Step 2 生产 migration(部署前直连 Neon,无窗口期)→ Step 3 push + CD 部署(含 redesign,用户拍板一起上)。上线抽查通过,唯一遗留:用户从 Telegram 发带图链接验证 bot 发图新路径。结果详见 plan P0-2 清单末条。
 
 ## 一、这个 session 做了什么(已完成)
 
