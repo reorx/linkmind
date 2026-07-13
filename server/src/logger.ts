@@ -4,6 +4,8 @@
  * ENV:
  *   LOG_FILE — path to log file (JSON lines). Only written when set.
  *   LOG_LEVEL — log level (default: "info"). Set to "debug" for verbose output.
+ *   LOG_FORMAT — "json" makes stdout raw pino JSON (one line per entry, for
+ *     container logs / grep / jq). Anything else (or unset) keeps pino-pretty.
  *
  * Call initLogger() after dotenv.config() to pick up env vars.
  */
@@ -19,11 +21,11 @@ function createLogger(): pino.Logger {
   const level = process.env.LOG_LEVEL || 'info';
   const logFile = process.env.LOG_FILE;
 
-  // Pretty stream for stdout
-  const prettyStream = pinoPretty({ colorize: true });
+  // Stdout stream: raw JSON when opted in, pretty otherwise
+  const stdoutStream = process.env.LOG_FORMAT === 'json' ? pino.destination(1) : pinoPretty({ colorize: true });
 
   if (!logFile) {
-    return pino({ level }, prettyStream);
+    return pino({ level }, stdoutStream);
   }
 
   // File stream (JSON lines)
@@ -32,7 +34,7 @@ function createLogger(): pino.Logger {
   const fileStream = fs.createWriteStream(absPath, { flags: 'a' });
 
   const multistream = pino.multistream([
-    { level: level as pino.Level, stream: prettyStream },
+    { level: level as pino.Level, stream: stdoutStream },
     { level: level as pino.Level, stream: fileStream },
   ]);
 
