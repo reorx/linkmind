@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { Agent, setGlobalDispatcher } from 'undici';
 import { loadConfig, saveConfig, isAuthenticated, isRunning, stopDaemon, readPid } from './config.js';
+
+// Node >= 26 negotiates HTTP/2 for fetch by default. On an h2 session, undici refuses to
+// dispatch non-idempotent requests (POST) while another request is in flight — and our SSE
+// GET never finishes, so receive_result uploads would queue forever. Force HTTP/1.1.
+setGlobalDispatcher(new Agent({ allowH2: false }));
 
 const program = new Command();
 

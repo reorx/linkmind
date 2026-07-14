@@ -19,13 +19,16 @@ function log(level: string, msg: string): void {
 }
 
 async function uploadResult(config: Config, payload: ScrapeResultPayload): Promise<void> {
+  const body = JSON.stringify(payload);
+  log('INFO', `Uploading result for ${payload.event_id} (${body.length} bytes, success=${payload.success})`);
   const resp = await fetch(`${config.api_base}/api/probe/receive_result`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${config.access_token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(payload),
+    body,
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (resp.ok) {
@@ -52,6 +55,7 @@ async function processEvent(config: Config, event: ScrapeRequestEvent): Promise<
       throw new Error(`Unknown url_type: ${url_type}`);
     }
 
+    log('INFO', `Scrape done for ${event_id}: title=${JSON.stringify(data.title?.slice(0, 60))}`);
     payload = { event_id, success: true, data };
   } catch (e: any) {
     log('ERROR', `Scrape failed for ${event_id}: ${e.message}`);

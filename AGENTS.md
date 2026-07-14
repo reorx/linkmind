@@ -92,7 +92,9 @@ Probe 等待机制：record 进入 `waiting_probe` 状态，probe 端通过 SSE 
 
 ## Probe 运行与测试
 
-本机 probe daemon 的配置在 `~/.linkmind-probe/config.json`（`api_base` / `access_token` / `user_id`）。依赖：Twitter 抓取需要 `bird` CLI（brew 安装，用 Chrome cookies）；Web 抓取用 Playwright。
+本机 probe daemon 的配置在 `~/.linkmind-probe/config.json`（`api_base` / `access_token` / `user_id`）。依赖：Twitter 抓取需要 `bird` CLI（`pnpm add -g @steipete/bird`，用 Chrome cookies；brew tap 里的 formula 已下架，`birdclaw` 是另一个东西别装错）；Web 抓取用 Playwright。
+
+⚠️ **Node >= 26 的 fetch 默认启用 HTTP/2**：SSE 长连接和 receive_result POST 会复用同一条 h2 连接，undici 不会在有在途请求时派发非幂等请求（POST），导致结果上传永久排队、record 卡在 waiting_probe。probe 已在 `cli.ts` 入口用 `setGlobalDispatcher(new Agent({ allowH2: false }))` 强制 HTTP/1.1（2026-07-14 修复），改动 probe 网络层时不要移除。
 
 ```bash
 # 交互式登录（device auth，会打开浏览器授权页）

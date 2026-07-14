@@ -108,6 +108,11 @@ export async function updateProbeEventStatus(id: string, status: string, result?
   await getDb().updateTable('probe_events').set(update).where('id', '=', id).execute();
 }
 
+export async function deleteProbeEventsByLinkId(linkId: number): Promise<number> {
+  const result = await getDb().deleteFrom('probe_events').where('link_id', '=', linkId).executeTakeFirst();
+  return Number(result.numDeletedRows ?? 0);
+}
+
 /**
  * Events still waiting on a probe (pending or sent) whose age exceeds the TTL.
  */

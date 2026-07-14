@@ -183,3 +183,16 @@ export async function getTransactionsByRecordId(recordId: number): Promise<any[]
     .orderBy('created_at', 'asc')
     .execute();
 }
+
+/**
+ * Detach usage transactions from a record before deleting it (FK has no ON DELETE).
+ * Billing history is preserved with record_id = NULL.
+ */
+export async function detachUsageFromRecord(recordId: number): Promise<number> {
+  const result = await getDb()
+    .updateTable('usage_transactions')
+    .set({ record_id: null })
+    .where('record_id', '=', recordId)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0);
+}

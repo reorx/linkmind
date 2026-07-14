@@ -24,6 +24,8 @@ import {
   createProbeEvent,
   getProbeEventById,
   updateProbeEventStatus,
+  deleteProbeEventsByLinkId,
+  detachUsageFromRecord,
   type RecordEntry,
 } from './db/index.js';
 import type { ScrapeData } from '@linkmind/core';
@@ -1073,7 +1075,19 @@ export async function deleteRecordFull(recordId: number): Promise<DeleteResult> 
   const relatedRecordsUpdated = await removeFromRelatedRecords(recordId);
   log.info({ recordId, relatedRecordsUpdated }, '[delete] Cleaned up related_links references');
 
-  // 2. Delete from database
+  // 2. Delete probe_events referencing this record (FK probe_events_link_id_fkey)
+  const probeEventsDeleted = await deleteProbeEventsByLinkId(recordId);
+  if (probeEventsDeleted > 0) {
+    log.info({ recordId, probeEventsDeleted }, '[delete] Deleted probe_events');
+  }
+
+  // 3. Detach usage transactions (FK without ON DELETE; keep billing history)
+  const usageDetached = await detachUsageFromRecord(recordId);
+  if (usageDetached > 0) {
+    log.info({ recordId, usageDetached }, '[delete] Detached usage transactions');
+  }
+
+  // 4. Delete from database
   await deleteRecord(recordId);
   log.info({ recordId }, '[delete] Deleted from database');
 
